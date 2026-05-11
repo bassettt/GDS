@@ -447,7 +447,7 @@ async function gdsShowPickingDetail(pickingId, pickingName) {
     let html = `<table class="gds-table" style="width:100%">
       <thead><tr>
         <th>Produit</th>
-        <th style="text-align:right">C/F</th>
+        <th style="text-align:right">Colis</th>
         <th style="text-align:right">U</th>
       </tr></thead><tbody>`;
 
@@ -473,7 +473,7 @@ async function gdsShowPickingDetail(pickingId, pickingName) {
     });
 
     moves.forEach(m => {
-      const name = m.product_id?.[1] || "—";
+      const name = m.product_id?.[1] || m.product_tmpl_id?.[1] || "—";
       const pid = m.product_id?.[0];
       const qty = m.product_uom_qty || 0;
       const pkgQty = pkgMap[pid] || 0;
@@ -587,7 +587,7 @@ async function renderGdsStock() {
           model: "product.product",
           method: "search_read",
           args: [[["id","in",productIds]]],
-          kwargs: { fields: ["id","name","categ_id","uom_id","uom_po_id"], limit: 2000 }
+          kwargs: { fields: ["id","name","default_code","categ_id","uom_id","uom_po_id"], limit: 2000 }
         }
       })
     });
@@ -612,7 +612,7 @@ async function renderGdsStock() {
       if (!p) return;
       const catName = p.categ_id ? p.categ_id[1] : "Autre";
       if (!byCategory[catName]) byCategory[catName] = [];
-      byCategory[catName].push({ name: p.name, qty: stockMap[pid].qty, carton: stockMap[pid].carton, reserved: stockMap[pid].reserved, unitSize: stockMap[pid].unitSize });
+      byCategory[catName].push({ name: _productDisplayName(p), qty: stockMap[pid].qty, carton: stockMap[pid].carton, reserved: stockMap[pid].reserved, unitSize: stockMap[pid].unitSize });
     });
 
     const now        = new Date().toLocaleTimeString("fr-FR");
@@ -647,10 +647,10 @@ async function renderGdsStock() {
           <table class="gds-table">
             <thead><tr>
               <th>Produit</th>
-              <th style="text-align:right">Stock C/F</th>
+              <th style="text-align:right">Stock Colis</th>
               <th style="text-align:right">Stock U</th>
               <th style="text-align:right;font-size:9px;color:var(--text3)">qty</th>
-              <th style="text-align:right">Réservé C/F</th>
+              <th style="text-align:right">Réservé Colis</th>
               <th style="text-align:right">Réservé U</th>
               <th style="text-align:right;font-size:9px;color:var(--text3)">qty</th>
             </tr></thead>
@@ -753,7 +753,7 @@ async function renderGdsVans() {
             model: "product.product",
             method: "search_read",
             args: [[["id","in",productIds]]],
-            kwargs: { fields: ["id","name","categ_id"], limit: 2000 }
+            kwargs: { fields: ["id","name","default_code","categ_id"], limit: 2000 }
           }
         })
       });
@@ -776,7 +776,7 @@ async function renderGdsVans() {
       const carton = q.packaging_quantity_1 || 0;
       const unitSize = carton > 0 ? q.quantity / carton : 0;
       byVan[locId].categories[catName].push({
-        name: p.name,
+        name: _productDisplayName(p),
         qty: q.quantity,
         reserved: q.reserved_quantity || 0,
         carton,
@@ -834,10 +834,10 @@ async function renderGdsVans() {
             <table class="gds-table">
               <thead><tr>
                 <th>Produit</th>
-                <th style="text-align:right">Stock C/F</th>
+                <th style="text-align:right">Stock Colis</th>
                 <th style="text-align:right">Stock U</th>
                 <th style="text-align:right;font-size:9px;color:var(--text3)">qty</th>
-                <th style="text-align:right">Réservé C/F</th>
+                <th style="text-align:right">Réservé Colis</th>
                 <th style="text-align:right">Réservé U</th>
                 <th style="text-align:right;font-size:9px;color:var(--text3)">qty</th>
               </tr></thead>
@@ -917,6 +917,19 @@ const _gdsPrep = {
 };
 
 const GDS_PREP_STORAGE_KEY = "wafa_gds_preparation";
+
+function _productDisplayName(p) {
+  if (!p) return "—";
+  const code = (p.default_code || "").toUpperCase();
+  const name = p.name || "";
+  const colorMap = { "BLEU": "BLEU", "VERT": "VERT", "ROSE": "ROSE", "ROUGE": "ROUGE", "JAUNE": "JAUNE" };
+  for (const [key, label] of Object.entries(colorMap)) {
+    if (code.includes(key) && !name.toUpperCase().includes(key)) {
+      return `${name} (${label})`;
+    }
+  }
+  return name;
+}
 
 // ── Firebase Realtime Database ────────────────────────────────
 const _FB_DB_URL = "https://owdoo-f265f-default-rtdb.europe-west1.firebasedatabase.app";
@@ -1197,8 +1210,15 @@ if (toEl)   toEl.value   = _gdsPrepFmtDt(_gdsPrep.chargeTo   || _nowLocal());
 
 // ── helpers ──────────────────────────────────────────────────
 function _gdsPrepUnitSize(line) {
-  const u = line.unitSize > 0 ? line.unitSize : (line.carton > 0 ? line.qty / line.carton : 0);
-  return Math.round(u);
+  if (line.unitSize > 0) return Math.round(line.unitSize);
+  if (line.carton > 0 && line.qty > 0) return Math.round(line.qty / line.carton);
+  // استخراج unitSize من byPicking إذا كان المخزون صفر
+  const byP = _gdsPrep.byPicking || {};
+  for (const picking of Object.values(byP)) {
+    const mv = (picking.moves || []).find(m => m.pid === line.pid);
+    if (mv && mv.unitSize > 0) return Math.round(mv.unitSize);
+  }
+  return 0;
 }
 function _gdsPrepTotalPrep(line) {
   const u = _gdsPrepUnitSize(line);
@@ -1275,13 +1295,14 @@ const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
       ${hasData ? _gdsPrep.lines.length + " produits" : "Cliquez sur Nouvelle préparation"}
     </span>
     <div id="gdsPrepNewBar" style="display:none;">
+      <button class="gds-refresh-btn" style="background:var(--accent);" onclick="gdsPrepExportCurrent()">⬇ Rapport</button>
       <button class="gds-refresh-btn" style="background:var(--gds-color);" onclick="gdsPrepAskNew()">
         + Nouvelle préparation
       </button>
     </div>
 </div>
   <!-- Barre chargement depuis -->
-  <div style="display:${_gdsPrep.loaded ? 'flex' : 'none'};align-items:center;gap:8px;padding:6px 10px;background:var(--bg2);border-bottom:1px solid var(--border);flex-wrap:wrap;position:sticky;top:41px;z-index:18;margin-top:-1px;">
+  <div style="display:${_gdsPrep.loaded && !_gdsPrep.finished ? 'flex' : 'none'};align-items:center;gap:8px;padding:6px 10px;background:var(--bg2);border-bottom:1px solid var(--border);flex-wrap:wrap;position:sticky;top:41px;z-index:18;margin-top:-1px;">
     <span style="font-size:11px;font-weight:600;color:var(--text2);">Chargements depuis :</span>
     <input type="text" id="gdsPrepChargeFrom" class="gds-prep-dt-input"
       placeholder="jj/mm/aaaa hh:mm"
@@ -1552,7 +1573,7 @@ function gdsPrepPrintPrep() {
   <h2>STOCK PRÉPARATION</h2>
   <div class="sub">${date} — ${time}</div>
   <table>
-    <thead><tr><th>Produit</th><th class="num">C/F</th><th class="num">U</th></tr></thead>
+    <thead><tr><th>Produit</th><th class="num">Colis</th><th class="num">U</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
   <script>window.onload=()=>{window.print();}<\/script>
@@ -1605,7 +1626,7 @@ function gdsPrepDownloadPrepPdf() {
   <h2>STOCK PRÉPARATION</h2>
   <div class="sub">${date} — ${time}</div>
   <table>
-    <thead><tr><th>Produit</th><th class="num">C/F</th><th class="num">U</th></tr></thead>
+    <thead><tr><th>Produit</th><th class="num">Colis</th><th class="num">U</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
   <script>
@@ -1670,24 +1691,36 @@ async function _gdsPrepLoadStock() {
       body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:2, params:{
         model:"product.product", method:"search_read",
         args:[[["id","in",pids]]],
-        kwargs:{ fields:["id","name","categ_id","uom_id"], limit:2000 }
+        kwargs:{ fields:["id","name","default_code","categ_id","uom_id"], limit:2000 }
       }})
     });
     const prods = {};
     ((await r2.json())?.result || []).forEach(p => { prods[p.id] = p; });
 
+   // جلب packaging CARTON لكل المنتجات
+    const r3 = await fetch("/api/web/dataset/call_kw", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:3, params:{
+        model:"product.packaging", method:"search_read",
+        args:[[["product_id","in",pids]]],
+        kwargs:{ fields:["product_id","qty"], limit:2000 }
+      }})
+    });
+    const packagingMap = {};
+    ((await r3.json())?.result || []).forEach(pk => { packagingMap[pk.product_id[0]] = pk.qty; });
+
     _gdsPrep.lines = [];
     quants.forEach(q => {
       const pid = q.product_id[0]; const p = prods[pid]; if (!p) return;
       const pkgCarton = q.packaging_quantity_1 || 0;
-      const unitSize  = pkgCarton > 0 ? q.quantity / pkgCarton : 0;
+      const unitSize  = packagingMap[q.product_id[0]] > 0 ? packagingMap[q.product_id[0]] : (pkgCarton > 0 ? q.quantity / pkgCarton : 0);
       const ex = _gdsPrep.lines.find(l => l.pid === pid);
       if (ex) {
         ex.qty    += q.quantity;
         ex.carton += pkgCarton;
         if (ex.unitSize === 0 && unitSize > 0) ex.unitSize = unitSize;
       } else {
-        _gdsPrep.lines.push({ pid, name:p.name,
+        _gdsPrep.lines.push({ pid, name:_productDisplayName(p),
           categ:    p.categ_id ? p.categ_id[1] : "Autre",
           uom:      p.uom_id   ? p.uom_id[1]   : "",
           qty:      q.quantity,
@@ -1699,7 +1732,7 @@ async function _gdsPrepLoadStock() {
     });
     // تصحيح unitSize النهائي من المجموع
     _gdsPrep.lines.forEach(line => {
-      if (line.unitSize === 0 && line.carton > 0) line.unitSize = line.qty / line.carton;
+      if (line.unitSize === 0) line.unitSize = packagingMap[line.pid] || (line.carton > 0 ? line.qty / line.carton : 0);
     });
     _gdsPrep.lines.sort((a,b) => {
       const order = _getCatOrder();
@@ -1744,12 +1777,12 @@ function _gdsPrepRenderModalBody() {
     <table class="gds-table" style="margin-bottom:10px;min-width:${isEdit ? "420px" : "300px"};">
       <thead><tr>
         <th style="min-width:80px;">Produit</th>
-        <th style="text-align:right;white-space:nowrap">S.C/F</th>
+        <th style="text-align:right;white-space:nowrap">S.Colis</th>
         <th style="text-align:right;white-space:nowrap">S.U</th>
         ${isEdit
-          ? `<th style="text-align:right;white-space:nowrap">Act.C/F</th><th style="text-align:right;white-space:nowrap">Act.U</th>
-             <th style="text-align:right;white-space:nowrap">Δ C/F</th><th style="text-align:right;white-space:nowrap">Δ U</th>`
-          : `<th style="text-align:right;white-space:nowrap">Prép. C/F</th><th style="text-align:right;white-space:nowrap">Prép. U</th>`}
+          ? `<th style="text-align:right;white-space:nowrap">Act.Colis</th><th style="text-align:right;white-space:nowrap">Act.U</th>
+             <th style="text-align:right;white-space:nowrap">Δ Colis</th><th style="text-align:right;white-space:nowrap">Δ U</th>`
+          : `<th style="text-align:right;white-space:nowrap">Prép. Colis</th><th style="text-align:right;white-space:nowrap">Prép. U</th>`}
       </tr></thead><tbody>`;
 
     byCateg[cat].forEach(({ line, i }) => {
@@ -1913,7 +1946,7 @@ function gdsPrepShowCharge(pid) {
   } else {
     body.innerHTML = `<table class="gds-table" style="font-size:11px;">
       <thead><tr>
-        <th>Van</th><th>Livreur</th><th>C/F</th><th>U</th><th>Heure</th><th>Transfert</th>
+        <th>Van</th><th>Livreur</th><th>Colis</th><th>U</th><th>Heure</th><th>Transfert</th>
       </tr></thead><tbody>
 ${rows.map(r => {
         const vanJuml     = vanCount[r.van]         > 1;
@@ -2581,7 +2614,7 @@ const extraPkgMap = {};
       extraPids.forEach(pid => {
         const total = agg[pid] || 0;
         const p     = extraProds[pid] || {};
-        const name  = p.name || `pid:${pid}`;
+        const name  = _productDisplayName(p) || `pid:${pid}`;
         const categ = p.categ_id?.[1] || "— Chargé sans préparation —";
         // تحديث إذا موجود مسبقاً كـ extraCharge
         const existing = _gdsPrep.lines.find(l => l.pid === pid);
@@ -2589,7 +2622,7 @@ const extraPkgMap = {};
         const pkgQty = p.packaging_quantity_1 || 0;
 _gdsPrep.lines.push({
   pid, name, categ,
-  carton: pkgQty, qty: pkgQty, prepCarton: 0, prepUnite: 0, unitSize: pkgQty,
+  carton: pkgQty, qty: pkgQty, prepCarton: 0, prepUnite: 0, unitSize: extraPkgMap[pid] || pkgQty,
   history: [], check: false, ecart: 0, _extraCharge: true,
 });
         // إضافة chargeData
@@ -2605,7 +2638,7 @@ _gdsPrep.lines.push({
 Object.entries(agg).forEach(([pidStr, total]) => {
   const pid  = Number(pidStr);
   const line = _gdsPrep.lines.find(l => l.pid === pid);
-  const u    = line ? _gdsPrepUnitSize(line) : (pkgMap[pid] || 0);
+  const u    = line ? (_gdsPrepUnitSize(line) || extraPkgMap[pid] || pkgMap[pid] || 0) : (extraPkgMap[pid] || pkgMap[pid] || 0);
   _gdsPrep.chargeData[pid] = {
     chargeCarton: u > 0 ? Math.floor(total / u) : 0,
     chargeUnite:  u > 0 ? Math.round(total % u) : Math.round(total),
@@ -2702,7 +2735,7 @@ async function _gdsPrepFetchMissingNames() {
     prods.forEach(p => {
       const line = _gdsPrep.lines.find(l => l.pid === p.id);
       if (line) {
-        line.name  = p.name;
+        line.name  = _productDisplayName(p);
         line.categ = p.categ_id?.[1] || line.categ;
       }
     });
@@ -2864,11 +2897,11 @@ const activeLines = [
           </tr>
           <tr>
             <th></th>
-            ${_gdsPrepCols.stock ? `<th style="text-align:right;color:var(--text3)">C/F</th><th style="text-align:right;color:var(--text3)">U</th>` : ""}
-            ${Object.keys(_gdsPrep.suggested).length && _gdsPrepCols.sugg ? `<th style="text-align:right;color:var(--text3)">C/F</th><th style="text-align:right;color:var(--text3)">U</th>` : ""}
-            ${_gdsPrepCols.prep ? `<th style="text-align:right;color:var(--gds-color)">C/F</th><th style="text-align:right;color:var(--gds-color)">U</th><th style="text-align:right;color:var(--gds-color);font-size:9px;">qty</th>` : ""}
-            ${hasCharge && _gdsPrepCols.charge ? `<th style="text-align:right;color:var(--orange)">C/F</th><th style="text-align:right;color:var(--orange)">U</th><th style="text-align:right;color:var(--orange);font-size:9px;">qty</th>` : ""}
-            ${hasCharge && _gdsPrepCols.reste ? `<th style="text-align:right;color:var(--accent)">C/F</th><th style="text-align:right;color:var(--accent)">U</th><th style="text-align:right;color:var(--accent);font-size:9px;">qty</th>` : ""}
+            ${_gdsPrepCols.stock ? `<th style="text-align:right;color:var(--text3)">Colis</th><th style="text-align:right;color:var(--text3)">U</th>` : ""}
+            ${Object.keys(_gdsPrep.suggested).length && _gdsPrepCols.sugg ? `<th style="text-align:right;color:var(--text3)">Colis</th><th style="text-align:right;color:var(--text3)">U</th>` : ""}
+            ${_gdsPrepCols.prep ? `<th style="text-align:right;color:var(--gds-color)">Colis</th><th style="text-align:right;color:var(--gds-color)">U</th><th style="text-align:right;color:var(--gds-color);font-size:9px;">qty</th>` : ""}
+            ${hasCharge && _gdsPrepCols.charge ? `<th style="text-align:right;color:var(--orange)">Colis</th><th style="text-align:right;color:var(--orange)">U</th><th style="text-align:right;color:var(--orange);font-size:9px;">qty</th>` : ""}
+            ${hasCharge && _gdsPrepCols.reste ? `<th style="text-align:right;color:var(--accent)">Colis</th><th style="text-align:right;color:var(--accent)">U</th><th style="text-align:right;color:var(--accent);font-size:9px;">qty</th>` : ""}
             ${_gdsPrep.finished ? `<th style="text-align:center">✓</th><th style="text-align:center">Écart</th>` : ""}
           </tr>
         </thead><tbody>`;
@@ -3001,7 +3034,7 @@ function gdsPrepShowHist(idx) {
   } else {
     let html = `<table class="gds-table">
       <thead><tr>
-        <th>Heure</th><th>Type</th><th style="text-align:right">C/F</th><th style="text-align:right">U</th>
+        <th>Heure</th><th>Type</th><th style="text-align:right">Colis</th><th style="text-align:right">U</th>
       </tr></thead><tbody>`;
     line.history.forEach(h => {
       const color = h.type === "Augmentation" || h.type === "Ajout" ? "var(--green)" : h.type === "Réduction" ? "var(--red)" : "var(--gds-color)";
@@ -3041,7 +3074,7 @@ function gdsPrepAskFinish() {
       clearInterval(t);
       if (btn)  { btn.disabled = false; btn.style.opacity = "1"; }
       if (cd)   cd.textContent = "✓";
-      if (hint) hint.textContent = "يمكنك التأكيد الآن";
+      if (hint) hint.textContent = "Vous pouvez le confirmer maintenant";
     }
   }, 1000);
 }
@@ -3053,8 +3086,10 @@ function gdsPrepCloseConfirm() {
 
 function gdsPrepDoFinish() {
   gdsPrepCloseConfirm();
+  _gdsPrep.lines.forEach(l => { if (l.ecart === null || l.ecart === undefined) l.ecart = 0; });
   _gdsPrep.finished = true;
   _gdsPrepSave();
+  _gdsPrep._skipCloudReload = true;
   renderGdsPreparation();
   addNotif("✓ Préparation terminée", "success");
 }
@@ -3097,13 +3132,15 @@ function gdsPrepDoCancel() {
   _gdsPrep.outOfDateTransferts = [];
   localStorage.removeItem(GDS_PREP_STORAGE_KEY);
   _gdsPrepSaveCloud();
+  _gdsPrep._skipCloudReload = true;
   renderGdsPreparation();
   addNotif("Préparation annulée", "warning");
 }
 
 function _gdsPrepToggleCheck(pid) {
   const line = _gdsPrep.lines.find(l => l.pid === pid); if (!line) return;
-  if (line.ecart !== null && line.ecart !== 0) return; // فارق غير صفر → لا يمكن check
+  if (line.ecart !== null && line.ecart !== 0) return;
+  if (line.ecart === null || line.ecart === 0) line.ecart = 0; // القيمة الافتراضية عند الضغط بدون كتابة
   line.check = !line.check;
   _gdsPrepSave();
   const btn = document.querySelector(`.gds-check-btn[data-pid="${line.pid}"]`);
@@ -3122,6 +3159,7 @@ const parsed = val === "" ? null : parseFloat(val);
   // لا نمس line.check — يبقى كما هو (المستخدم يتحكم فيه بالضغط)
   // فقط إذا كان الفارق غير صفر نُجبر check=false
   if (parsed === null) {
+    line.ecart = 0;
     line.check = false;
   } else if (parsed === 0) {
     line.check = true;  // صفر = مخزون صحيح → check تلقائي
@@ -3161,6 +3199,7 @@ function gdsPrepReprendre() {
   // مسح بيانات التحقق
   _gdsPrep.lines.forEach(l => { l.check = false; l.ecart = 0; });
   _gdsPrepSave();
+  _gdsPrep._skipCloudReload = true;
   renderGdsPreparation();
   addNotif("Préparation reprise", "info");
 }
@@ -3204,6 +3243,7 @@ function gdsPrepDoNew() {
   _gdsPrep.outOfDateTransferts = [];
   localStorage.removeItem(GDS_PREP_STORAGE_KEY);
   _gdsPrepSaveCloud();
+  _gdsPrep._skipCloudReload = true;
   renderGdsPreparation();
   addNotif("✓ Nouvelle préparation démarrée", "success");
 }
@@ -3275,9 +3315,9 @@ function _gdsPrepExportXlsx() {
   <table>
     <thead><tr>
       <th>Produit</th>
-      <th class="num">Prép C/F</th><th class="num">Prép U</th>
-      <th class="num">Charg C/F</th><th class="num">Charg U</th>
-      <th class="num">Reste C/F</th><th class="num">Reste U</th>
+      <th class="num">Prép Colis</th><th class="num">Prép U</th>
+      <th class="num">Charg Colis</th><th class="num">Charg U</th>
+      <th class="num">Reste Colis</th><th class="num">Reste U</th>
       <th class="num">✓</th><th class="num">Écart</th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -3410,7 +3450,7 @@ td.num {
       <thead><tr>
         <th style="text-align:center;width:24px">#</th>
         <th>Produit</th>
-        <th style="text-align:center;width:50px">C/F</th>
+        <th style="text-align:center;width:50px">Colis</th>
         <th style="text-align:center;width:50px">U</th>
         ${App.settings?.showTotalU !== false ? '<th style="text-align:center;width:55px">Total U</th>' : ''}
       </tr></thead>
