@@ -1,7 +1,7 @@
 {
-  "name": "Wafa Tournées Manager",
-  "short_name": "Wafa Rounds",
-  "description": "Gestion des tournées de prévente WAFA",
+  "name": "GDS WAFA",
+  "short_name": "GDS WAFA",
+  "description": "inventory management is easy with us",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f1117",
