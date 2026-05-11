@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="fr" dir="ltr">
+<head>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+  <meta name="theme-color" content="#0f1117"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="OwDoo"/>
+  <title>OwDoo</title>
+  <link rel="manifest" href="/manifest.json"/>
+  <link rel="apple-touch-icon" href="/icons/icon192.png"/>
+  <link rel="stylesheet" href="/src/style.css"/>
+    <link rel="icon" type="image/png" href="/icons/favicon.png">
+	
+  <style>
+    /* ── M&R color variable ──────────────────────────────────── */
+    :root {
+      --mr-color: #8B5CF6;
+    }
+
+    /* ── M&R tab: width auto (not equal to other tabs) ───────── */
+    .mode-switcher {
+      display: flex !important;
+      grid-template-columns: unset !important;
+      gap: 4px;
+    }
+    .mode-btn[data-mode="prevente"],
+    .mode-btn[data-mode="livraison"] {
+      flex: 1;
+    }
+    .mode-btn--mr {
+      flex: 0 0 auto !important;
+      padding-left: 8px !important;
+      padding-right: 8px !important;
+    }
+    .mode-btn--gds {
+      flex: 0 0 auto !important;
+      padding-left: 8px !important;
+      padding-right: 8px !important;
+    }
+    .mode-btn[data-mode="gds"].mode-btn--active {
+      background: #ECFDF5;
+      border-color: var(--gds-color);
+      color: var(--gds-color);
+      box-shadow: 0 0 8px rgba(16,185,129,.2);
+    }
+    .mode-btn[data-mode="mr"].mode-btn--active {
+      background: #F5F3FF;
+      border-color: var(--mr-color);
+      color: var(--mr-color);
+      box-shadow: 0 0 8px rgba(139,92,246,.2);
+    }
+
+    /* ── Date Switcher PWA — new arrow-based bar ─────────────── */
+    .date-switcher-bar {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      background: var(--bg2, #1e2336);
+      border-bottom: 1px solid var(--border, #2a2f45);
+      height: 34px;
+      overflow: hidden;
+    }
+    .ds-arrow {
+      flex-shrink: 0;
+      width: 36px;
+      height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: none;
+      border: none;
+      color: var(--text2, #94a3b8);
+      cursor: pointer;
+      transition: background .15s, color .15s;
+    }
+    .ds-arrow:hover:not(:disabled) { background: var(--bg3, #252a3d); color: var(--text1, #e2e8f0); }
+    .ds-arrow--disabled, .ds-arrow:disabled { opacity: .35; cursor: default; }
+    .ds-label {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text2, #94a3b8);
+      cursor: pointer;
+      user-select: none;
+      transition: background .15s;
+      height: 100%;
+    }
+    .ds-label:hover { background: var(--bg3, #252a3d); }
+    .ds-label--today { color: var(--accent, #4f8ef7); }
+    .ds-date-text { letter-spacing: .03em; }
+    .ds-today-pill {
+      font-size: 9px;
+      background: var(--accent, #4f8ef7);
+      color: #fff;
+      border-radius: 9px;
+      padding: 1px 5px;
+      font-weight: 700;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- LOGIN SCREEN -->
+  <div id="loginScreen" style="display:none;position:fixed;inset:0;z-index:9999;background:#0f1117;flex-direction:column;align-items:center;justify-content:center;gap:14px">
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#4f8ef7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div style="color:#e2e8f0;font-size:15px;font-weight:700">OwDoo</div>
+    <div style="color:#64748b;font-size:11px;margin-bottom:4px">Connexion requise</div>
+    <input id="loginUser" type="text" placeholder="Identifiant" autocomplete="username"
+      style="width:220px;padding:10px 12px;border-radius:8px;border:1px solid #2a2f45;background:#1e2336;color:#e2e8f0;font-size:13px;outline:none"/>
+    <input id="loginPass" type="password" placeholder="Mot de passe" autocomplete="current-password"
+      style="width:220px;padding:10px 12px;border-radius:8px;border:1px solid #2a2f45;background:#1e2336;color:#e2e8f0;font-size:13px;outline:none"/>
+    <button id="loginBtn"
+      style="width:220px;padding:10px;border-radius:8px;background:#4f8ef7;color:#fff;font-size:13px;font-weight:700;border:none;cursor:pointer">
+      Se connecter
+    </button>
+    <div id="loginErr" style="color:#f87171;font-size:11px;min-height:16px"></div>
+  </div>
+
+  <div id="app">
+
+    <!-- HEADER -->
+    <header class="header">
+      <div class="logo">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
+            stroke="#4f8ef7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="logo-text"><b>OwDoo</b></span>
+      </div>
+      <div class="header-right">
+        <button id="btnInstallPwa" class="icon-btn" title="Installer l'application" style="display:none">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </button>
+        <button id="btnShowDashboard" class="icon-btn" title="Afficher Dashboard" style="display:none">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+            <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+          </svg>
+        </button>
+        <button id="btnSettings" class="icon-btn" title="Paramètres">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- MAIN VIEW -->
+    <div id="viewMain" class="view active" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;">
+      <div id="mainContentArea" style="flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden">
+
+<div id="gdsView" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;">
+  <div style="display:flex;gap:0;background:var(--bg2);border-bottom:1px solid var(--border);flex-shrink:0;">
+    <button id="gdsTabStock" class="gds-tab gds-tab--active" onclick="gdsShowTab('stock')">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="2" y1="9" x2="22" y2="9"/></svg>
+      Stock GDS
+    </button>
+    <button id="gdsTabVans" class="gds-tab" onclick="gdsShowTab('vans')">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+      Vans
+    </button>
+    <button id="gdsTabTransferts" class="gds-tab" onclick="gdsShowTab('transferts')">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      Transferts
+    </button>
+    <button id="gdsTabPreparation" class="gds-tab" onclick="gdsShowTab('preparation')">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      Preparation
+    </button>
+  </div>
+  <div id="gdsContent"            style="flex:1;overflow-y:auto;"></div>
+  <div id="gdsVansContent"        style="flex:1;overflow-y:auto;display:none;"></div>
+  <div id="gdsTransfertsContent"  style="flex:1;overflow-y:auto;display:none;position:relative;"></div>
+  <div id="gdsPreparationContent" style="flex:1;overflow-y:auto;display:none;"></div>
+</div>
+
+        <div class="notif-panel" id="notifPanel">
+          <div class="notif-bar">
+            <span class="notif-label">
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+              </svg>
+            </span>
+            <div id="notifList" class="notif-list"></div>
+            <button id="btnClearNotifs" class="icon-btn-sm" title="Effacer log">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+      </div><!-- /mainContentArea -->
+
+    </div><!-- /viewMain -->
+
+    <!-- SETTINGS VIEW -->
+    <div id="viewSettings" class="view view--settings">
+
+      <div class="settings-fixed-bar">
+        <button id="btnBack" class="back-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+          Retour
+        </button>
+        <span class="settings-title">Paramètres</span>
+        <div class="settings-fixed-bar-right">
+          <div id="saveMsg" class="save-msg"></div>
+		  
+          
+        </div>
+      </div>
+
+      <div class="settings-scroll">
+      <div class="settings-body">
+
+
+        <!-- Print Settings -->
+        <div class="settings-section">
+          <div class="section-title-row">
+            <label class="settings-label" style="margin:0">Impression Chargement GDS</label>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:6px;">
+            <label style="font-size:11px;color:var(--text2)">Afficher colonne "Total U"</label>
+            <input type="checkbox" id="toggleTotalU" style="width:16px;height:16px;cursor:pointer;"/>
+          </div>
+        </div>
+
+        <!-- Category Order -->
+        <div class="settings-section">
+          <div class="section-title-row">
+            <label class="settings-label" style="margin:0">Ordre des catégories</label>
+            <button id="btnRefreshCats" class="gds-refresh-btn">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>
+              </svg>
+              Actualiser
+            </button>
+          </div>
+          <p class="settings-hint">Faites glisser pour réordonner. S'applique à Stock, Vans, Préparation et impressions PDF.</p>
+          <div id="categoryOrderList" style="margin-top:6px;display:flex;flex-direction:column;gap:4px;"></div>
+        </div>
+
+      </div>
+      </div><!-- /settings-scroll -->
+    </div><!-- /viewSettings -->
+
+
+  </div><!-- /app -->
+
+  <!-- Scripts — order matters -->
+  <script src="/src/lib/xlsx.full.min.js"></script>
+  <script src="/src/storage.js"></script>
+  <script src="/src/utils.js"></script>
+  <script src="/src/renderer.js"></script>
+<script src="/src/app.js"></script>
+</body>
+</html>

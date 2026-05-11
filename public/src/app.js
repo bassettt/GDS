@@ -1,0 +1,3597 @@
+// ============================================================
+// src/app.js — Wafa PWA v1.0
+// ORCHESTRATION: state + events + RPC calls (direct, no SW proxy)
+// No chrome.* APIs. No alarms. No cloud. No injection.
+// Auth via browser cookies (credentials: include in fetch).
+// ============================================================
+// ── Login guard ───────────────────────────────────────────────
+async function _checkAndLogin() {
+  // اختبر إذا كانت الـ session موجودة
+  try {
+    const r = await fetch("/api/web/dataset/call_kw", {
+      method: "POST",
+      credentials: "include",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        jsonrpc:"2.0", method:"call", id:0,
+        params: { model:"res.users", method:"read", args:[[1],["name"]], kwargs:{} }
+      })
+    });
+    const j = await r.json();
+    if (j?.result) return; // session valid ✓
+  } catch(_) {}
+
+  // Session غير موجودة — اعرض شاشة Login
+  const screen = document.getElementById("loginScreen");
+  screen.style.display = "flex";
+
+  await new Promise(resolve => {
+    function doLogin() {
+      const login    = document.getElementById("loginUser").value.trim();
+      const password = document.getElementById("loginPass").value.trim();
+      const errEl    = document.getElementById("loginErr");
+      const btn      = document.getElementById("loginBtn");
+      if (!login || !password) { errEl.textContent = "Remplissez tous les champs"; return; }
+      errEl.textContent = "";
+      btn.textContent = "Connexion…";
+      btn.disabled = true;
+
+      // جلب اسم قاعدة البيانات أولاً
+      fetch("/api/web/database/list", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({jsonrpc:"2.0", method:"call", id:1, params:{}})
+      })
+      .then(r => r.json())
+      .then(d => {
+        const db = (d?.result || [])[0];
+        if (!db) throw new Error("Base de données introuvable");
+        return fetch("/api/web/session/authenticate", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            jsonrpc:"2.0", method:"call", id:2,
+            params: { db, login, password }
+          })
+        });
+      })
+      .then(r => r.json())
+      .then(d => {
+        if (d?.result?.uid) {
+          screen.style.display = "none";
+          resolve();
+        } else {
+          throw new Error("Identifiants incorrects");
+        }
+      })
+      .catch(e => {
+        document.getElementById("loginErr").textContent = e.message;
+        btn.textContent = "Se connecter";
+        btn.disabled = false;
+      });
+    }
+
+    document.getElementById("loginBtn").addEventListener("click", doLogin);
+    ["loginUser","loginPass"].forEach(id => {
+      document.getElementById(id).addEventListener("keydown", e => {
+        if (e.key === "Enter") doLogin();
+      });
+    });
+  });
+}
+const ODOO_BASE = "https://wafa.presalio.com";
+
+// ── App State ─────────────────────────────────────────────────
+const App = {
+  settings:  null,
+  currentMode: "gds",
+};
+
+// ── Constants ─────────────────────────────────────────────────
+const MODE_CFG = {
+  gds: { label:"GDS", color:"var(--gds-color)" },
+};
+
+// ── Category order helper ──────────────────────────────────────
+function _getCatOrder() {
+  return (App.settings?.categoryOrder) || [];
+}
+function _sortCats(cats) {
+  const order = _getCatOrder();
+  if (!order.length) return [...cats].sort();
+  return [...cats].sort((a, b) => {
+    const ia = order.indexOf(a);
+    const ib = order.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+}
+
+
+
+
+
+
+// ── Init ──────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", async () => {
+  await _checkAndLogin();
+  await loadData();
+  setMode("gds");
+  renderSettings();
+  bindEvents();
+
+  // Register service worker
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }
+});
+
+// ── Load data ─────────────────────────────────────────────────
+async function loadData() {
+  App.settings = await Storage.getSettings();
+  // جلب الإعدادات من Firebase
+  try {
+    const r = await fetch(`${_FB_DB_URL}/settings.json`);
+    const fb = await r.json();
+    if (fb) {
+      if (fb.categoryOrder?.length) App.settings.categoryOrder = fb.categoryOrder;
+      if (fb.showTotalU !== undefined) App.settings.showTotalU = fb.showTotalU;
+    }
+  } catch(e) { console.warn("Firebase load failed:", e); }
+}
+
+// ── GDS Stock View ────────────────────────────────────────────
+const GDS_WAREHOUSE_ID = 213;
+const GDS_COLLAPSED_KEY = "wafa_gds_collapsed";
+const GDS_VANS_COLLAPSED_KEY = "wafa_gds_vans_collapsed";
+const GDS_VAN_LOCATION_PARENT = 212; // غيّر هذا إلى ID المجلد الأب لمواقع الفانات في Odoo
+
+function _gdsGetCollapsed() {
+  try { return JSON.parse(localStorage.getItem(GDS_COLLAPSED_KEY) || "{}"); } catch(_) { return {}; }
+}
+function _gdsSetCollapsed(obj) {
+  try { localStorage.setItem(GDS_COLLAPSED_KEY, JSON.stringify(obj)); } catch(_) {}
+}
+function gdsToggleCategory(cat) {
+  const collapsed = _gdsGetCollapsed();
+  collapsed[cat] = !collapsed[cat];
+  _gdsSetCollapsed(collapsed);
+  // toggle DOM بدون re-render
+  const safeId = CSS.escape(cat);
+  const body   = document.getElementById("gdsbody_" + cat);
+  const arrow  = document.getElementById("gdsarrow_" + cat);
+  if (body)  body.style.display  = collapsed[cat] ? "none" : "";
+  if (arrow) arrow.style.transform = collapsed[cat] ? "rotate(-90deg)" : "";
+}
+function gdsExpandAll() {
+  _gdsSetCollapsed({});
+  document.querySelectorAll("[id^='gdsbody_']").forEach(el => el.style.display = "");
+  document.querySelectorAll("[id^='gdsarrow_']").forEach(el => el.style.transform = "");
+}
+
+function gdsCollapseAll() {
+  const collapsed = {};
+  document.querySelectorAll("[id^='gdsbody_']").forEach(el => {
+    el.style.display = "none";
+    const cat = el.id.replace("gdsbody_", "");
+    collapsed[cat] = true;
+  });
+  document.querySelectorAll("[id^='gdsarrow_']").forEach(el => el.style.transform = "rotate(-90deg)");
+  _gdsSetCollapsed(collapsed);
+}
+function _gdsVansGetCollapsed() {
+  try { return JSON.parse(localStorage.getItem(GDS_VANS_COLLAPSED_KEY) || "{}"); } catch(_) { return {}; }
+}
+function _gdsVansSetCollapsed(obj) {
+  try { localStorage.setItem(GDS_VANS_COLLAPSED_KEY, JSON.stringify(obj)); } catch(_) {}
+}
+function gdsVansToggleVan(vanId) {
+  const collapsed = _gdsVansGetCollapsed();
+  collapsed[vanId] = !collapsed[vanId];
+  _gdsVansSetCollapsed(collapsed);
+  const body  = document.getElementById("gdsvanbody_" + vanId);
+  const arrow = document.getElementById("gdsvanarrow_" + vanId);
+  if (body)  body.style.display    = collapsed[vanId] ? "none" : "";
+  if (arrow) arrow.style.transform = collapsed[vanId] ? "rotate(-90deg)" : "";
+}
+function gdsVansExpandAll() {
+  _gdsVansSetCollapsed({});
+  document.querySelectorAll("[id^='gdsvanbody_']").forEach(el => el.style.display = "");
+  document.querySelectorAll("[id^='gdsvanarrow_']").forEach(el => el.style.transform = "");
+}
+function gdsVansCollapseAll() {
+  const collapsed = {};
+  document.querySelectorAll("[id^='gdsvanbody_']").forEach(el => {
+    el.style.display = "none";
+    const id = el.id.replace("gdsvanbody_", "");
+    collapsed[id] = true;
+  });
+  document.querySelectorAll("[id^='gdsvanarrow_']").forEach(el => el.style.transform = "rotate(-90deg)");
+  _gdsVansSetCollapsed(collapsed);
+}
+
+const _gdsTransfertsFilters = {
+  states: [],      // [] = الكل
+  date: new Date().toISOString().slice(0,10),  // تاريخ اليوم افتراضياً
+  limit: 20,
+};
+
+async function renderGdsTransferts() {
+  const el = document.getElementById("gdsTransfertsContent");
+  if (!el) return;
+  el.innerHTML = `<div class="gds-refresh-bar">
+    <button class="gds-refresh-btn" onclick="renderGdsTransferts()">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>
+      </svg>
+      Actualiser
+    </button>
+    <span class="gds-last-updated">Chargement des transferts…</span>
+  </div>
+  <div class="gds-loading">Recherche des transferts…</div>`;
+
+  try {
+    // ── شريط الفلاتر ─────────────────────────────────
+    const allStates = [
+      { key: "draft",     label: "Brouillon",  color: "#94a3b8" },
+      { key: "waiting",   label: "En attente", color: "#f59e0b" },
+      { key: "confirmed", label: "Confirmé",   color: "#3b82f6" },
+      { key: "assigned",  label: "Prêt",       color: "#8b5cf6" },
+      { key: "done",      label: "Validé",     color: "#22c55e" },
+    ];
+
+    const f = _gdsTransfertsFilters;
+
+    const stateBtns = allStates.map(s => {
+      const active = f.states.includes(s.key);
+      return `<button class="gds-tr-filter-btn ${active ? "gds-tr-filter-btn--active" : ""}"
+        style="${active ? `background:${s.color}22;border-color:${s.color};color:${s.color}` : ""}"
+        onclick="_gdsTrToggleState('${s.key}')">
+        ${s.label}
+      </button>`;
+    }).join("");
+
+    const dateVal = f.date || "";
+
+    el.innerHTML = `<div class="gds-tr-filters" style="position:sticky;top:0;z-index:10;background:var(--bg2,#1e2336);">
+      <div class="gds-tr-filter-row">
+        <span class="gds-tr-filter-label">État</span>
+        <div class="gds-tr-filter-states">${stateBtns}</div>
+      </div>
+      <div class="gds-tr-filter-row">
+        <span class="gds-tr-filter-label">Date</span>
+        <input type="text" id="gdsTrDateInput" class="gds-tr-date-input"
+          placeholder="jj/mm/aaaa"
+          value="${dateVal ? dateVal.split('-').reverse().join('/') : ''}"
+          readonly style="cursor:pointer;min-width:110px;"/>
+        ${dateVal ? `<button class="gds-tr-clear-date" onclick="_gdsTrSetDate(null)">✕</button>` : ""}
+        <span class="gds-tr-filter-label" style="margin-left:12px">Max</span>
+        <input type="number" class="gds-tr-limit-input" min="1" max="500" value="${f.limit}"
+          onchange="_gdsTrSetLimit(this.value)"/>
+      </div>
+    </div>
+    <div class="gds-loading">Chargement…</div>`;
+    _gdsTrInitDatePicker(f.date);
+    const resLoc = await fetch("/api/web/dataset/call_kw", {
+      method: "POST", credentials: "include",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        jsonrpc:"2.0", method:"call", id:20,
+        params: {
+          model: "stock.location",
+          method: "search_read",
+          args: [[["location_id","=",GDS_VAN_LOCATION_PARENT],["usage","=","internal"]]],
+          kwargs: { fields: ["id","name"], limit: 100 }
+        }
+      })
+    });
+    const locData = await resLoc.json();
+    const vanIds = (locData?.result || []).map(l => l.id);
+    const allIds = [...vanIds, GDS_WAREHOUSE_ID];
+
+    // جلب التحويلات
+    const resPick = await fetch("/api/web/dataset/call_kw", {
+      method: "POST", credentials: "include",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        jsonrpc:"2.0", method:"call", id:21,
+        params: {
+          model: "stock.picking",
+          method: "search_read",
+          args: [(() => {
+            const domain = [
+              ["state","not in",["cancel"]],
+              ["location_id","in",allIds],
+              ["location_dest_id","in",allIds],
+            ];
+            if (f.states.length) domain.push(["state","in",f.states]);
+            if (f.date) {
+              domain.push(["scheduled_date",">=", f.date + " 00:00:00"]);
+              domain.push(["scheduled_date","<=", f.date + " 23:59:59"]);
+            }
+            return domain;
+          })()],
+          kwargs: {
+            fields: ["id","name","location_id","location_dest_id","partner_id","scheduled_date","state"],
+            limit: f.limit,
+            order: "id desc"
+          }
+        }
+      })
+    });
+    const pickData = await resPick.json();
+    const transfers = pickData?.result || [];
+
+    const stateLabel = {
+      draft:       { label: "Brouillon",  color: "#94a3b8" },
+      waiting:     { label: "En attente", color: "#f59e0b" },
+      confirmed:   { label: "Confirmé",   color: "#3b82f6" },
+      assigned:    { label: "Prêt",       color: "#8b5cf6" },
+      done:        { label: "Validé",     color: "#22c55e" },
+    };
+
+    const now = new Date().toLocaleTimeString("fr-FR");
+
+    let rows = "";
+    transfers.forEach(t => {
+      const st    = stateLabel[t.state] || { label: t.state, color: "#94a3b8" };
+      const date  = t.scheduled_date ? t.scheduled_date.slice(0,16).replace("T"," ") : "—";
+      const from  = t.location_id      ? t.location_id[1].split("/").pop().trim()      : "—";
+      const to    = t.location_dest_id ? t.location_dest_id[1].split("/").pop().trim() : "—";
+      const partner = t.partner_id     ? t.partner_id[1]                               : "—";
+      rows += `<tr>
+        <td><span class="gds-tr-ref">${escHtml(t.name)}</span></td>
+        <td>${escHtml(from)}</td>
+        <td>${escHtml(to)}</td>
+        <td style="color:var(--text2)">${escHtml(partner)}</td>
+        <td style="color:var(--text3)">${date}</td>
+        <td><span class="gds-tr-state" style="background:${st.color}20;color:${st.color}">${st.label}</span></td>
+        <td style="display:flex;gap:4px;align-items:center;">
+          <button class="gds-refresh-btn" onclick="window.open((ODOO_BASE||'')+'/web#id=${t.id}&action=233&active_id=76&model=stock.picking&view_type=form&cids=1&menu_id=115','_blank')" style="padding:2px 8px;">↗</button>
+          <button class="gds-refresh-btn" style="padding:2px 8px;background:var(--bg3);color:var(--text);" onclick="gdsShowPickingDetail(${t.id},'${escHtml(t.name)}')">☰</button>
+        </td>
+      </tr>`;
+    });
+
+    const filtersHtml = el.querySelector(".gds-tr-filters")?.outerHTML || "";
+    // سيُعاد تهيئة picker بعد inject
+
+    if (!rows) {
+      el.innerHTML = filtersHtml + `<div class="gds-loading" style="position:sticky;top:0;">Aucun transfert trouvé.</div>`;
+	        _gdsTrInitDatePicker(f.date);
+
+      return;
+    }
+
+    el.innerHTML = filtersHtml + `<div class="gds-refresh-bar" style="position:sticky;top:0;z-index:9;background:var(--bg2,#1e2336);">
+      <button class="gds-refresh-btn" onclick="renderGdsTransferts()">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>
+        </svg>
+        Actualiser
+      </button>
+      <span class="gds-last-updated">Mis à jour : ${now} — ${transfers.length} transfert(s)</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="gds-table gds-tr-table">
+        <thead><tr>
+          <th>Référence</th>
+          <th>De</th>
+          <th>Vers</th>
+          <th>Contact</th>
+          <th>Date</th>
+          <th>État</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+   </div>`;
+    _gdsTrInitDatePicker(f.date);
+
+  } catch(e) {
+    el.innerHTML = `<div class="gds-loading" style="color:var(--danger)">Erreur: ${e.message}</div>`;
+  }
+}
+async function gdsShowPickingDetail(pickingId, pickingName) {
+  // إنشاء modal
+  let modal = document.getElementById("gds-picking-detail-modal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "gds-picking-detail-modal";
+    modal.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;";
+    modal.innerHTML = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;width:90%;max-width:600px;max-height:80vh;display:flex;flex-direction:column;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);">
+        <span id="gds-pd-title" style="font-weight:600;font-size:13px;"></span>
+        <button onclick="document.getElementById('gds-picking-detail-modal').remove()" style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--text2);">✕</button>
+      </div>
+      <div id="gds-pd-body" style="overflow-y:auto;padding:10px 14px;"></div>
+    </div>`;
+    document.body.appendChild(modal);
+  }
+
+  document.getElementById("gds-pd-title").textContent = pickingName;
+  document.getElementById("gds-pd-body").innerHTML = `<div style="color:var(--text2);text-align:center;padding:20px;">Chargement…</div>`;
+  modal.style.display = "flex";
+
+  try {
+    const baseUrl = ODOO_BASE;
+    const res = await fetch(`/api/web/dataset/call_kw`, {
+      method: "POST",
+      credentials: "include",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        jsonrpc:"2.0", method:"call", id:99,
+        params: {
+          model: "stock.move",
+          method: "search_read",
+          args: [[["picking_id","=",pickingId],["state","!=","cancel"]]],
+          kwargs: {
+            fields: ["product_id","product_uom_qty"],
+            limit: 200
+          }
+        }
+      })
+    });
+    const data = await res.json();
+    const moves = data?.result || [];
+
+    if (!moves.length) {
+      document.getElementById("gds-pd-body").innerHTML = `<div style="color:var(--text2);text-align:center;padding:20px;">Aucun produit.</div>`;
+      return;
+    }
+
+    const cartonSize = (m) => m.product_uom?.[1]?.includes("Carton") ? 1 : null;
+
+    let html = `<table class="gds-table" style="width:100%">
+      <thead><tr>
+        <th>Produit</th>
+        <th style="text-align:right">C/F</th>
+        <th style="text-align:right">U</th>
+      </tr></thead><tbody>`;
+
+    // جلب packaging لكل product
+    const productIds = [...new Set(moves.map(m => m.product_id?.[0]).filter(Boolean))];
+    const resPkg = await fetch(`/api/web/dataset/call_kw`, {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:100, params:{
+        model:"product.packaging", method:"search_read",
+        args:[[["product_id","in",productIds]]],
+        kwargs:{ fields:["product_id","qty"], limit:1000 }
+      }})
+    });
+    const pkgData = await resPkg.json();
+    const pkgMap = {};
+    (pkgData?.result || []).forEach(p => { pkgMap[p.product_id[0]] = p.qty || 0; });
+	const dupProducts = new Set();
+    const seenProducts = new Set();
+    moves.forEach(m => {
+      const pid = m.product_id?.[0];
+      if (seenProducts.has(pid)) dupProducts.add(pid);
+      seenProducts.add(pid);
+    });
+
+    moves.forEach(m => {
+      const name = m.product_id?.[1] || "—";
+      const pid = m.product_id?.[0];
+      const qty = m.product_uom_qty || 0;
+      const pkgQty = pkgMap[pid] || 0;
+      const cf = pkgQty > 0 ? Math.floor(qty / pkgQty) : "—";
+      const u = pkgQty > 0 ? Math.round(qty % pkgQty) : qty;
+      html += `<tr style="${dupProducts.has(pid) ? 'background:var(--bg3);' : ''}">
+        <td>${escHtml(name)}</td>
+        <td style="text-align:right">${cf}</td>
+        <td style="text-align:right">${u}</td>
+      </tr>`;
+    });
+
+    html += `</tbody></table>`;
+    document.getElementById("gds-pd-body").innerHTML = html;
+
+  } catch(e) {
+    document.getElementById("gds-pd-body").innerHTML = `<div style="color:var(--danger)">Erreur: ${e.message}</div>`;
+  }
+}
+function _gdsTrToggleState(key) {
+  const f = _gdsTransfertsFilters;
+  const i = f.states.indexOf(key);
+  if (i === -1) f.states.push(key);
+  else f.states.splice(i, 1);
+  renderGdsTransferts();
+}
+function _gdsTrSetDate(val) {
+  _gdsTransfertsFilters.date = val || null;
+  renderGdsTransferts();
+}
+
+function _gdsTrInitDatePicker(currentVal) {
+  function _load(cb) {
+    if (window.flatpickr) { cb(); return; }
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css";
+    document.head.appendChild(link);
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/flatpickr";
+    s.onload = cb;
+    document.head.appendChild(s);
+  }
+  _load(() => {
+    const el = document.getElementById("gdsTrDateInput");
+    if (!el || el._flatpickr) return;
+    flatpickr(el, {
+      dateFormat: "d/m/Y",
+      allowInput: false,
+      locale: { firstDayOfWeek: 1 },
+      defaultDate: currentVal ? (() => {
+        const [y,m,d] = currentVal.split("-");
+        return new Date(+y, +m-1, +d);
+      })() : null,
+      onChange: ([date]) => {
+        if (!date) return;
+        const y = date.getFullYear();
+        const m = String(date.getMonth()+1).padStart(2,"0");
+        const d = String(date.getDate()).padStart(2,"0");
+        _gdsTrSetDate(`${y}-${m}-${d}`);
+      }
+    });
+  });
+}
+function _gdsTrSetLimit(val) {
+  const n = Math.min(500, Math.max(1, parseInt(val) || 100));
+  _gdsTransfertsFilters.limit = n;
+  renderGdsTransferts();
+}
+async function renderGdsStock() {
+  const el = document.getElementById("gdsContent");
+  if (!el) return;
+  el.innerHTML = `<div class="gds-refresh-bar" style="position:sticky;top:0;z-index:11;background:var(--bg2,#1e2336);">
+    <button class="gds-refresh-btn" onclick="renderGdsStock()">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>
+      </svg>
+      Actualiser
+    </button>
+    <span class="gds-last-updated" id="gdsLastUpdated">Chargement…</span>
+  </div>
+  <div class="gds-loading">Chargement du stock…</div>`;
+
+  try {
+    const res = await fetch("/api/web/dataset/call_kw", {
+      method: "POST", credentials: "include",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        jsonrpc:"2.0", method:"call", id:1,
+        params: {
+          model: "stock.quant",
+          method: "search_read",
+          args: [[["location_id","=",GDS_WAREHOUSE_ID],["quantity",">",0]]],
+          kwargs: {
+            fields: ["product_id","quantity","reserved_quantity","packaging_quantity_1","packaging_quantity_2"],
+            limit: 2000,
+          }
+        }
+      })
+    });
+    const data = await res.json();
+    const quants = data?.result || [];
+
+    const productIds = [...new Set(quants.map(q => q.product_id[0]))];
+    const res2 = await fetch("/api/web/dataset/call_kw", {
+      method: "POST", credentials: "include",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        jsonrpc:"2.0", method:"call", id:2,
+        params: {
+          model: "product.product",
+          method: "search_read",
+          args: [[["id","in",productIds]]],
+          kwargs: { fields: ["id","name","categ_id","uom_id","uom_po_id"], limit: 2000 }
+        }
+      })
+    });
+    const data2 = await res2.json();
+    const products = {};
+    (data2?.result || []).forEach(p => { products[p.id] = p; });
+
+    const stockMap = {};
+    quants.forEach(q => {
+      const pid = q.product_id[0];
+      if (!stockMap[pid]) stockMap[pid] = { qty: 0, carton: 0, reserved: 0, unitSize: 0 };
+      const unitSize = q.packaging_quantity_1 > 0 ? q.quantity / q.packaging_quantity_1 : 0;
+      stockMap[pid].qty      += q.quantity;
+      stockMap[pid].carton   += q.packaging_quantity_1 || 0;
+      stockMap[pid].reserved += q.reserved_quantity || 0;
+      if (unitSize > 0) stockMap[pid].unitSize = unitSize;
+    });
+
+    const byCategory = {};
+    Object.entries(stockMap).forEach(([pid, s]) => {
+      const p = products[pid];
+      if (!p) return;
+      const catName = p.categ_id ? p.categ_id[1] : "Autre";
+      if (!byCategory[catName]) byCategory[catName] = [];
+      byCategory[catName].push({ name: p.name, qty: stockMap[pid].qty, carton: stockMap[pid].carton, reserved: stockMap[pid].reserved, unitSize: stockMap[pid].unitSize });
+    });
+
+    const now        = new Date().toLocaleTimeString("fr-FR");
+    const sortedCats = _sortCats(Object.keys(byCategory));
+    const collapsed  = _gdsGetCollapsed();
+
+    let html = `<div class="gds-refresh-bar">
+      <button class="gds-refresh-btn" onclick="renderGdsStock()">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>
+        </svg>
+        Actualiser
+      </button>
+      <button class="gds-refresh-btn" onclick="gdsExpandAll()">▼ Tout ouvrir</button>
+      <button class="gds-refresh-btn" onclick="gdsCollapseAll()">▲ Tout fermer</button>
+      <span class="gds-last-updated">Mis à jour : ${now}</span>
+    </div>`;
+
+    sortedCats.forEach(cat => {
+      const items     = byCategory[cat].sort((a,b) => a.name.localeCompare(b.name));
+      const isCollapsed = !!collapsed[cat];
+      const escapedCat  = escHtml(cat);
+      // نستخدم data-cat بدل id للـ onclick لتجنب مشاكل الـ escaping
+      html += `<div class="gds-category">
+        <div class="gds-category-title gds-category-toggle" data-cat="${escapedCat}" onclick="gdsToggleCategory(this.dataset.cat)">
+		<svg id="gdsarrow_${escapedCat}" class="gds-collapse-arrow" style="transform:${isCollapsed ? "rotate(-90deg)" : ""}" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+          ${escapedCat}
+        </div>
+        <div id="gdsbody_${escapedCat}" style="display:${isCollapsed ? "none" : ""}">
+          <table class="gds-table">
+            <thead><tr>
+              <th>Produit</th>
+              <th style="text-align:right">Stock C/F</th>
+              <th style="text-align:right">Stock U</th>
+              <th style="text-align:right;font-size:9px;color:var(--text3)">qty</th>
+              <th style="text-align:right">Réservé C/F</th>
+              <th style="text-align:right">Réservé U</th>
+              <th style="text-align:right;font-size:9px;color:var(--text3)">qty</th>
+            </tr></thead>
+            <tbody>`;
+      items.forEach(item => {
+        const carton    = Math.floor(item.carton);
+        const uniteSize = item.carton > 0 ? item.qty / item.carton : 0;
+        const uniteRest = item.carton > 0 ? Math.round(item.qty % uniteSize) : Math.round(item.qty);
+        const unitSize  = item.unitSize > 0 ? item.unitSize : (item.carton > 0 ? item.qty / item.carton : 0);
+        const resCarton = unitSize > 0 ? Math.floor(item.reserved / unitSize) : 0;
+        const resUnite  = unitSize > 0 ? Math.round(item.reserved % unitSize) : Math.round(item.reserved);
+        html += `<tr>
+          <td>${escHtml(item.name)}</td>
+          <td class="gds-qty">${carton > 0 ? carton : "—"}</td>
+          <td class="gds-qty">${uniteRest > 0 ? uniteRest : "—"}</td>
+          <td class="gds-qty" style="opacity:0.7;font-size:10px;">${item.qty > 0 ? Math.round(item.qty) : "—"}</td>
+          <td class="gds-qty gds-qty--reserved">${item.reserved > 0 ? (resCarton > 0 ? resCarton : "—") : "—"}</td>
+          <td class="gds-qty gds-qty--reserved">${item.reserved > 0 ? (resUnite  > 0 ? resUnite  : "0") : "—"}</td>
+          <td class="gds-qty gds-qty--reserved" style="opacity:0.7;font-size:10px;">${item.reserved > 0 ? Math.round(item.reserved) : "—"}</td>
+        </tr>`;
+      });
+      html += `</tbody></table></div></div>`;
+    });
+
+    el.innerHTML = html;
+
+  } catch(e) {
+    el.innerHTML = `<div class="gds-loading" style="color:var(--danger)">Erreur: ${e.message}</div>`;
+  }
+
+}
+async function renderGdsVans() {
+  const el = document.getElementById("gdsVansContent");
+  if (!el) return;
+  el.innerHTML = `<div class="gds-refresh-bar">
+    <button class="gds-refresh-btn" onclick="renderGdsVans()">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>
+      </svg>
+      Actualiser
+    </button>
+    <span class="gds-last-updated">Chargement des vans…</span>
+  </div>
+  <div class="gds-loading">Recherche des véhicules…</div>`;
+
+  try {
+    // 1) جلب مواقع الفانات (child locations)
+    const resLoc = await fetch("/api/web/dataset/call_kw", {
+      method: "POST", credentials: "include",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        jsonrpc:"2.0", method:"call", id:10,
+        params: {
+          model: "stock.location",
+          method: "search_read",
+          args: [[["location_id","=",GDS_VAN_LOCATION_PARENT],["usage","=","internal"]]],
+          kwargs: { fields: ["id","name","complete_name"], limit: 100 }
+        }
+      })
+    });
+    const locData = await resLoc.json();
+    const vanLocations = locData?.result || [];
+
+    if (!vanLocations.length) {
+      el.innerHTML = `<div class="gds-loading">Aucun véhicule trouvé.</div>`;
+      return;
+    }
+
+    // 2) جلب المخزون لكل المواقع دفعة واحدة
+    const locIds = vanLocations.map(l => l.id).filter(id => id !== GDS_WAREHOUSE_ID);
+    const resQuant = await fetch("/api/web/dataset/call_kw", {
+      method: "POST", credentials: "include",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        jsonrpc:"2.0", method:"call", id:11,
+        params: {
+          model: "stock.quant",
+          method: "search_read",
+          args: [[["location_id","in",locIds],["quantity",">",0]]],
+          kwargs: {
+            fields: ["product_id","location_id","quantity","reserved_quantity","packaging_quantity_1"],
+            limit: 5000,
+          }
+        }
+      })
+    });
+    const quantData = await resQuant.json();
+    const quants = quantData?.result || [];
+
+    // 3) جلب معلومات المنتجات
+    const productIds = [...new Set(quants.map(q => q.product_id[0]))];
+    let products = {};
+    if (productIds.length) {
+      const resProd = await fetch("/api/web/dataset/call_kw", {
+        method: "POST", credentials: "include",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          jsonrpc:"2.0", method:"call", id:12,
+          params: {
+            model: "product.product",
+            method: "search_read",
+            args: [[["id","in",productIds]]],
+            kwargs: { fields: ["id","name","categ_id"], limit: 2000 }
+          }
+        })
+      });
+      const prodData = await resProd.json();
+      (prodData?.result || []).forEach(p => { products[p.id] = p; });
+    }
+
+    // 4) تجميع المخزون حسب الفان ثم حسب الفئة
+    const byVan = {}; // { locId: { name, categories: { catName: [items] } } }
+    vanLocations.forEach(loc => {
+      byVan[loc.id] = { name: loc.name, categories: {} };
+    });
+    quants.forEach(q => {
+      const locId = q.location_id[0];
+      if (!byVan[locId]) return;
+      const p = products[q.product_id[0]];
+      if (!p) return;
+      const catName = p.categ_id ? p.categ_id[1] : "Autre";
+      if (!byVan[locId].categories[catName]) byVan[locId].categories[catName] = [];
+      const carton = q.packaging_quantity_1 || 0;
+      const unitSize = carton > 0 ? q.quantity / carton : 0;
+      byVan[locId].categories[catName].push({
+        name: p.name,
+        qty: q.quantity,
+        reserved: q.reserved_quantity || 0,
+        carton,
+        unitSize,
+      });
+    });
+
+    const now = new Date().toLocaleTimeString("fr-FR");
+    const collapsed = _gdsVansGetCollapsed();
+
+    let html = `<div class="gds-refresh-bar">
+      <button class="gds-refresh-btn" onclick="renderGdsVans()">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>
+        </svg>
+        Actualiser
+      </button>
+      <button class="gds-refresh-btn" onclick="gdsVansExpandAll()">▼ Tout ouvrir</button>
+      <button class="gds-refresh-btn" onclick="gdsVansCollapseAll()">▲ Tout fermer</button>
+      <span class="gds-last-updated">Mis à jour : ${now}</span>
+    </div>`;
+
+    vanLocations.sort((a,b) => a.name.localeCompare(b.name)).filter(loc => {
+  const cats = byVan[loc.id]?.categories || {};
+  return Object.values(cats).some(arr => arr.length > 0);
+}).forEach(loc => {
+      const van = byVan[loc.id];
+      const vanId = String(loc.id);
+      const isCollapsed = !!collapsed[vanId];
+      const cats = _sortCats(Object.keys(van.categories));
+      const totalItems = Object.values(van.categories).reduce((s,arr) => s + arr.length, 0);
+
+      html += `<div class="gds-category">
+        <div class="gds-category-title gds-category-toggle" onclick="gdsVansToggleVan('${vanId}')">
+          <svg id="gdsvanarrow_${vanId}" class="gds-collapse-arrow"
+               style="transform:${isCollapsed ? "rotate(-90deg)" : ""}"
+               width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px">
+            <rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+            <circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+          </svg>
+          ${escHtml(van.name)}
+          <span style="margin-left:auto;font-size:10px;font-weight:400;color:var(--text3)">${totalItems} réf.</span>
+        </div>
+        <div id="gdsvanbody_${vanId}" style="display:${isCollapsed ? "none" : ""}">`;
+
+      if (!cats.length) {
+        html += `<div style="padding:8px 12px;font-size:11px;color:var(--text3)">Aucun stock dans ce véhicule</div>`;
+      } else {
+        cats.forEach(cat => {
+          const items = van.categories[cat].sort((a,b) => a.name.localeCompare(b.name));
+          html += `<div class="gds-van-cat-label">${escHtml(cat)}</div>
+            <table class="gds-table">
+              <thead><tr>
+                <th>Produit</th>
+                <th style="text-align:right">Stock C/F</th>
+                <th style="text-align:right">Stock U</th>
+                <th style="text-align:right;font-size:9px;color:var(--text3)">qty</th>
+                <th style="text-align:right">Réservé C/F</th>
+                <th style="text-align:right">Réservé U</th>
+                <th style="text-align:right;font-size:9px;color:var(--text3)">qty</th>
+              </tr></thead>
+              <tbody>`;
+          items.forEach(item => {
+            const carton    = Math.floor(item.carton);
+            const unite     = item.unitSize > 0 ? Math.round(item.qty % item.unitSize) : Math.round(item.qty);
+            const resCarton = item.unitSize > 0 ? Math.floor(item.reserved / item.unitSize) : 0;
+            const resUnite  = item.unitSize > 0 ? Math.round(item.reserved % item.unitSize) : Math.round(item.reserved);
+            html += `<tr>
+              <td>${escHtml(item.name)}</td>
+              <td class="gds-qty">${carton > 0 ? carton : "—"}</td>
+              <td class="gds-qty">${unite  > 0 ? unite  : "—"}</td>
+              <td class="gds-qty" style="opacity:0.7;font-size:10px;">${item.qty > 0 ? Math.round(item.qty) : "—"}</td>
+              <td class="gds-qty gds-qty--reserved">${item.reserved > 0 ? (resCarton > 0 ? resCarton : "—") : "—"}</td>
+              <td class="gds-qty gds-qty--reserved">${item.reserved > 0 ? resUnite : "—"}</td>
+              <td class="gds-qty gds-qty--reserved" style="opacity:0.7;font-size:10px;">${item.reserved > 0 ? Math.round(item.reserved) : "—"}</td>
+            </tr>`;
+          });
+          html += `</tbody></table>`;
+        });
+      }
+      html += `</div></div>`;
+    });
+
+    el.innerHTML = html;
+
+  } catch(e) {
+    el.innerHTML = `<div class="gds-loading" style="color:var(--danger)">Erreur: ${e.message}</div>`;
+  }
+}
+
+async function gdsShowTab(tab) {
+  const stockEl = document.getElementById("gdsContent");
+  const vansEl  = document.getElementById("gdsVansContent");
+  const trEl    = document.getElementById("gdsTransfertsContent");
+  const prepEl  = document.getElementById("gdsPreparationContent");
+  const btnStock = document.getElementById("gdsTabStock");
+  const btnVans  = document.getElementById("gdsTabVans");
+  const btnTr    = document.getElementById("gdsTabTransferts");
+  const btnPrep  = document.getElementById("gdsTabPreparation");
+
+  [stockEl, vansEl, trEl, prepEl].forEach(e => { if (e) e.style.display = "none"; });
+  [btnStock, btnVans, btnTr, btnPrep].forEach(b => b?.classList.remove("gds-tab--active"));
+
+  if (tab === "stock") {
+    if (stockEl) stockEl.style.display = "";
+    btnStock?.classList.add("gds-tab--active");
+  } else if (tab === "vans") {
+    if (vansEl) vansEl.style.display = "";
+    btnVans?.classList.add("gds-tab--active");
+    if (!vansEl?.innerHTML || vansEl.innerHTML.includes("Chargement")) renderGdsVans();
+  } else if (tab === "transferts") {
+    if (trEl) trEl.style.display = "";
+    btnTr?.classList.add("gds-tab--active");
+    if (!trEl?.innerHTML || trEl.innerHTML.includes("Chargement")) renderGdsTransferts();
+  } else if (tab === "preparation") {
+    if (prepEl) prepEl.style.display = "";
+    btnPrep?.classList.add("gds-tab--active");
+    await renderGdsPreparation();
+  }
+}
+const _gdsPrep = {
+  lines:            [],
+  loaded:           false,
+  finished:         false,
+  collapsed:        {},
+  isEdit:           false,
+  chargeFrom:       null,
+  chargeTo:         null,
+  chargeData:       {},
+  pickingsMap:      {},
+  byPicking:        {},
+  suggested:        {},
+ excludedPickings: [], // references exclus du calcul
+  outOfDateTransferts: [], // transferts hors date ajoutés manuellement
+};
+
+const GDS_PREP_STORAGE_KEY = "wafa_gds_preparation";
+
+// ── Firebase Realtime Database ────────────────────────────────
+const _FB_DB_URL = "https://owdoo-f265f-default-rtdb.europe-west1.firebasedatabase.app";
+const _FB_KEY    = "wafa_gds_preparation";
+
+async function _gdsPrepSaveCloud() {
+  try {
+    const data = {
+      lines:               _gdsPrep.lines,
+      loaded:              _gdsPrep.loaded,
+      finished:            _gdsPrep.finished,
+      chargeFrom:          _gdsPrep.chargeFrom,
+      chargeTo:            _gdsPrep.chargeTo,
+      chargeData:          _gdsPrep.chargeData,
+      pickingsMap:         _gdsPrep.pickingsMap,
+      byPicking:           _gdsPrep.byPicking,
+      excludedPickings:    _gdsPrep.excludedPickings,
+      outOfDateTransferts: _gdsPrep.outOfDateTransferts,
+      date:                new Date().toISOString().slice(0, 10),
+    };
+    await fetch(`${_FB_DB_URL}/${_FB_KEY}.json`, {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(data),
+    });
+  } catch(e) { console.error("[GdsPrep] saveCloud:", e); }
+}
+
+async function _gdsPrepLoadFromCloud() {
+  try {
+    const res  = await fetch(`${_FB_DB_URL}/${_FB_KEY}.json`);
+    const data = await res.json();
+    if (!data) return false;
+    const today = new Date().toISOString().slice(0, 10);
+    if (data.date !== today) return false;
+    _gdsPrep.lines = (data.lines || []).map(line => {
+      if (!line.unitSize && line.carton > 0) line.unitSize = line.qty / line.carton;
+      return line;
+    });
+    _gdsPrep.loaded     = data.loaded     || false;
+    _gdsPrep.finished   = data.finished   || false;
+    _gdsPrep.chargeFrom = data.chargeFrom || null;
+    _gdsPrep.chargeTo   = data.chargeTo   || null;
+    _gdsPrep.chargeData = {};
+    Object.entries(data.chargeData || {}).forEach(([pid, ch]) => {
+      const line = _gdsPrep.lines.find(l => l.pid === Number(pid));
+      const u    = line ? _gdsPrepUnitSize(line) : 0;
+      _gdsPrep.chargeData[Number(pid)] = {
+        chargeCarton: u > 0 ? Math.floor(ch.chargeTotal / u) : 0,
+        chargeUnite:  u > 0 ? Math.round(ch.chargeTotal % u) : Math.round(ch.chargeTotal),
+        chargeTotal:  ch.chargeTotal,
+      };
+    });
+    _gdsPrep.pickingsMap         = data.pickingsMap         || {};
+    _gdsPrep.byPicking           = data.byPicking           || {};
+    _gdsPrep.excludedPickings    = data.excludedPickings    || [];
+    _gdsPrep.outOfDateTransferts = data.outOfDateTransferts || [];
+    return true;
+  } catch(e) { console.error("[GdsPrep] loadCloud:", e); return false; }
+}
+
+// ── Datetime helpers dd/mm/yyyy ───────────────────────────────
+function _gdsPrepFmtDt(isoStr) {
+  if (!isoStr) return "";
+  const sep = isoStr.includes("T") ? "T" : " ";
+  const parts = isoStr.split(sep);
+  const datePart = parts[0] || "";
+  const timePart = parts[1] || "00:00";
+  const dateParts = datePart.split("-");
+  const y = dateParts[0], m = dateParts[1], d = dateParts[2];
+  if (!y || !m || !d) return "";
+  return `${d}/${m}/${y} ${timePart.slice(0,5)}`;
+}
+
+function _gdsPrepParseDt(str) {
+  // "10/07/2025 08:30" → "2025-07-10T08:30"
+  const match = str.match(/^(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}:\d{2})$/);
+  if (!match) return "";
+  return `${match[3]}-${match[2]}-${match[1]}T${match[4]}`;
+}
+
+let _gdsPrepPickerTarget = null;
+let _gdsPrepPickerField  = null;
+
+function _gdsPrepShowPicker(inputEl, field) {
+  _gdsPrepPickerTarget = inputEl;
+  _gdsPrepPickerField  = field;
+
+  // إزالة picker سابق
+  document.getElementById("gdsDtPickerOverlay")?.remove();
+
+  // قراءة القيمة الحالية
+  const now = new Date();
+const rawIso = _gdsPrep[field] || `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}T${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+const isoMatch = rawIso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2})/);
+const calYear0  = isoMatch ? parseInt(isoMatch[1]) : now.getFullYear();
+const calMonth0 = isoMatch ? parseInt(isoMatch[2]) - 1 : now.getMonth();
+const selDay0   = isoMatch ? parseInt(isoMatch[3]) : now.getDate();
+const timePart  = isoMatch ? isoMatch[4] : `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+
+  const overlay = document.createElement("div");
+  overlay.id = "gdsDtPickerOverlay";
+  overlay.style.cssText = "position:fixed;inset:0;z-index:9999;";
+  overlay.addEventListener("mousedown", e => {
+    if (!e.target.closest("#gdsDtPickerBox")) _gdsPrepClosePicker();
+  });
+
+  const box = document.createElement("div");
+  box.id = "gdsDtPickerBox";
+  box.style.cssText = `
+    position:absolute;background:var(--bg2);border:1px solid var(--border);
+    border-radius:10px;box-shadow:0 8px 24px #0004;padding:12px;
+    min-width:260px;z-index:10000;font-family:inherit;
+  `;
+
+  // Position sous le champ
+  const rect = inputEl.getBoundingClientRect();
+  const top  = rect.bottom + 6;
+  const left = Math.min(rect.left, window.innerWidth - 280);
+  box.style.top  = top  + "px";
+  box.style.left = left + "px";
+
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <button id="gdsDtPrev" style="background:none;border:none;font-size:16px;cursor:pointer;color:var(--text);padding:2px 8px;">‹</button>
+      <span id="gdsDtMonthYear" style="font-size:13px;font-weight:600;color:var(--text);"></span>
+      <button id="gdsDtNext" style="background:none;border:none;font-size:16px;cursor:pointer;color:var(--text);padding:2px 8px;">›</button>
+    </div>
+    <div id="gdsDtCalGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center;font-size:11px;"></div>
+    <div style="margin-top:10px;display:flex;align-items:center;gap:6px;">
+      <span style="font-size:11px;color:var(--text2);">Heure :</span>
+      <input id="gdsDtTime" type="time" value="${timePart.slice(0,5)}"
+        style="border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:12px;background:var(--bg3);color:var(--text);"/>
+    </div>
+    <div style="margin-top:10px;text-align:right;">
+      <button onclick="_gdsPrepPickerConfirm()" style="background:var(--gds-color);color:#fff;border:none;border-radius:6px;padding:5px 14px;font-size:12px;cursor:pointer;">OK</button>
+    </div>
+  `;
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  // ── Calendrier ──
+  let calYear  = calYear0;
+let calMonth = calMonth0;
+let selDay   = selDay0;
+
+  function _renderCal() {
+    const MY = document.getElementById("gdsDtMonthYear");
+    const grid = document.getElementById("gdsDtCalGrid");
+    if (!MY || !grid) return;
+    const mNames = ["Jan","Fév","Mar","Avr","Mai","Jun","Jul","Aoû","Sep","Oct","Nov","Déc"];
+    MY.textContent = `${mNames[calMonth]} ${calYear}`;
+
+    // Jours de la semaine
+    const days = ["Lu","Ma","Me","Je","Ve","Sa","Di"];
+    let html = days.map(d => `<div style="font-weight:600;color:var(--text3);font-size:10px;">${d}</div>`).join("");
+
+    const firstDay = new Date(calYear, calMonth, 1);
+    let startDow = firstDay.getDay(); // 0=Sun
+    startDow = startDow === 0 ? 6 : startDow - 1; // → 0=Mon
+    const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+    const today = new Date();
+
+    for (let i = 0; i < startDow; i++) html += "<div></div>";
+    for (let d = 1; d <= daysInMonth; d++) {
+      const isToday = d === today.getDate() && calMonth === today.getMonth() && calYear === today.getFullYear();
+      const isSel = d === selDay;
+      const bg = isSel ? "var(--gds-color)" : isToday ? "var(--accent)" : "transparent";
+      const color = (isSel||isToday) ? "#fff" : "var(--text)";
+      html += `<div onclick="_gdsPrepPickerSelDay(${d},${calMonth},${calYear})" style="cursor:pointer;border-radius:50%;padding:3px 0;background:${bg};color:${color};font-size:11px;transition:background .1s;">${d}</div>`;
+    }
+    grid.innerHTML = html;
+  }
+
+  window._gdsPrepPickerSelDay = function(d, m, y) {
+    selDay   = d;
+    calMonth = m;
+    calYear  = y;
+    // update stored iso
+    const mm = String(m+1).padStart(2,"0"), dd = String(d).padStart(2,"0");
+    const t  = (document.getElementById("gdsDtTime")?.value || "00:00");
+    const iso = `${y}-${mm}-${dd}T${t}`;
+    _gdsPrep[_gdsPrepPickerField] = iso;
+    if (_gdsPrepPickerTarget) _gdsPrepPickerTarget.value = _gdsPrepFmtDt(iso);
+    _renderCal();
+  };
+
+  document.getElementById("gdsDtPrev").addEventListener("click", () => {
+    calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; } _renderCal();
+  });
+  document.getElementById("gdsDtNext").addEventListener("click", () => {
+    calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; } _renderCal();
+  });
+
+  _renderCal();
+}
+
+function _gdsPrepPickerConfirm() {
+  if (_gdsPrepPickerTarget && _gdsPrepPickerField) {
+    const t   = document.getElementById("gdsDtTime")?.value || "00:00";
+    const iso = _gdsPrep[_gdsPrepPickerField];
+    if (iso) {
+      const newIso = iso.slice(0,11) + t;
+      _gdsPrep[_gdsPrepPickerField] = newIso;
+      _gdsPrepPickerTarget.value = _gdsPrepFmtDt(newIso);
+    }
+  }
+  _gdsPrepClosePicker();
+}
+
+function _gdsPrepClosePicker() {
+  document.getElementById("gdsDtPickerOverlay")?.remove();
+  _gdsPrepPickerTarget = null;
+  _gdsPrepPickerField  = null;
+}
+
+function _gdsPrepSave() {
+  try {
+    const data = {
+      lines:               _gdsPrep.lines,
+      loaded:              _gdsPrep.loaded,
+      finished:            _gdsPrep.finished,
+      chargeFrom:          _gdsPrep.chargeFrom,
+      chargeTo:            _gdsPrep.chargeTo,
+      chargeData:          _gdsPrep.chargeData,
+      pickingsMap:         _gdsPrep.pickingsMap,
+      byPicking:           _gdsPrep.byPicking,
+      excludedPickings:    _gdsPrep.excludedPickings,
+      outOfDateTransferts: _gdsPrep.outOfDateTransferts,
+      date:                new Date().toISOString().slice(0, 10),
+    };
+    localStorage.setItem(GDS_PREP_STORAGE_KEY, JSON.stringify(data));
+    _gdsPrepSaveCloud();
+  } catch(e) { console.error("[GdsPrep] save:", e); }
+}
+
+function _gdsPrepLoadFromStorage() {
+  try {
+    const raw = localStorage.getItem(GDS_PREP_STORAGE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    const today = new Date().toISOString().slice(0, 10);
+    if (data.date !== today) return; // données d'un autre jour, on ignore
+    _gdsPrep.lines = (data.lines || []).map(line => {
+      if (!line.unitSize && line.carton > 0) line.unitSize = line.qty / line.carton;
+      return line;
+    });
+    _gdsPrep.loaded     = data.loaded     || false;
+    _gdsPrep.finished   = data.finished   || false;
+    _gdsPrep.chargeFrom  = data.chargeFrom  || null;
+    _gdsPrep.chargeTo    = data.chargeTo    || null;
+    _gdsPrep.chargeData = {};
+// إعادة حساب chargeCarton/chargeUnite من chargeTotal المخزون
+Object.entries(data.chargeData || {}).forEach(([pid, ch]) => {
+  const line = _gdsPrep.lines.find(l => l.pid === Number(pid));
+  const u = line ? _gdsPrepUnitSize(line) : 0;
+  _gdsPrep.chargeData[Number(pid)] = {
+    chargeCarton: u > 0 ? Math.floor(ch.chargeTotal / u) : 0,
+    chargeUnite:  u > 0 ? Math.round(ch.chargeTotal % u) : Math.round(ch.chargeTotal),
+    chargeTotal:  ch.chargeTotal,
+  };
+});
+   _gdsPrep.pickingsMap         = data.pickingsMap         || {};
+    _gdsPrep.byPicking           = data.byPicking           || {};
+    _gdsPrep.excludedPickings    = data.excludedPickings    || [];
+    _gdsPrep.outOfDateTransferts = data.outOfDateTransferts || [];
+    _gdsPrepUpdateExcluBtn();
+    _gdsPrepUpdateOutOfDateBtn();
+    // تحديث الحقول النصية إن وُجدت
+    const fromEl = document.getElementById("gdsPrepChargeFrom");
+    const toEl   = document.getElementById("gdsPrepChargeTo");
+    const _nowLocal = () => { const n=new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}T${String(n.getHours()).padStart(2,"0")}:${String(n.getMinutes()).padStart(2,"0")}`; };
+if (fromEl) fromEl.value = _gdsPrepFmtDt(_gdsPrep.chargeFrom || _nowLocal());
+if (toEl)   toEl.value   = _gdsPrepFmtDt(_gdsPrep.chargeTo   || _nowLocal());
+  } catch(e) { console.error("[GdsPrep] load:", e); }
+}
+
+// ── helpers ──────────────────────────────────────────────────
+function _gdsPrepUnitSize(line) {
+  const u = line.unitSize > 0 ? line.unitSize : (line.carton > 0 ? line.qty / line.carton : 0);
+  return Math.round(u);
+}
+function _gdsPrepTotalPrep(line) {
+  const u = _gdsPrepUnitSize(line);
+  return line.prepCarton * u + line.prepUnite;
+}
+
+// ── render conteneur principal ────────────────────────────────
+async function renderGdsPreparation() {
+  const el = document.getElementById("gdsPreparationContent");
+  if (!el) return;
+
+  const _cloudLoaded = _gdsPrep._skipCloudReload ? false : await _gdsPrepLoadFromCloud();
+  _gdsPrep._skipCloudReload = false;
+  if (!_cloudLoaded) {
+    _gdsPrepLoadFromStorage();
+  } else {
+    try { localStorage.setItem(GDS_PREP_STORAGE_KEY, JSON.stringify({
+      lines: _gdsPrep.lines, loaded: _gdsPrep.loaded, finished: _gdsPrep.finished,
+      chargeFrom: _gdsPrep.chargeFrom, chargeTo: _gdsPrep.chargeTo,
+      chargeData: _gdsPrep.chargeData, pickingsMap: _gdsPrep.pickingsMap,
+      byPicking: _gdsPrep.byPicking, excludedPickings: _gdsPrep.excludedPickings,
+      outOfDateTransferts: _gdsPrep.outOfDateTransferts,
+      date: new Date().toISOString().slice(0,10)
+    })); } catch(_) {}
+    _gdsPrepUpdateExcluBtn();
+    _gdsPrepUpdateOutOfDateBtn();
+  }
+  const hasData = _gdsPrep.loaded && _gdsPrep.lines.length > 0;
+
+  let barBtns = `<button class="gds-refresh-btn" onclick="gdsPrepOpenModal()">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      تحضير جديد
+    </button>`;
+  if (hasData) {
+    barBtns = `<button class="gds-refresh-btn" onclick="gdsPrepOpenModal(true)">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+        </svg>
+        تعديل
+      </button>
+      <button class="gds-refresh-btn gds-prep-finish-btn" onclick="gdsPrepAskFinish()">✓ إنهاء</button>`;
+  }
+
+// Valeur datetime par défaut = maintenant (tronqué à la minute)
+  const nowDt = new Date(); nowDt.setSeconds(0,0);
+const dtDefault = `${nowDt.getFullYear()}-${String(nowDt.getMonth()+1).padStart(2,"0")}-${String(nowDt.getDate()).padStart(2,"0")}T${String(nowDt.getHours()).padStart(2,"0")}:${String(nowDt.getMinutes()).padStart(2,"0")}`;
+  const dtStored   = _gdsPrep.chargeFrom || dtDefault;
+const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
+
+  el.innerHTML = `<div class="gds-refresh-bar" style="padding:8px 10px;flex-wrap:wrap;gap:6px;">
+    ${hasData ? (
+      _gdsPrep.finished
+        ? `<button class="gds-refresh-btn" onclick="gdsPrepReprendre()">↩ Reprendre</button>
+           <span class="gds-refresh-btn" style="background:var(--green);cursor:default;">✓ Terminée</span>`
+        : `<button class="gds-refresh-btn" onclick="gdsPrepOpenModal(true)">
+             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+             </svg>
+             Modifier
+           </button>
+           <button class="gds-refresh-btn gds-prep-finish-btn" onclick="gdsPrepAskFinish()">✓ Terminer</button>
+<button class="gds-refresh-btn" style="background:var(--red);margin-left:4px;" onclick="gdsPrepAskCancel()">✕ Annuler</button>
+           <button class="gds-refresh-btn" style="background:var(--accent);margin-left:4px;" onclick="gdsPrepExportCurrent()" title="Télécharger rapport actuel">⬇ Rapport</button>`    ) : `<button class="gds-refresh-btn" onclick="gdsPrepOpenModal()">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        Nouvelle préparation
+      </button>`}
+    <span class="gds-last-updated" id="gdsPrepStatus">
+      ${hasData ? _gdsPrep.lines.length + " produits" : "Cliquez sur Nouvelle préparation"}
+    </span>
+    <div id="gdsPrepNewBar" style="display:none;">
+      <button class="gds-refresh-btn" style="background:var(--gds-color);" onclick="gdsPrepAskNew()">
+        + Nouvelle préparation
+      </button>
+    </div>
+</div>
+  <!-- Barre chargement depuis -->
+  <div style="display:${_gdsPrep.loaded ? 'flex' : 'none'};align-items:center;gap:8px;padding:6px 10px;background:var(--bg2);border-bottom:1px solid var(--border);flex-wrap:wrap;position:sticky;top:41px;z-index:18;margin-top:-1px;">
+    <span style="font-size:11px;font-weight:600;color:var(--text2);">Chargements depuis :</span>
+    <input type="text" id="gdsPrepChargeFrom" class="gds-prep-dt-input"
+      placeholder="jj/mm/aaaa hh:mm"
+      style="min-width:140px;cursor:pointer;"/>
+    <span style="font-size:11px;font-weight:600;color:var(--text2);">A :</span>
+    <input type="text" id="gdsPrepChargeTo" class="gds-prep-dt-input"
+      placeholder="jj/mm/aaaa hh:mm"
+      style="min-width:140px;cursor:pointer;"/>
+    <button class="gds-refresh-btn" onclick="gdsPrepFetchCharge()" style="gap:4px;">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>
+      </svg>
+      Actualiser chargements
+    </button>
+    <span class="gds-last-updated" id="gdsPrepChargeStatus"></span>
+    <button class="gds-refresh-btn" id="gdsPrepExcluBtn" onclick="_gdsPrepShowExcludeList()" style="padding:2px 8px;font-size:11px;background:var(--red);opacity:${_gdsPrep.excludedPickings.length ? '1' : '0.4'};cursor:${_gdsPrep.excludedPickings.length ? 'pointer' : 'default'};" ${_gdsPrep.excludedPickings.length ? '' : 'disabled'}>Exclu (${_gdsPrep.excludedPickings.length})</button>
+    <button class="gds-refresh-btn" onclick="_gdsPrepShowExcludeInput()" style="padding:2px 8px;font-size:11px;background:var(--red);" title="Exclure un transfert">+</button>
+    <button class="gds-refresh-btn" id="gdsPrepOutOfDateBtn" onclick="_gdsPrepShowOutOfDateList()" style="padding:2px 8px;font-size:11px;background:var(--orange,#f59e0b);opacity:${_gdsPrep.outOfDateTransferts.length ? '1' : '0.4'};cursor:${_gdsPrep.outOfDateTransferts.length ? 'pointer' : 'default'};" ${_gdsPrep.outOfDateTransferts.length ? '' : 'disabled'}>Hors date (${_gdsPrep.outOfDateTransferts.length})</button>
+    <button class="gds-refresh-btn" onclick="_gdsPrepShowOutOfDateInput()" style="padding:2px 8px;font-size:11px;background:var(--orange,#f59e0b);" title="Ajouter transfert hors date">+</button>
+    <div id="gdsPrepExcluInputBar" style="display:none;"></div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-left:8px;align-items:center;">
+      <div id="gdsPrepPickingBtns" style="display:flex;flex-wrap:wrap;gap:4px;">
+        ${_gdsPrepRenderPickingBtns()}
+      </div>
+      <button onclick="(()=>{const p=document.getElementById('gdsPrepPickingBtns');const hidden=p.style.display==='none';p.style.display=hidden?'flex':'none';this.style.opacity=hidden?'1':'0.5';})()" style="font-size:9px;padding:2px 7px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;margin-left:2px;" title="Afficher/Masquer les tournées">
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </div>
+  </div>
+  <div id="gdsPrepTableWrap" style="padding:0 10px 20px;overflow-x:auto;-webkit-overflow-scrolling:touch;"></div>
+
+  <!-- Barre Nouvelle préparation (visible après check complet) -->
+  <div id="gdsPrepNewBar" style="display:none;padding:10px;border-top:1px solid var(--border);background:var(--bg2);">
+    <button class="gds-refresh-btn" style="background:var(--gds-color);" onclick="gdsPrepAskNew()">
+      + Nouvelle préparation
+    </button>
+  </div>
+
+  <!-- Modal confirmation nouvelle préparation -->
+  <div id="gdsPrepNewConfirmModal" class="gds-prep-modal" style="display:none;">
+    <div class="gds-prep-modal-box" style="max-width:340px;text-align:center;">
+      <div class="gds-prep-modal-header"><span>Nouvelle préparation</span></div>
+      <div style="padding:20px 16px;font-size:13px;color:var(--text);">
+        Un fichier PDF sera téléchargé et toutes les données seront effacées.<br>
+        <span id="gdsPrepNewCountdown" style="display:block;margin-top:12px;font-size:26px;font-weight:700;color:var(--gds-color);">10</span>
+      </div>
+      <div class="gds-prep-modal-footer" style="justify-content:center;">
+        <button id="gdsPrepNewConfirmBtn" class="gds-refresh-btn" disabled style="opacity:.4;" onclick="gdsPrepDoNew()">✓ Confirmer</button>
+        <button class="gds-refresh-btn" style="background:var(--text3);" onclick="gdsPrepCloseNew()">Annuler</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal saisie / modification -->
+  <div id="gdsPrepModal" class="gds-prep-modal" style="display:none;" onclick="if(event.target===this)gdsPrepCloseModal()">
+    <div class="gds-prep-modal-box">
+      <div class="gds-prep-modal-header">
+        <span id="gdsPrepModalTitle">Saisie préparation</span>
+        <button class="icon-btn-sm" onclick="gdsPrepCloseModal()">✕</button>
+      </div>
+      <div class="gds-prep-modal-body" id="gdsPrepModalBody" style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <div class="gds-loading">جارٍ التحميل…</div>
+      </div>
+      <div class="gds-prep-modal-footer">
+        <button class="gds-refresh-btn" onclick="gdsPrepModalConfirm()">↵ Confirmer</button>
+        <button id="gdsPrepAutoFillBtn" class="gds-refresh-btn" style="background:var(--accent);display:none;" onclick="gdsPrepAutoFill()" title="Remplir selon suggestions +20%">▢ Propos</button>
+		<button class="gds-refresh-btn" style="background:var(--text2);" onclick="gdsPrepDownloadPrepPdf()" title="Télécharger la préparation en PDF">🖨 Imprimer</button>
+        <button class="gds-refresh-btn" style="background:var(--text3);" onclick="gdsPrepCloseModal()">Annuler</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal historique -->
+  <div id="gdsPrepHistModal" class="gds-prep-modal" style="display:none;" onclick="if(event.target===this)gdsPrepCloseHist()">
+    <div class="gds-prep-modal-box" style="max-width:420px;">
+      <div class="gds-prep-modal-header">
+        <span id="gdsPrepHistTitle">Historique</span>
+        <button class="icon-btn-sm" onclick="gdsPrepCloseHist()">✕</button>
+      </div>
+      <div class="gds-prep-modal-body" id="gdsPrepHistBody"></div>
+      <div class="gds-prep-modal-footer">
+        <button class="gds-refresh-btn" style="background:var(--text3);" onclick="gdsPrepCloseHist()">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal confirmation fin -->
+  <div id="gdsPrepCancelModal" class="gds-prep-modal" style="display:none;">
+    <div class="gds-prep-modal-box" style="max-width:340px;text-align:center;">
+      <div class="gds-prep-modal-header"><span>Annuler la préparation</span></div>
+      <div style="padding:20px 16px;font-size:13px;color:var(--text);">
+        Toutes les données seront supprimées définitivement.<br>
+        <span id="gdsPrepCancelCountdown" style="display:block;margin-top:12px;font-size:26px;font-weight:700;color:var(--red);">10</span>
+        <span style="font-size:10px;color:var(--text3);">secondes avant annulation</span>
+      </div>
+      <div class="gds-prep-modal-footer" style="justify-content:center;">
+        <button id="gdsPrepCancelBtn" class="gds-refresh-btn" disabled style="opacity:.4;background:var(--red);" onclick="gdsPrepDoCancel()">✕ Annuler la prépa</button>
+        <button class="gds-refresh-btn" style="background:var(--text3);" onclick="gdsPrepCloseCancel()">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="gdsPrepConfirmModal" class="gds-prep-modal" style="display:none;">
+    <div class="gds-prep-modal-box" style="max-width:340px;text-align:center;">
+      <div class="gds-prep-modal-header"><span>Confirmer la fin</span></div>
+      <div style="padding:20px 16px;font-size:13px;color:var(--text);">
+        Voulez-vous terminer cette préparation définitivement ?<br>
+        <span id="gdsPrepCountdown" style="display:block;margin-top:12px;font-size:26px;font-weight:700;color:var(--gds-color);">5</span>
+        <span style="font-size:10px;color:var(--text3);" id="gdsPrepCdHint">secondes avant confirmation</span>
+      </div>
+      <div class="gds-prep-modal-footer" style="justify-content:center;">
+        <button id="gdsPrepConfirmBtn" class="gds-refresh-btn" disabled style="opacity:.4;" onclick="gdsPrepDoFinish()">✓ Confirmer</button>
+        <button class="gds-refresh-btn" style="background:var(--text3);" onclick="gdsPrepCloseConfirm()">Annuler</button>
+      </div>
+    </div>
+  </div>`;
+
+  if (hasData) _gdsPrepRenderTable();
+  _gdsPrepInitFlatpickr(dtStored, _gdsPrep.chargeTo || dtDefault);
+}
+
+function _gdsPrepInitFlatpickr(fromVal, toVal) {
+  // تحميل Flatpickr إن لم يكن محملاً
+  function _loadFp(cb) {
+    if (window.flatpickr) { cb(); return; }
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css";
+    document.head.appendChild(link);
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/flatpickr";
+    s.onload = cb;
+    document.head.appendChild(s);
+  }
+
+  _loadFp(() => {
+    const cfg = {
+      enableTime: true,
+      dateFormat: "d/m/Y H:i",
+      time_24hr: true,
+      allowInput: false,
+      locale: { firstDayOfWeek: 1 },
+      onReady: (_,__,fp) => { if(!fp.selectedDates.length) fp.setDate(new Date(), false); }
+    };
+
+    // تحويل ISO → Date لـ Flatpickr
+    function isoToDate(iso) {
+  if (!iso || !iso.includes("T")) return null;
+  const [datePart, timePart] = iso.split("T");
+  const dp = datePart.split("-");
+  const tp = (timePart||"00:00").split(":");
+  const y=parseInt(dp[0]), m=parseInt(dp[1]), d=parseInt(dp[2]);
+  const h=parseInt(tp[0]||0), mi=parseInt(tp[1]||0);
+  if (isNaN(y)||isNaN(m)||isNaN(d)) return null;
+  return new Date(y, m-1, d, h||0, mi||0);
+}
+
+    flatpickr("#gdsPrepChargeFrom", {
+      ...cfg,
+      defaultDate: isoToDate(fromVal),
+      onChange: ([date]) => {
+        if (!date) return;
+        const y=date.getFullYear(), m=String(date.getMonth()+1).padStart(2,"0"),
+              d=String(date.getDate()).padStart(2,"0"),
+              h=String(date.getHours()).padStart(2,"0"), mi=String(date.getMinutes()).padStart(2,"0");
+        _gdsPrep.chargeFrom = `${y}-${m}-${d}T${h}:${mi}`;
+        _gdsPrep.excludedPickings    = [];
+        _gdsPrep.outOfDateTransferts = [];
+        _gdsPrepUpdateExcluBtn();
+        _gdsPrepUpdateOutOfDateBtn();
+        _gdsPrepSave();
+      }
+    });
+
+    flatpickr("#gdsPrepChargeTo", {
+      ...cfg,
+      defaultDate: isoToDate(toVal),
+      onChange: ([date]) => {
+        if (!date) return;
+        const y=date.getFullYear(), m=String(date.getMonth()+1).padStart(2,"0"),
+              d=String(date.getDate()).padStart(2,"0"),
+              h=String(date.getHours()).padStart(2,"0"), mi=String(date.getMinutes()).padStart(2,"0");
+        _gdsPrep.chargeTo = `${y}-${m}-${d}T${h}:${mi}`;
+        _gdsPrep.excludedPickings    = [];
+        _gdsPrep.outOfDateTransferts = [];
+        _gdsPrepUpdateExcluBtn();
+        _gdsPrepUpdateOutOfDateBtn();
+        _gdsPrepSave();
+      }
+    });
+  });
+}
+
+// ── فتح النافذة ───────────────────────────────────────────────
+async function gdsPrepOpenModal(isEdit = false) {
+  _gdsPrep.isEdit = isEdit;
+  if (!_gdsPrep.loaded) await _gdsPrepLoadStock();
+  const modal = document.getElementById("gdsPrepModal");
+  if (!modal) return;
+  // حقل delta مؤقت لكل سطر (للتعديل)
+  _gdsPrep.lines.forEach(l => { l._deltaCarton = 0; l._deltaUnite = 0; });
+  document.getElementById("gdsPrepModalTitle").textContent = isEdit ? "Modifier la préparation" : "Saisie préparation";
+  modal.style.display = "flex";
+  _gdsPrepRenderModalBody();
+  const autoBtn = document.getElementById("gdsPrepAutoFillBtn");
+  if (autoBtn) {
+    autoBtn.style.display = isEdit ? "none" : "";
+    autoBtn.disabled = true;
+    autoBtn.style.opacity = ".4";
+  }
+  if (!isEdit) {
+    if (Object.keys(_gdsPrep.suggested).length) {
+      if (autoBtn) { autoBtn.disabled = false; autoBtn.style.opacity = "1"; }
+    } else {
+      _gdsPrepFetchSuggested().then(sugg => {
+        _gdsPrep.suggested = sugg;
+        if (autoBtn && Object.keys(sugg).length) { autoBtn.disabled = false; autoBtn.style.opacity = "1"; }
+      });
+    }
+  }
+}
+
+function gdsPrepPrintPrep() {
+  const now  = new Date();
+  const date = now.toLocaleDateString("fr-FR");
+  const time = now.toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" });
+
+  // جمع المنتجات بالفئة (فقط التي فيها قيم)
+  const byCateg = {};
+  _gdsPrep.lines.forEach(line => {
+    if (line.prepCarton <= 0 && line.prepUnite <= 0) return;
+    const cat = line.categ || "—";
+    if (!byCateg[cat]) byCateg[cat] = [];
+    byCateg[cat].push(line);
+  });
+
+  if (!Object.keys(byCateg).length) {
+    addNotif("Aucun produit en préparation", "warning");
+    return;
+  }
+
+  let rows = "";
+  _sortCats(Object.keys(byCateg)).forEach(cat => {
+    const lines = byCateg[cat];
+    rows += `<tr class="cat-row"><td colspan="3">${cat}</td></tr>`;
+    lines.forEach(line => {
+      rows += `<tr>
+        <td>${line.name}</td>
+        <td class="num">${line.prepCarton > 0 ? line.prepCarton : "—"}</td>
+        <td class="num">${line.prepUnite  > 0 ? line.prepUnite  : "—"}</td>
+      </tr>`;
+    });
+  });
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Stock Préparation</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 12px; margin: 20px; color: #000; }
+    h2 { font-size: 15px; margin: 0 0 4px; }
+    .sub { font-size: 11px; color: #555; margin-bottom: 14px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { background: #f0f0f0; border: 1px solid #ccc; padding: 5px 8px; text-align: left; }
+    td { border: 1px solid #ddd; padding: 4px 8px; }
+    .num { text-align: center; width: 60px; }
+    .cat-row td { background: #e8f5e9; font-weight: bold; font-size: 11px; color: #2e7d32; }
+    @media print { body { margin: 10px; } }
+  </style></head><body>
+  <h2>STOCK PRÉPARATION</h2>
+  <div class="sub">${date} — ${time}</div>
+  <table>
+    <thead><tr><th>Produit</th><th class="num">C/F</th><th class="num">U</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <script>window.onload=()=>{window.print();}<\/script>
+  </body></html>`;
+
+  const w = window.open("", "_blank");
+  if (w) { w.document.write(html); w.document.close(); }
+}
+
+function gdsPrepDownloadPrepPdf() {
+  const now  = new Date();
+  const date = now.toLocaleDateString("fr-FR");
+  const time = now.toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" });
+
+  const byCateg = {};
+  _gdsPrep.lines.forEach(line => {
+    if (line.prepCarton <= 0 && line.prepUnite <= 0) return;
+    const cat = line.categ || "—";
+    if (!byCateg[cat]) byCateg[cat] = [];
+    byCateg[cat].push(line);
+  });
+  if (!Object.keys(byCateg).length) return;
+
+ let rows = "";
+  _sortCats(Object.keys(byCateg)).forEach(cat => {
+    const lines = byCateg[cat];
+    rows += `<tr class="cat-row"><td colspan="3">${cat}</td></tr>`;
+    lines.forEach(line => {
+      rows += `<tr>
+        <td>${line.name}</td>
+        <td class="num">${line.prepCarton > 0 ? line.prepCarton : "—"}</td>
+        <td class="num">${line.prepUnite  > 0 ? line.prepUnite  : "—"}</td>
+      </tr>`;
+    });
+  });
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <style>
+    @page { size: A4; margin: 8mm; }
+    body { font-family: Arial, sans-serif; font-size: 12px; margin: 0; color: #000; }
+    h2 { font-size: 14px; margin: 0 0 2px; }
+    .sub { font-size: 10px; color: #555; margin-bottom: 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { background: #f0f0f0; border: 1px solid #ccc; padding: 4px 6px; text-align: left; font-size: 11px; }
+    td { border: 1px solid #ddd; padding: 3px 6px; }
+    .num { text-align: center; width: 35px; font-size: 14px; font-weight: bold; }
+    th.num { font-size: 11px; font-weight: normal; }
+    .cat-row td { background: #e8f5e9; font-weight: bold; font-size: 10px; color: #2e7d32; }
+  </style></head><body>
+  <h2>STOCK PRÉPARATION</h2>
+  <div class="sub">${date} — ${time}</div>
+  <table>
+    <thead><tr><th>Produit</th><th class="num">C/F</th><th class="num">U</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <script>
+    window.onload = () => {
+      window.print();
+      window.onafterprint = () => window.close();
+    };
+  <\/script>
+  </body></html>`;
+
+  const today = new Date();
+  const dd    = String(today.getDate()).padStart(2,"0");
+  const mm    = String(today.getMonth()+1).padStart(2,"0");
+  const yyyy  = today.getFullYear();
+  _downloadAsPdf(html, `preparation_gds_${dd}-${mm}-${yyyy}`);
+}
+
+function gdsPrepAutoFill() {
+  if (!Object.keys(_gdsPrep.suggested).length) return;
+  _gdsPrep.lines.forEach(line => {
+    const suggQty = _gdsPrep.suggested[line.pid] || 0;
+    if (!suggQty) return;
+    const u       = _gdsPrepUnitSize(line);
+    const target  = Math.ceil(suggQty * 1.2);
+    // تحويل لـ C/F فقط بدون U
+    let cf = u > 0 ? Math.ceil(target / u) : 0;
+    // لا تتجاوز المخزون
+    if (u > 0 && cf * u > line.qty) cf = Math.floor(line.qty / u);
+    line.prepCarton = cf;
+    line.prepUnite  = 0;
+    // تحديث الـ inputs في الـ DOM
+    const inputs = document.querySelectorAll(`.gds-prep-input[data-pid="${line.pid}"]`);
+    inputs.forEach(inp => {
+      if (inp.dataset.field === "prepCarton") inp.value = cf;
+      if (inp.dataset.field === "prepUnite")  inp.value = 0;
+    });
+  });
+}
+
+function gdsPrepCloseModal() {
+  const m = document.getElementById("gdsPrepModal");
+  if (m) m.style.display = "none";
+}
+
+// ── تحميل البيانات من Odoo ────────────────────────────────────
+async function _gdsPrepLoadStock() {
+  const statusEl = document.getElementById("gdsPrepStatus");
+  if (statusEl) statusEl.textContent = "Chargement…";
+  try {
+    const r1 = await fetch("/api/web/dataset/call_kw", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:1, params:{
+        model:"stock.quant", method:"search_read",
+        args:[[["location_id","=",GDS_WAREHOUSE_ID],["quantity",">",0]]],
+        kwargs:{ fields:["product_id","quantity","packaging_quantity_1"], limit:2000 }
+      }})
+    });
+    const quants = (await r1.json())?.result || [];
+    const pids = [...new Set(quants.map(q => q.product_id[0]))];
+    const r2 = await fetch("/api/web/dataset/call_kw", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:2, params:{
+        model:"product.product", method:"search_read",
+        args:[[["id","in",pids]]],
+        kwargs:{ fields:["id","name","categ_id","uom_id"], limit:2000 }
+      }})
+    });
+    const prods = {};
+    ((await r2.json())?.result || []).forEach(p => { prods[p.id] = p; });
+
+    _gdsPrep.lines = [];
+    quants.forEach(q => {
+      const pid = q.product_id[0]; const p = prods[pid]; if (!p) return;
+      const pkgCarton = q.packaging_quantity_1 || 0;
+      const unitSize  = pkgCarton > 0 ? q.quantity / pkgCarton : 0;
+      const ex = _gdsPrep.lines.find(l => l.pid === pid);
+      if (ex) {
+        ex.qty    += q.quantity;
+        ex.carton += pkgCarton;
+        if (ex.unitSize === 0 && unitSize > 0) ex.unitSize = unitSize;
+      } else {
+        _gdsPrep.lines.push({ pid, name:p.name,
+          categ:    p.categ_id ? p.categ_id[1] : "Autre",
+          uom:      p.uom_id   ? p.uom_id[1]   : "",
+          qty:      q.quantity,
+          carton:   pkgCarton,
+          unitSize,
+          prepCarton:0, prepUnite:0, history:[], _deltaCarton:0, _deltaUnite:0,
+        });
+      }
+    });
+    // تصحيح unitSize النهائي من المجموع
+    _gdsPrep.lines.forEach(line => {
+      if (line.unitSize === 0 && line.carton > 0) line.unitSize = line.qty / line.carton;
+    });
+    _gdsPrep.lines.sort((a,b) => {
+      const order = _getCatOrder();
+      if (order.length) {
+        const ia = order.indexOf(a.categ), ib = order.indexOf(b.categ);
+        const ca = ia === -1 ? 9999 : ia, cb = ib === -1 ? 9999 : ib;
+        if (ca !== cb) return ca - cb;
+      } else {
+        const cmp = a.categ.localeCompare(b.categ);
+        if (cmp !== 0) return cmp;
+      }
+      return a.name.localeCompare(b.name);
+    });
+    _gdsPrep.loaded = true;
+    if (statusEl) statusEl.textContent = _gdsPrep.lines.length + " produits";
+  } catch(e) {
+    if (statusEl) statusEl.textContent = "Erreur: " + e.message;
+  }
+}
+
+// ── عرض جسم النافذة ──────────────────────────────────────────
+function _gdsPrepRenderModalBody() {
+  const body = document.getElementById("gdsPrepModalBody");
+  if (!body) return;
+  const isEdit = _gdsPrep.isEdit;
+
+  const byCateg = {};
+  _gdsPrep.lines.forEach((line, i) => {
+    if (!byCateg[line.categ]) byCateg[line.categ] = [];
+    byCateg[line.categ].push({ line, i });
+  });
+
+  let html = "";
+  _sortCats(Object.keys(byCateg)).forEach(cat => {
+    const collapsed = !!_gdsPrep.collapsed["modal_" + cat];
+    html += `<div class="gds-prep-modal-cat gds-category-toggle" style="cursor:pointer;" onclick="_gdsPrepToggleModalCat('${escHtml(cat)}')">
+      <svg class="gds-collapse-arrow" style="transition:transform .2s;transform:${collapsed?"rotate(-90deg)":""}" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+      ${escHtml(cat)}
+    </div>
+    <div id="gdsPrepModalCat_${escHtml(cat)}" style="display:${collapsed?"none":""}">
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+    <table class="gds-table" style="margin-bottom:10px;min-width:${isEdit ? "420px" : "300px"};">
+      <thead><tr>
+        <th style="min-width:80px;">Produit</th>
+        <th style="text-align:right;white-space:nowrap">S.C/F</th>
+        <th style="text-align:right;white-space:nowrap">S.U</th>
+        ${isEdit
+          ? `<th style="text-align:right;white-space:nowrap">Act.C/F</th><th style="text-align:right;white-space:nowrap">Act.U</th>
+             <th style="text-align:right;white-space:nowrap">Δ C/F</th><th style="text-align:right;white-space:nowrap">Δ U</th>`
+          : `<th style="text-align:right;white-space:nowrap">Prép. C/F</th><th style="text-align:right;white-space:nowrap">Prép. U</th>`}
+      </tr></thead><tbody>`;
+
+    byCateg[cat].forEach(({ line, i }) => {
+      const u = _gdsPrepUnitSize(line);
+      const stockC = u > 0 ? Math.floor(line.qty / u) : 0;
+      const stockU = u > 0 ? Math.round(line.qty % u) : Math.round(line.qty);
+
+      if (!isEdit) {
+        html += `<tr>
+          <td style="font-size:10px;">${escHtml(line.name)}</td>
+          <td class="gds-qty">${stockC > 0 ? stockC : "—"}</td>
+          <td class="gds-qty">${stockU > 0 ? stockU : (stockC === 0 ? Math.round(line.qty) : "—")}</td>
+          <td class="gds-qty">
+            <input type="number" min="0" class="gds-prep-input" data-pid="${line.pid}" data-field="prepCarton"
+              value="${line.prepCarton || ""}" placeholder="0"
+              oninput="_gdsPrepValidateInput(${line.pid},'prepCarton',this)"
+              onkeydown="if(event.key==='Enter'){_gdsPrepValidateInput(${line.pid},'prepCarton',this);this.closest('tr').nextElementSibling?.querySelector('[data-field=prepCarton]')?.focus();}"/>
+          </td>
+          <td class="gds-qty">
+            <input type="number" min="0" class="gds-prep-input" data-pid="${line.pid}" data-field="prepUnite"
+              value="${line.prepUnite || ""}" placeholder="0"
+              oninput="_gdsPrepValidateInput(${line.pid},'prepUnite',this)"
+              onkeydown="if(event.key==='Enter'){_gdsPrepValidateInput(${line.pid},'prepUnite',this);this.closest('tr').nextElementSibling?.querySelector('[data-field=prepUnite]')?.focus();}"/>
+          </td>
+        </tr>`;
+      } else {
+        const hasErrRow = !!line._hasError;
+        html += `<tr style="${hasErrRow?"background:rgba(239,68,68,.10);":""}">
+          <td style="font-size:10px;">${escHtml(line.name)}</td>
+          <td class="gds-qty">${stockC > 0 ? stockC : "—"}</td>
+          <td class="gds-qty">${stockU > 0 ? stockU : (stockC === 0 ? Math.round(line.qty) : "—")}</td>
+          <td class="gds-qty" style="color:var(--gds-color)">${line.prepCarton || "—"}</td>
+          <td class="gds-qty" style="color:var(--gds-color)">${line.prepUnite  || "—"}</td>
+          <td class="gds-qty">
+            <div style="display:flex;align-items:center;gap:1px;white-space:nowrap;">
+              <button class="gds-prep-delta-btn" onclick="_gdsPrepDelta(${line.pid},'prepCarton',-1,this)" style="padding:0 5px;min-width:22px;">−</button>
+              <input type="number" class="gds-prep-input" style="width:36px;text-align:center;padding:2px;" data-idx="${line.pid}" data-field="deltaCarton"
+                value="${line._deltaCarton || 0}"
+                onchange="_gdsPrepDeltaInput(${line.pid},'prepCarton',this)"/>
+              <button class="gds-prep-delta-btn" onclick="_gdsPrepDelta(${line.pid},'prepCarton',+1,this)" style="padding:0 5px;min-width:22px;">+</button>
+            </div>
+          </td>
+          <td class="gds-qty">
+            <div style="display:flex;align-items:center;gap:1px;white-space:nowrap;">
+              <button class="gds-prep-delta-btn" onclick="_gdsPrepDelta(${line.pid},'prepUnite',-1,this)" style="padding:0 5px;min-width:22px;">−</button>
+              <input type="number" class="gds-prep-input" style="width:36px;text-align:center;padding:2px;" data-idx="${line.pid}" data-field="deltaUnite"
+                value="${line._deltaUnite || 0}"
+                onchange="_gdsPrepDeltaInput(${line.pid},'prepUnite',this)"/>
+              <button class="gds-prep-delta-btn" onclick="_gdsPrepDelta(${line.pid},'prepUnite',+1,this)" style="padding:0 5px;min-width:22px;">+</button>
+            </div>
+          </td>
+        </tr>`;
+      }
+    });
+    html += `</tbody></table></div></div>`;
+  });
+  body.innerHTML = html;
+}
+
+// ── toggle مجموعة في النافذة ─────────────────────────────────
+function _gdsPrepToggleModalCat(cat) {
+  const key = "modal_" + cat;
+  _gdsPrep.collapsed[key] = !_gdsPrep.collapsed[key];
+  const body  = document.getElementById("gdsPrepModalCat_" + cat);
+  const arrow = body?.previousElementSibling?.querySelector(".gds-collapse-arrow");
+  if (body)  body.style.display = _gdsPrep.collapsed[key] ? "none" : "";
+  if (arrow) arrow.style.transform = _gdsPrep.collapsed[key] ? "rotate(-90deg)" : "";
+}
+
+// ── التحقق من الحد عند الإدخال الأولي (لا يمرر القيمة إذا تجاوزت) ──
+function _gdsPrepValidateInput(idx, field, inputEl) {
+  const line = _gdsPrep.lines.find(l => l.pid === Number(idx)); if (!line) return;
+
+const val  = parseFloat(inputEl.value) || 0;
+  const u    = _gdsPrepUnitSize(line);
+  if (val < 0) {
+    inputEl.style.borderColor = "var(--red)";
+    inputEl.title = "القيمة لا يمكن أن تكون سالبة";
+    inputEl.value = 0;
+    return;
+  }
+  const totalIfCarton = field === "prepCarton" ? val * u + line.prepUnite : line.prepCarton * u + val;
+  if (totalIfCarton > line.qty) {
+    inputEl.style.borderColor = "var(--red)";
+    inputEl.title = "القيمة تتجاوز المخزون";
+    return;
+  }
+inputEl.style.borderColor = "";
+  inputEl.title = "";
+  if (field === "prepCarton") {
+    line.prepCarton = val;
+  } else {
+    // تحويل U إلى C/F إذا كانت تساوي أو تتجاوز حجم الـ fardeau
+    if (u > 0 && val >= u) {
+      const addCarton = Math.floor(val / u);
+      const remUnite  = Math.round(val % u);
+      line.prepCarton = (line.prepCarton || 0) + addCarton;
+      line.prepUnite  = remUnite;
+      // تحديث الـ inputs في الواجهة
+      const row = inputEl.closest("tr");
+      if (row) {
+        const cartonInp = row.querySelector("[data-field='prepCarton']");
+        if (cartonInp) cartonInp.value = line.prepCarton || "";
+        inputEl.value = remUnite || "";
+      }
+    } else {
+      line.prepUnite = val;
+    }
+  }
+}
+
+function gdsPrepShowCharge(pid) {
+  const modal = document.getElementById("gdsPrepHistModal");
+  const title = document.getElementById("gdsPrepHistTitle");
+  const body  = document.getElementById("gdsPrepHistBody");
+  if (!modal || !body) return;
+
+  const line = _gdsPrep.lines.find(l => l.pid === pid);
+  const u    = line ? _gdsPrepUnitSize(line) : 0;
+  title.textContent = `Chargement — ${line?.name || pid}`;
+
+  // جمع كل moves لهذا المنتج مع picking info
+  const rows = [];
+  Object.entries(_gdsPrep.byPicking).forEach(([pickId, moves]) => {
+    const pick = _gdsPrep.pickingsMap[Number(pickId)] || {};
+    moves.filter(m => m.product_id?.[0] === pid).forEach(m => {
+      rows.push({
+        van:     (pick.van     || "—").toString().replace(/^"|"$/g, ''),
+      partner: (pick.partner_id?.[1] || "—").toString().replace(/^"|"$/g, ''),
+      pickRef: (pick.name    || String(pickId)).replace(/^"|"$/g, ''),
+        qty:     m.qty_done   || 0,
+        date:    m.date       ? m.date.slice(11,16) : "—",
+        pickRef: (pick.name || String(pickId)).replace(/^"|"$/g, ''),
+      });
+    });
+  });
+
+  // كشف jumlage = نفس الـ van ظهر أكثر من مرة
+  // كشف jumlage = نفس الـ van أو نفس الـ partner له أكثر من picking
+  // دمج rows بنفس الـ pickRef أولاً
+  const merged = {};
+  rows.forEach(r => {
+    const key = r.qty + "_" + r.van + "_" + r.partner + "_" + r.date;
+    if (!merged[key]) merged[key] = { ...r };
+    else merged[key].qty += r.qty;
+  });
+  const mergedRows = Object.values(merged);
+  console.log("mergedRows:", mergedRows.length, mergedRows.map(r=>({ref:r.pickRef, qty:r.qty})));
+  console.log("merged keys:", Object.keys(merged));
+  console.log("rows pickRefs:", rows.map(r => JSON.stringify(r.pickRef)));
+
+  const vanCount     = {};
+  const partnerCount = {};
+  mergedRows.forEach(r => {
+    vanCount[r.van]         = (vanCount[r.van]         || 0) + 1;
+    partnerCount[r.partner] = (partnerCount[r.partner] || 0) + 1;
+  });
+
+  if (!rows.length) {
+    body.innerHTML = `<div style="padding:16px;color:var(--text3);text-align:center;">Aucun chargement trouvé</div>`;
+  } else {
+    body.innerHTML = `<table class="gds-table" style="font-size:11px;">
+      <thead><tr>
+        <th>Van</th><th>Livreur</th><th>C/F</th><th>U</th><th>Heure</th><th>Transfert</th>
+      </tr></thead><tbody>
+${rows.map(r => {
+        const vanJuml     = vanCount[r.van]         > 1;
+        const partnerJuml = partnerCount[r.partner] > 1;
+        const rowJuml     = vanJuml || partnerJuml;
+        return `<tr style="${rowJuml ? 'background:rgba(251,146,60,.15);' : ''}">
+          <td>${escHtml(r.van)}${vanJuml ? ' <span style="color:var(--orange);font-weight:700;" title=""></span>' : ''}</td>
+          <td>${escHtml(r.partner)}${partnerJuml ? ' <span style="color:var(--orange);font-weight:700;" title=""></span>' : ''}</td>
+          <td style="text-align:right;font-weight:600;">${u > 0 ? Math.floor(r.qty / u) : '—'}</td>
+          <td style="text-align:right;">${u > 0 ? Math.round(r.qty % u) : r.qty}</td>
+          <td style="text-align:center;">${r.date}</td>
+          <td style="text-align:center;">${escHtml(r.pickRef)}</td>
+        </tr>`;
+      }).join("")}
+      </tbody>
+      <tfoot><tr>
+        <td colspan="2" style="font-weight:700;">Total</td>
+        <td style="text-align:right;font-weight:700;">${u > 0 ? Math.floor(mergedRows.reduce((s,r)=>s+r.qty,0) / u) : '—'}</td>
+        <td style="text-align:right;font-weight:700;">${u > 0 ? Math.round(mergedRows.reduce((s,r)=>s+r.qty,0) % u) : mergedRows.reduce((s,r)=>s+r.qty,0)}</td>
+        <td colspan="2"></td>
+      </tr></tfoot>
+    </table>`;
+  }
+  modal.style.display = "flex";
+}
+
+// ── زر +/− في وضع التعديل ────────────────────────────────────
+function _gdsPrepDelta(pid, field, dir, btn) {
+  const line = _gdsPrep.lines.find(l => l.pid === pid); if (!line) return;
+  const deltaField = field === "prepCarton" ? "_deltaCarton" : "_deltaUnite";
+  line[deltaField] = (line[deltaField] || 0) + dir;
+  // تحديث input
+  const row = btn.closest("tr");
+  const inp = row.querySelector(`[data-field="${field === "prepCarton" ? "deltaCarton" : "deltaUnite"}"]`);
+  if (inp) inp.value = line[deltaField];
+}
+
+function _gdsPrepDeltaInput(pid, field, inputEl) {
+  const line = _gdsPrep.lines.find(l => l.pid === pid); if (!line) return;
+  const val = parseFloat(inputEl.value) || 0;
+  if (field === "prepUnite") {
+    const u = _gdsPrepUnitSize(line);
+    if (u > 0 && Math.abs(val) >= u) {
+      const sign      = val >= 0 ? 1 : -1;
+      const addCarton = sign * Math.floor(Math.abs(val) / u);
+      const remUnite  = sign * Math.round(Math.abs(val) % u);
+      line._deltaCarton = (line._deltaCarton || 0) + addCarton;
+      line._deltaUnite  = remUnite;
+      const row = inputEl.closest("tr");
+      if (row) {
+        const cartonInp = row.querySelector("[data-field='deltaCarton']");
+        if (cartonInp) cartonInp.value = line._deltaCarton;
+        inputEl.value = remUnite;
+      }
+      return;
+    }
+  }
+  const deltaField = field === "prepCarton" ? "_deltaCarton" : "_deltaUnite";
+  line[deltaField] = val;
+}
+
+// ── تأكيد النافذة ─────────────────────────────────────────────
+function gdsPrepModalConfirm() {
+  const isEdit = _gdsPrep.isEdit;
+  const now    = new Date().toLocaleTimeString("fr-FR");
+  let errors   = [];
+
+  if (!isEdit) {
+    // collect all values first, validate, then apply
+    const vals = {};
+    document.querySelectorAll(".gds-prep-input[data-field='prepCarton']").forEach(inp => {
+      vals[inp.dataset.pid] = { c: parseFloat(inp.value) || 0 };
+    });
+    document.querySelectorAll(".gds-prep-input[data-field='prepUnite']").forEach(inp => {
+      if (vals[inp.dataset.pid]) vals[inp.dataset.pid].u = parseFloat(inp.value) || 0;
+    });
+    Object.entries(vals).forEach(([pid, v]) => {
+      const line = _gdsPrep.lines.find(l => l.pid === Number(pid)); if (!line) return;
+      const unitSize = _gdsPrepUnitSize(line);
+      if (v.c * unitSize + (v.u || 0) > line.qty) {
+        errors.push(line.name);
+      } else {
+        const wasEmpty = line.prepCarton === 0 && line.prepUnite === 0;
+        line.prepCarton = v.c;
+        line.prepUnite  = v.u || 0;
+        if (line.prepCarton > 0 || line.prepUnite > 0)
+          line.history.push({ ts: now, type: "Ajout", carton: line.prepCarton, unite: line.prepUnite });
+      }
+    });
+  } else {
+    _gdsPrep.lines.forEach(line => {
+      const dc = line._deltaCarton || 0;
+      const du = line._deltaUnite  || 0;
+      if (dc === 0 && du === 0) return;
+      const u    = _gdsPrepUnitSize(line);
+      const newC = line.prepCarton + dc;
+      const newU = line.prepUnite  + du;
+      if (newC < 0 || newU < 0 || newC * u + newU > line.qty) {
+        errors.push(line.name);
+        line._hasError = true;
+        return;
+      }
+      line._hasError    = false;
+      line.prepCarton   = newC;
+      line.prepUnite    = newU;
+      const type = dc > 0 || du > 0 ? "Augmentation" : "Réduction";
+      line.history.push({ ts: now, type, carton: dc, unite: du });
+      line._deltaCarton = 0;
+      line._deltaUnite  = 0;
+    });
+  }
+
+  if (errors.length) {
+    addNotif(`⚠ Valeurs dépassant le stock: ${errors.slice(0,3).join(", ")}${errors.length>3?" …":""}`, "error");
+    if (isEdit) {
+      // re-render modal to show red rows, don't close
+      _gdsPrepRenderModalBody();
+    }
+    return;
+  }
+
+  _gdsPrep.loaded = true;
+  _gdsPrep._skipCloudReload = true;
+  gdsPrepCloseModal();
+  _gdsPrepSave();
+  gdsShowTab("preparation");
+  if (!isEdit) gdsPrepDownloadPrepPdf();
+  addNotif("✓ Préparation enregistrée", "success");
+}
+async function _gdsPrepIsVanLocation(locId) {
+  if (!locId) return false;
+  try {
+    const r = await fetch("/api/web/dataset/call_kw", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:74, params:{
+        model:"stock.location", method:"search_read",
+        args:[[["id","=",locId],["location_id","=",GDS_VAN_LOCATION_PARENT],["usage","=","internal"]]],
+        kwargs:{ fields:["id"], limit:1 }
+      }})
+    });
+    return ((await r.json())?.result || []).length > 0;
+  } catch(_) { return false; }
+}
+// ── جلب تحركات الشحن من GDS → Vans ──────────────────────────
+function _gdsPrepShowExcludeInput() {
+  document.getElementById("gdsPrepExcluPopup")?.remove();
+  const btn  = document.querySelector("[title='Exclure un transfert']");
+  const rect = btn ? btn.getBoundingClientRect() : { bottom: 100, left: 100 };
+
+  const popup = document.createElement("div");
+  popup.id = "gdsPrepExcluPopup";
+  popup.style.cssText = `position:fixed;top:${rect.bottom+6}px;left:${rect.left}px;
+    background:var(--bg2);border:1px solid var(--border);border-radius:10px;
+    box-shadow:0 8px 24px #0005;padding:14px;z-index:9999;min-width:280px;`;
+  popup.innerHTML = `
+    <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px;">Exclure un transfert</div>
+    <input id="gdsPrepExcluRef" type="text" placeholder="BT/26/WF/ORN/00001"
+      style="width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:6px;
+      padding:5px 8px;font-size:12px;background:var(--bg3);color:var(--text);margin-bottom:8px;"/>
+    <div style="display:flex;gap:6px;justify-content:flex-end;">
+      <button class="gds-refresh-btn" onclick="_gdsPrepAddExclude()" style="font-size:11px;background:#f06060;color:white;">✓ Exclure</button>
+      <button class="gds-refresh-btn" onclick="document.getElementById('gdsPrepExcluPopup')?.remove()" style="font-size:11px;background:var(--text3);">✕</button>
+    </div>`;
+
+  document.body.appendChild(popup);
+  document.getElementById("gdsPrepExcluRef")?.focus();
+
+  // إغلاق عند الضغط خارجها
+  setTimeout(() => {
+    document.addEventListener("mousedown", function _close(e) {
+      if (!e.target.closest("#gdsPrepExcluPopup")) {
+        document.getElementById("gdsPrepExcluPopup")?.remove();
+        document.removeEventListener("mousedown", _close);
+      }
+    });
+  }, 100);
+}
+
+async function _gdsPrepAddExclude() {
+  const input = document.getElementById("gdsPrepExcluRef");
+  const ref   = input?.value.trim();
+  if (!ref) return;
+
+  _gdsPrepExcluNotif("Vérification…", "info");
+  try {
+    const r = await fetch("/api/web/dataset/call_kw", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:70, params:{
+        model:"stock.picking", method:"search_read",
+        args:[[["name","=",ref]]],
+        kwargs:{ fields:["id","name"], limit:1 }
+      }})
+    });
+    const res = (await r.json())?.result || [];
+    if (!res.length) {
+      _gdsPrepExcluNotif(`✗ Référence introuvable: ${ref}`, "error");
+      return;
+    }
+    // تحقق إذا كان محسوباً أصلاً في الـ chargeData
+    const isCalculated = Object.values(_gdsPrep.pickingsMap).some(p => p.name === ref);
+    if (!isCalculated) {
+      _gdsPrepExcluNotif(`⚠ Ce transfert n'est pas dans la période calculée, l'exclusion n'aura aucun effet`, "warning");
+      return;
+    }
+    if (_gdsPrep.excludedPickings.includes(ref)) {
+      _gdsPrepExcluNotif(`Déjà exclu: ${ref}`, "warning");
+      return;
+    }
+    _gdsPrep.excludedPickings.push(ref);
+    document.getElementById("gdsPrepExcluPopup")?.remove();
+    _gdsPrepUpdateExcluBtn();
+    _gdsPrepSave();
+    // حذف زر التحميل الخاص بهذا الـ transfert
+    const pickId = Object.entries(_gdsPrep.pickingsMap).find(([,p]) => p.name === ref)?.[0];
+    if (pickId) {
+      const pickBtnsEl = document.getElementById("gdsPrepPickingBtns");
+      if (pickBtnsEl) pickBtnsEl.innerHTML = _gdsPrepRenderPickingBtns();
+    }
+    _gdsPrepExcluNotif(`✓ Exclu: ${ref} — Actualisez les chargements`, "success");
+  } catch(e) {
+    _gdsPrepExcluNotif("Erreur: " + e.message, "error");
+  }
+}
+
+function _gdsPrepExcluNotif(msg, type) {
+  document.getElementById("gdsPrepExcluNotif")?.remove();
+  const colors = { success:"var(--green)", error:"var(--red)", warning:"#f59e0b", info:"var(--text3)" };
+  const n = document.createElement("div");
+  n.id = "gdsPrepExcluNotif";
+  n.style.cssText = `position:fixed;bottom:24px;right:24px;z-index:99999;
+    background:var(--bg2);border:1px solid ${colors[type]||"var(--border)"};
+    border-left:4px solid ${colors[type]||"var(--border)"};
+    border-radius:8px;padding:10px 16px;font-size:12px;color:var(--text);
+    box-shadow:0 4px 16px #0004;max-width:320px;transition:opacity .3s;`;
+  n.textContent = msg;
+  document.body.appendChild(n);
+  if (type !== "info") setTimeout(() => { n.style.opacity="0"; setTimeout(()=>n.remove(),300); }, 3000);
+}
+
+function _gdsPrepUpdateExcluBtn() {
+  const btn = document.getElementById("gdsPrepExcluBtn");
+  if (!btn) return;
+  const n = _gdsPrep.excludedPickings.length;
+  btn.textContent    = `Exclu (${n})`;
+  btn.disabled       = n === 0;
+  btn.style.opacity  = n ? "1" : "0.4";
+  btn.style.cursor   = n ? "pointer" : "default";
+}
+
+function _gdsPrepShowExcludeList() {
+  // إزالة modal سابق
+  document.getElementById("gdsPrepExcluModal")?.remove();
+  const modal = document.createElement("div");
+  modal.id = "gdsPrepExcluModal";
+  modal.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;";
+  modal.innerHTML = `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;min-width:320px;max-width:480px;box-shadow:0 8px 24px #0005;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);">
+        <span style="font-weight:600;font-size:13px;">Transferts exclus</span>
+        <button onclick="document.getElementById('gdsPrepExcluModal').remove()" style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--text2);">✕</button>
+      </div>
+      <div style="padding:10px 14px;max-height:300px;overflow-y:auto;">
+        ${_gdsPrep.excludedPickings.length === 0
+          ? `<div style="color:var(--text3);font-size:12px;">Aucun transfert exclu</div>`
+          : _gdsPrep.excludedPickings.map((ref,i) => `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+              <span style="font-size:12px;color:var(--text);">${ref}</span>
+              <button onclick="_gdsPrepRemoveExclude(${i})" style="background:var(--red);border:none;border-radius:5px;color:#fff;font-size:11px;padding:2px 8px;cursor:pointer;">✕ Retirer</button>
+            </div>`).join("")
+        }
+      </div>
+      <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;">
+        ${_gdsPrep.excludedPickings.length ? `<button class="gds-refresh-btn" style="background:var(--red);" onclick="_gdsPrepClearExcludes()">Tout retirer</button>` : ""}
+        <button class="gds-refresh-btn" style="background:var(--text3);" onclick="document.getElementById('gdsPrepExcluModal').remove()">Fermer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+function _gdsPrepRemoveExclude(i) {
+  _gdsPrep.excludedPickings.splice(i, 1);
+  _gdsPrepUpdateExcluBtn();
+  _gdsPrepSave();
+  _gdsPrepShowExcludeList();
+  const statusEl = document.getElementById("gdsPrepChargeStatus");
+  if (statusEl) statusEl.textContent = "✓ Retiré — Actualisez les chargements";
+}
+
+function _gdsPrepClearExcludes() {
+  _gdsPrep.excludedPickings = [];
+  _gdsPrepUpdateExcluBtn();
+  _gdsPrepSave();
+  document.getElementById("gdsPrepExcluModal")?.remove();
+  const statusEl = document.getElementById("gdsPrepChargeStatus");
+  if (statusEl) statusEl.textContent = "✓ Tous retirés — Actualisez les chargements";
+}
+
+function _gdsPrepShowOutOfDateInput() {
+  document.getElementById("gdsPrepOutOfDatePopup")?.remove();
+  const btn  = document.querySelector("[title='Ajouter transfert hors date']");
+  const rect = btn ? btn.getBoundingClientRect() : { bottom: 100, left: 100 };
+
+  const popup = document.createElement("div");
+  popup.id = "gdsPrepOutOfDatePopup";
+  popup.style.cssText = `position:fixed;top:${rect.bottom+6}px;left:${rect.left}px;
+    background:var(--bg2);border:1px solid var(--border);border-radius:10px;
+    box-shadow:0 8px 24px #0005;padding:14px;z-index:9999;min-width:280px;`;
+  popup.innerHTML = `
+    <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px;">Ajouter transfert hors date</div>
+    <input id="gdsPrepOutOfDateRef" type="text" placeholder="BT/26/WF/ORN/00001"
+      style="width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:6px;
+      padding:5px 8px;font-size:12px;background:var(--bg3);color:var(--text);margin-bottom:8px;"/>
+    <div style="display:flex;gap:6px;justify-content:flex-end;">
+      <button class="gds-refresh-btn" onclick="_gdsPrepAddOutOfDate()" style="font-size:11px;background:var(--orange,#f59e0b);color:white;">✓ Ajouter</button>
+      <button class="gds-refresh-btn" onclick="document.getElementById('gdsPrepOutOfDatePopup')?.remove()" style="font-size:11px;background:var(--text3);">✕</button>
+    </div>`;
+
+  document.body.appendChild(popup);
+  document.getElementById("gdsPrepOutOfDateRef")?.focus();
+
+  setTimeout(() => {
+    document.addEventListener("mousedown", function _close(e) {
+      if (!e.target.closest("#gdsPrepOutOfDatePopup")) {
+        document.getElementById("gdsPrepOutOfDatePopup")?.remove();
+        document.removeEventListener("mousedown", _close);
+      }
+    });
+  }, 100);
+}
+
+async function _gdsPrepAddOutOfDate() {
+  const input = document.getElementById("gdsPrepOutOfDateRef");
+  const ref   = input?.value.trim();
+  if (!ref) return;
+
+  _gdsPrepOutOfDateNotif("Vérification…", "info");
+  try {
+    const r = await fetch("/api/web/dataset/call_kw", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:71, params:{
+        model:"stock.picking", method:"search_read",
+        args:[[["name","=",ref]]],
+        kwargs:{ fields:["id","name","scheduled_date","location_id","location_dest_id"], limit:1 }
+      }})
+    });
+    const res = (await r.json())?.result || [];
+if (!res.length) {
+      _gdsPrepOutOfDateNotif(`✗ Référence introuvable: ${ref}`, "error");
+      return;
+    }
+    const picking = res[0];
+    // تحقق إذا كان محسوباً أصلاً (موجود في pickingsMap)
+    const isAlreadyCalculated = Object.values(_gdsPrep.pickingsMap).some(p => p.name === ref);
+    if (isAlreadyCalculated) {
+      _gdsPrepOutOfDateNotif(`⚠ Ce transfert est déjà calculé dans la période — utilisez "Exclure" à la place`, "warning");
+      return;
+    }
+    _gdsPrep.outOfDateTransferts.push({ ref, id: picking.id, scheduledDate: picking.scheduled_date });
+    document.getElementById("gdsPrepOutOfDatePopup")?.remove();
+    _gdsPrepUpdateOutOfDateBtn();
+    _gdsPrepSave();
+    _gdsPrepOutOfDateNotif(`✓ Ajouté hors date: ${ref} — Actualisez les chargements`, "success");
+  } catch(e) {
+    _gdsPrepOutOfDateNotif("Erreur: " + e.message, "error");
+  }
+}
+
+function _gdsPrepOutOfDateNotif(msg, type) {
+  document.getElementById("gdsPrepOutOfDateNotif")?.remove();
+  const colors = { success:"var(--green)", error:"var(--red)", warning:"#f59e0b", info:"var(--text3)" };
+  const n = document.createElement("div");
+  n.id = "gdsPrepOutOfDateNotif";
+  n.style.cssText = `position:fixed;bottom:24px;right:24px;z-index:99999;
+    background:var(--bg2);border:1px solid ${colors[type]||"var(--border)"};
+    border-left:4px solid ${colors[type]||"var(--border)"};
+    border-radius:8px;padding:10px 16px;font-size:12px;color:var(--text);
+    box-shadow:0 4px 16px #0004;max-width:320px;transition:opacity .3s;`;
+  n.textContent = msg;
+  document.body.appendChild(n);
+  if (type !== "info") setTimeout(() => { n.style.opacity="0"; setTimeout(()=>n.remove(),300); }, 3000);
+}
+
+function _gdsPrepUpdateOutOfDateBtn() {
+  const btn = document.getElementById("gdsPrepOutOfDateBtn");
+  if (!btn) return;
+  const n = _gdsPrep.outOfDateTransferts.length;
+  btn.textContent   = `Hors date (${n})`;
+  btn.disabled      = n === 0;
+  btn.style.opacity = n ? "1" : "0.4";
+  btn.style.cursor  = n ? "pointer" : "default";
+}
+
+function _gdsPrepShowOutOfDateList() {
+  document.getElementById("gdsPrepOutOfDateModal")?.remove();
+  const modal = document.createElement("div");
+  modal.id = "gdsPrepOutOfDateModal";
+  modal.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;";
+  modal.innerHTML = `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;min-width:320px;max-width:480px;box-shadow:0 8px 24px #0005;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);">
+        <span style="font-weight:600;font-size:13px;">Transferts hors date</span>
+        <button onclick="document.getElementById('gdsPrepOutOfDateModal').remove()" style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--text2);">✕</button>
+      </div>
+      <div style="padding:10px 14px;max-height:300px;overflow-y:auto;">
+        ${_gdsPrep.outOfDateTransferts.length === 0
+          ? `<div style="color:var(--text3);font-size:12px;">Aucun transfert hors date</div>`
+          : _gdsPrep.outOfDateTransferts.map((t,i) => `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+              <div>
+                <span style="font-size:12px;color:var(--text);">${t.ref}</span>
+                ${t.scheduledDate ? `<br><span style="font-size:10px;color:var(--text3);">${_gdsPrepFmtDt(t.scheduledDate)}</span>` : ""}
+              </div>
+              <button onclick="_gdsPrepRemoveOutOfDate(${i})" style="background:var(--orange,#f59e0b);border:none;border-radius:5px;color:#fff;font-size:11px;padding:2px 8px;cursor:pointer;">✕ Retirer</button>
+            </div>`).join("")
+        }
+      </div>
+      <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;">
+        ${_gdsPrep.outOfDateTransferts.length ? `<button class="gds-refresh-btn" style="background:var(--orange,#f59e0b);" onclick="_gdsPrepClearOutOfDate()">Tout retirer</button>` : ""}
+        <button class="gds-refresh-btn" style="background:var(--text3);" onclick="document.getElementById('gdsPrepOutOfDateModal').remove()">Fermer</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+function _gdsPrepRemoveOutOfDate(i) {
+  _gdsPrep.outOfDateTransferts.splice(i, 1);
+  _gdsPrepUpdateOutOfDateBtn();
+  _gdsPrepSave();
+  _gdsPrepShowOutOfDateList();
+  const statusEl = document.getElementById("gdsPrepChargeStatus");
+  if (statusEl) statusEl.textContent = "✓ Retiré — Actualisez les chargements";
+}
+
+function _gdsPrepClearOutOfDate() {
+  _gdsPrep.outOfDateTransferts = [];
+  _gdsPrepUpdateOutOfDateBtn();
+  _gdsPrepSave();
+  document.getElementById("gdsPrepOutOfDateModal")?.remove();
+  const statusEl = document.getElementById("gdsPrepChargeStatus");
+  if (statusEl) statusEl.textContent = "✓ Tous retirés — Actualisez les chargements";
+}
+
+async function gdsPrepFetchCharge() {
+  const statusEl = document.getElementById("gdsPrepChargeStatus");
+  const dtInput  = document.getElementById("gdsPrepChargeFrom");
+  if (!dtInput) return;
+
+  // لا نقرأ من input.value — نأخذ مباشرة من _gdsPrep (ISO مخزون بـ onChange)
+  const dtVal = _gdsPrep.chargeFrom;
+  if (!dtVal) { if (statusEl) statusEl.textContent = "Choisir une date/heure"; return; }
+
+  const dtToVal = _gdsPrep.chargeTo || null;
+
+  // Convertir ISO local → UTC pour Odoo
+  function _isoLocalToOdoo(iso) {
+    if (!iso) return null;
+    const [dp, tp="00:00"] = iso.split("T");
+    const [y,m,d] = dp.split("-");
+    const [h,mi]  = tp.split(":");
+    const local   = new Date(+y, +m-1, +d, +h, +mi);
+    return local.toISOString().replace("T"," ").slice(0,19);
+  }
+
+  const odooFrom = _isoLocalToOdoo(dtVal);
+  const odooTo   = _isoLocalToOdoo(dtToVal);
+
+  if (statusEl) statusEl.textContent = "Chargement…";
+
+  try {
+    // 1) Récupérer les child locations des vans
+    const rLoc = await fetch("/api/web/dataset/call_kw", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:50, params:{
+        model:"stock.location", method:"search_read",
+        args:[[["location_id","=",GDS_VAN_LOCATION_PARENT],["usage","=","internal"]]],
+        kwargs:{ fields:["id"], limit:200 }
+      }})
+    });
+    const vanLocIds = ((await rLoc.json())?.result || []).map(l => l.id);
+
+    if (!vanLocIds.length) {
+      if (statusEl) statusEl.textContent = "Aucun emplacement van trouvé";
+      return;
+    }
+
+    // 2) Récupérer stock.move.line : GDS_WAREHOUSE_ID → vanLocIds, depuis dtVal
+    const rMoves = await fetch("/api/web/dataset/call_kw", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:51, params:{
+        model:"stock.move.line", method:"search_read",
+        args:[[
+          ["location_id",    "=",  GDS_WAREHOUSE_ID],
+          ["location_dest_id","in", vanLocIds],
+          ["state",          "=",  "done"],
+          ["date",           ">=", odooFrom],
+          ...(odooTo ? [["date", "<=", odooTo]] : []),
+        ]],
+        kwargs:{ fields:["product_id","qty_done","product_uom_id","date","lot_id","picking_id","location_dest_id"], limit:5000 }
+      }})
+    });
+    const moves = (await rMoves.json())?.result || [];
+
+    // 3b) جلب بيانات الـ pickings
+    const pickingIds = [...new Set(moves.map(m => m.picking_id?.[0]).filter(Boolean))];
+    let pickingsMap = {};
+    if (pickingIds.length) {
+      const rPick = await fetch("/api/web/dataset/call_kw", {
+        method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:52, params:{
+          model:"stock.picking", method:"search_read",
+          args:[[["id","in",pickingIds]]],
+          kwargs:{ fields:["id","name","partner_id","date_done"], limit:500 }
+        }})
+      });
+      const pickRes = (await rPick.json())?.result || [];
+    pickRes.forEach(p => {
+      if (p.name) p.name = p.name.replace(/^"|"$/g, '');
+      pickingsMap[p.id] = p;
+    });
+    // إضافة اسم الـ van من أول move لكل picking
+    moves.forEach(m => {
+      const pickId = m.picking_id?.[0];
+      if (pickId && pickingsMap[pickId] && !pickingsMap[pickId].van) {
+        const fullPath = m.location_dest_id?.[1] || "";
+    const parts    = fullPath.split("/");
+    pickingsMap[pickId].van = parts[parts.length - 1].trim() || "—";
+      }
+    });
+    }
+
+    // تطبيق الاستثناءات
+    const excludedIds = new Set(
+      Object.values(pickingsMap)
+        .filter(p => _gdsPrep.excludedPickings.includes(p.name))
+        .map(p => p.id)
+    );
+    const filteredMoves = moves.filter(m => !excludedIds.has(m.picking_id?.[0]));
+
+    // تجميع الـ moves حسب picking
+    const byPicking = {};
+    filteredMoves.forEach(m => {
+      const pickId = m.picking_id?.[0];
+      if (!pickId) return;
+      if (!byPicking[pickId]) byPicking[pickId] = [];
+      byPicking[pickId].push(m);
+    });
+
+  // جلب unitSize من product.packaging للمنتجات غير الموجودة في lines
+const allPids = [...new Set(filteredMoves.map(m => m.product_id[0]))];
+const missingPids = allPids.filter(pid => !_gdsPrep.lines.find(l => l.pid === pid));
+
+const pkgMap = {};
+if (missingPids.length) {
+  const rPkg = await fetch("/api/web/dataset/call_kw", {
+    method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:55, params:{
+      model:"product.packaging", method:"search_read",
+      args:[[["product_id","in",missingPids]]],
+      kwargs:{ fields:["product_id","qty"], limit:500 }
+    }})
+  });
+  ((await rPkg.json())?.result || []).forEach(pkg => {
+    const pid = pkg.product_id[0];
+    if (!pkgMap[pid]) pkgMap[pid] = pkg.qty || 0;
+  });
+}
+  // حفظ في _gdsPrep لاستخدامها في الأزرار
+    _gdsPrep.pickingsMap = pickingsMap;
+    _gdsPrep.byPicking   = byPicking;
+
+    // 3) Agréger par product_id
+    const agg = {};
+    filteredMoves.forEach(m => {
+      const pid = m.product_id[0];
+      if (!agg[pid]) agg[pid] = 0;
+      agg[pid] += m.qty_done || 0;
+    });
+
+    // جلب moves الخاصة بـ outOfDateTransferts وإضافتها
+    if (_gdsPrep.outOfDateTransferts.length) {
+      const outIds = _gdsPrep.outOfDateTransferts.map(t => t.id).filter(Boolean);
+      if (outIds.length) {
+        try {
+          const rOut = await fetch("/api/web/dataset/call_kw", {
+            method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:72, params:{
+              model:"stock.move.line", method:"search_read",
+              args:[[["picking_id","in",outIds],["state","=","done"]]],
+              kwargs:{ fields:["product_id","qty_done","picking_id"], limit:2000 }
+            }})
+          });
+          const outMoves = (await rOut.json())?.result || [];
+          outMoves.forEach(m => {
+            const pid = m.product_id?.[0]; if (!pid) return;
+            if (!agg[pid]) agg[pid] = 0;
+            agg[pid] += m.qty_done || 0;
+          });
+          // إضافة pickings hors date إلى pickingsMap وbyPicking
+          const rOutPick = await fetch("/api/web/dataset/call_kw", {
+            method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:73, params:{
+              model:"stock.picking", method:"search_read",
+              args:[[["id","in",outIds]]],
+              kwargs:{ fields:["id","name","partner_id","date_done"], limit:200 }
+            }})
+          });
+          ((await rOutPick.json())?.result || []).forEach(p => {
+            if (p.name) p.name = p.name.replace(/^"|"$/g, '');
+            p._outOfDate = true;
+            pickingsMap[p.id] = p;
+            const ms = outMoves.filter(m => m.picking_id?.[0] === p.id);
+            if (ms.length) {
+              if (!byPicking[p.id]) byPicking[p.id] = [];
+              byPicking[p.id].push(...ms);
+            }
+          });
+        } catch(e) {
+          console.warn("[GdsPrep] outOfDate fetch error:", e);
+        }
+      }
+    }
+
+
+
+   _gdsPrep.chargeData = {};
+
+   // إضافة المنتجات المشحونة غير الموجودة في lines
+    const prepPids = new Set(
+      _gdsPrep.lines
+        .filter(l => l.prepCarton > 0 || l.prepUnite > 0)
+        .map(l => String(l.pid))
+    );
+    const extraPids = Object.entries(agg)
+      .filter(([pid, total]) => total > 0 && !prepPids.has(String(pid)))
+      .map(([pid]) => Number(pid));
+
+    if (extraPids.length) {
+      // جلب أسماء المنتجات الإضافية
+      const rExtra = await fetch("/api/web/dataset/call_kw", {
+        method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:53, params:{
+          model:"product.product", method:"search_read",
+          args:[[["id","in",extraPids]]],
+          kwargs:{ fields:["id","name","categ_id","packaging_quantity_1","quantity_svl"], limit:500 }
+        }})
+      });
+      const extraProds = {};
+((await rExtra.json())?.result || []).forEach(p => { extraProds[p.id] = p; });
+
+// جلب unitSize من product.packaging
+const rPkg = await fetch("/api/web/dataset/call_kw", {
+  method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+  body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:54, params:{
+    model:"product.packaging", method:"search_read",
+    args:[[["product_id","in",extraPids]]],
+    kwargs:{ fields:["product_id","qty"], limit:500 }
+  }})
+});
+const extraPkgMap = {};
+((await rPkg.json())?.result || []).forEach(pkg => {
+  const pid = pkg.product_id[0];
+  if (!extraPkgMap[pid]) extraPkgMap[pid] = pkg.qty || 0;
+});
+
+      extraPids.forEach(pid => {
+        const total = agg[pid] || 0;
+        const p     = extraProds[pid] || {};
+        const name  = p.name || `pid:${pid}`;
+        const categ = p.categ_id?.[1] || "— Chargé sans préparation —";
+        // تحديث إذا موجود مسبقاً كـ extraCharge
+        const existing = _gdsPrep.lines.find(l => l.pid === pid);
+        if (existing) { existing._extraCharge = true; return; }
+        const pkgQty = p.packaging_quantity_1 || 0;
+_gdsPrep.lines.push({
+  pid, name, categ,
+  carton: pkgQty, qty: pkgQty, prepCarton: 0, prepUnite: 0, unitSize: pkgQty,
+  history: [], check: false, ecart: 0, _extraCharge: true,
+});
+        // إضافة chargeData
+        _gdsPrep.chargeData[pid] = {
+          chargeCarton: 0,
+          chargeUnite:  Math.round(total),
+          chargeTotal:  total,
+        };
+      });
+    }
+    // 4) Mapper sur les lignes prep (avec unitSize pour calculer C/F et U)
+    // 4) Mapper sur les lignes prep (avec unitSize pour calculer C/F et U)
+Object.entries(agg).forEach(([pidStr, total]) => {
+  const pid  = Number(pidStr);
+  const line = _gdsPrep.lines.find(l => l.pid === pid);
+  const u    = line ? _gdsPrepUnitSize(line) : (pkgMap[pid] || 0);
+  _gdsPrep.chargeData[pid] = {
+    chargeCarton: u > 0 ? Math.floor(total / u) : 0,
+    chargeUnite:  u > 0 ? Math.round(total % u) : Math.round(total),
+    chargeTotal:  total,
+  };
+});
+    const nb = Object.values(agg).filter(v => v > 0).length;
+    if (statusEl) statusEl.textContent = `${nb} article(s) chargé(s) — ${new Date().toLocaleTimeString("fr-FR")}`;
+_gdsPrepSave();
+    // تحديث أزرار الموزعين مباشرة بدون إعادة رندر كاملة
+    const pickBtnsEl = document.getElementById("gdsPrepPickingBtns");
+    if (pickBtnsEl) pickBtnsEl.innerHTML = _gdsPrepRenderPickingBtns();
+ _gdsPrepFetchSuggested().then(sugg => {
+      _gdsPrep.suggested = sugg;
+      _gdsPrepRenderTable();
+    });
+
+  } catch(e) {
+    if (statusEl) statusEl.textContent = "Erreur: " + e.message;
+  }
+}
+
+// ── جلب الكميات المقترحة (BL assigned غير موزعة) ─────────────
+async function _gdsPrepFetchSuggested() {
+  try {
+    const today = new Date().toISOString().slice(0,10);
+
+    // 1) plannings مفتوحة اليوم
+    const r1 = await fetch("/api/web/dataset/call_kw", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:60, params:{
+        model:"planning.planning", method:"search_read",
+        args:[[["date_start","=",today],["state","not in",["done","cancel"]]]],
+        kwargs:{ fields:["id"], limit:500 }
+      }})
+    });
+    const todayPlanningIds = new Set(((await r1.json())?.result||[]).map(p=>p.id));
+
+    // 2) BLs prêt
+    const r2 = await fetch("/api/web/dataset/call_kw", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:61, params:{
+        model:"stock.picking", method:"search_read",
+        args:[[["picking_type_id","=",75],["state","=","assigned"]]],
+        kwargs:{ fields:["id","delivery_planning_id","move_lines"], limit:5000 }
+      }})
+    });
+    const picks = (await r2.json())?.result || [];
+
+    // 3) استثناء BLs في planning اليوم
+    const filteredMoveIds = picks
+      .filter(p => !p.delivery_planning_id || !todayPlanningIds.has(p.delivery_planning_id[0]))
+      .flatMap(p => p.move_lines || []);
+    if (!filteredMoveIds.length) return {};
+
+    // 4) جلب moves
+    const r3 = await fetch("/api/web/dataset/call_kw", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:62, params:{
+        model:"stock.move", method:"search_read",
+        args:[[["id","in",filteredMoveIds]]],
+        kwargs:{ fields:["product_id","product_uom_qty"], limit:20000 }
+      }})
+    });
+    const moves = (await r3.json())?.result || [];
+
+    const agg = {};
+    moves.forEach(m => {
+      const pid = m.product_id?.[0]; if (!pid) return;
+      agg[pid] = (agg[pid] || 0) + (m.product_uom_qty || 0);
+    });
+    return agg;
+  } catch(e) {
+    console.error("[GdsPrep] fetchSuggested:", e);
+    return {};
+  }
+}
+
+// ── جلب أسماء المنتجات المجهولة ──────────────────────────────
+async function _gdsPrepFetchMissingNames() {
+  const unknown = _gdsPrep.lines.filter(l => l.name.startsWith("pid:"));
+  if (!unknown.length) return;
+  const pids = unknown.map(l => l.pid);
+  try {
+    const r = await fetch("/api/web/dataset/call_kw", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:70, params:{
+        model:"product.product", method:"search_read",
+        args:[[["id","in",pids]]],
+        kwargs:{ fields:["id","name","categ_id"], limit:500 }
+      }})
+    });
+    const prods = (await r.json())?.result || [];
+    prods.forEach(p => {
+      const line = _gdsPrep.lines.find(l => l.pid === p.id);
+      if (line) {
+        line.name  = p.name;
+        line.categ = p.categ_id?.[1] || line.categ;
+      }
+    });
+    _gdsPrepSave();
+    _gdsPrepRenderTable();
+  } catch(e) { console.error("[GdsPrep] fetchMissingNames:", e); }
+}
+
+const _gdsPrepCols = (() => {
+  const defaults = { stock:true, sugg:true, prep:true, charge:true, reste:true };
+  try {
+    const saved = JSON.parse(localStorage.getItem("wafa_gds_cols") || "{}");
+    return Object.assign({}, defaults, saved);
+  } catch(_) { return defaults; }
+})();
+function _gdsPrepToggleCol(col) {
+  _gdsPrepCols[col] = !_gdsPrepCols[col];
+  localStorage.setItem("wafa_gds_cols", JSON.stringify(_gdsPrepCols));
+  const btn = document.getElementById("gdsPrepColBtn_" + col);
+  if (btn) {
+    btn.style.opacity = _gdsPrepCols[col] ? "1" : "0.45";
+    btn.style.textDecoration = _gdsPrepCols[col] ? "none" : "line-through";
+    btn.style.background = _gdsPrepCols[col] ? "var(--gds-color)" : "var(--bg3)";
+    btn.style.color = _gdsPrepCols[col] ? "#fff" : "var(--text3)";
+    btn.textContent = _gdsPrepCols[col] ? "Visible" : "Caché";
+  }
+  // حفظ الـ panel المفتوح قبل إعادة الرسم
+  const openPanel = document.querySelector("[id^='gdsPrepColPanel_'][style*='flex']");
+  const openCat   = openPanel ? openPanel.id.replace("gdsPrepColPanel_", "") : null;
+  _gdsPrepRenderTable();
+  // إعادة فتح الـ panel بعد الرسم
+  if (openCat) {
+    const restored = document.getElementById("gdsPrepColPanel_" + openCat);
+    if (restored) restored.style.display = "flex";
+  }
+}
+function _gdsPrepToggleColPanel(cat) {
+  const panel = document.getElementById("gdsPrepColPanel_" + cat);
+  if (!panel) return;
+  const isOpen = panel.style.display !== "none";
+  // أغلق كل الـ panels المفتوحة
+  document.querySelectorAll("[id^='gdsPrepColPanel_']").forEach(p => p.style.display = "none");
+  if (isOpen) return;
+  panel.style.display = "flex";
+  // listener للإغلاق عند الضغط خارج الإطار (مرة واحدة)
+  setTimeout(() => {
+    function _outsideClick(e) {
+      if (!panel.contains(e.target) && !e.target.closest("button[onclick*='_gdsPrepToggleColPanel']")) {
+        panel.style.display = "none";
+        document.removeEventListener("click", _outsideClick);
+      }
+    }
+    document.addEventListener("click", _outsideClick);
+  }, 0);
+}
+
+// ── عرض الجدول الرئيسي ───────────────────────────────────────
+function _gdsPrepRenderTable() {
+  const wrap = document.getElementById("gdsPrepTableWrap");
+  if (!wrap) return;
+
+  // بناء nameMap من byPicking لمعرفة أسماء المنتجات المشحونة
+  const nameMap = {};
+  Object.values(_gdsPrep.byPicking || {}).forEach(moves => {
+    moves.forEach(m => {
+      if (m.product_id?.[0] && m.product_id?.[1]) nameMap[m.product_id[0]] = m.product_id[1];
+    });
+  });
+
+  // المنتجات في preparation
+  const prepSet = new Set(_gdsPrep.lines
+    .filter(l => l.prepCarton > 0 || l.prepUnite > 0 || l._hasError)
+    .map(l => l.pid));
+
+  // المنتجات المشحونة غير الموجودة في preparation
+  const extraLines = Object.entries(_gdsPrep.chargeData)
+    .filter(([pid, ch]) => !prepSet.has(Number(pid)) && ch.chargeTotal > 0)
+    .map(([pid], ei) => {
+      const pidNum = Number(pid);
+      const existingLine = _gdsPrep.lines.find(l => l.pid === pidNum);
+      if (existingLine) {
+        existingLine._extraCharge = true;
+        return { line: existingLine, i: _gdsPrep.lines.indexOf(existingLine) };
+      }
+      const fromLine = _gdsPrep.lines.find(l => l.pid === pidNum);
+      const name = nameMap[pidNum] || fromLine?.name || `pid:${pid}`;
+      const newLine = {
+        pid: pidNum, name, categ: "— Chargé sans préparation —",
+        carton: 0, qty: 0, prepCarton: 0, prepUnite: 0, unitSize: extraPkgMap[pid] || 0,
+        history: [], check: false, ecart: 0, _extraCharge: true,
+      };
+      _gdsPrep.lines.push(newLine);
+      return { line: newLine, i: _gdsPrep.lines.length - 1 };
+    });
+
+const activeLines = [
+    ..._gdsPrep.lines.map((line, i) => ({ line, i }))
+      .filter(({ line }) => line.prepCarton > 0 || line.prepUnite > 0 || line._hasError),
+    ...extraLines,
+  ];
+
+  if (!activeLines.length) {
+    wrap.innerHTML = `<div class="gds-loading" style="color:var(--text3)">Aucun article préparé</div>`;
+    return;
+  }
+
+  const byCateg = {};
+  activeLines.forEach(({ line, i }) => {
+    if (!byCateg[line.categ]) byCateg[line.categ] = [];
+    byCateg[line.categ].push({ line, i });
+  });
+
+  const hasCharge = Object.keys(_gdsPrep.chargeData).length > 0;
+
+  let html = "";
+  _sortCats(Object.keys(byCateg)).forEach(cat => {
+    const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
+    html += `<div class="gds-category" style="margin:0 0 14px;">
+      <div class="gds-category-title gds-category-toggle" onclick="_gdsPrepToggleTblCat('${escHtml(cat)}')">
+        <svg id="gdsPrepArrow_${escHtml(cat)}" class="gds-collapse-arrow" style="transform:${collapsed?"rotate(-90deg)":""}" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+        ${escHtml(cat)}
+      </div>
+      <div id="gdsPrepTblCat_${escHtml(cat)}" style="display:${collapsed?"none":""}">
+      <table class="gds-table" style="min-width:max-content;width:100%;">
+        <thead>
+          <tr>
+            <th style="text-align:left;color:var(--text2)">Produit</th>
+            ${_gdsPrepCols.stock ? `<th colspan="2" style="text-align:center;border-bottom:1px solid var(--border);color:var(--text3);">Stock</th>` : ""}
+            ${Object.keys(_gdsPrep.suggested).length && _gdsPrepCols.sugg ? `<th colspan="2" style="text-align:center;border-bottom:1px solid var(--border);color:var(--text3);">Suggéré</th>` : ""}
+            ${_gdsPrepCols.prep ? `<th colspan="3" style="text-align:center;border-bottom:1px solid var(--border);color:var(--gds-color)">Préparation</th>` : ""}
+            ${hasCharge && _gdsPrepCols.charge ? `<th colspan="3" style="text-align:center;border-bottom:1px solid var(--border);color:var(--orange)">Chargement</th>` : ""}
+            ${hasCharge && _gdsPrepCols.reste ? `<th colspan="3" style="text-align:center;border-bottom:1px solid var(--border);color:var(--accent)">Reste</th>` : ""}
+            ${_gdsPrep.finished ? `<th colspan="2" style="text-align:center;border-bottom:1px solid var(--border);color:var(--text2)">Vérif.</th>` : ""}
+            <th style="text-align:right;white-space:nowrap;position:relative;" rowspan="2">
+              <button onclick="_gdsPrepToggleColPanel('${escHtml(cat)}')" style="font-size:9px;padding:2px 6px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;line-height:1.4;">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:2px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Col
+              </button>
+              <div id="gdsPrepColPanel_${escHtml(cat)}" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;flex-direction:column;gap:6px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5);">
+                ${[
+                  { key:"stock",  label:"Stock",       color:"var(--text3)"    },
+                  { key:"sugg",   label:"Suggéré",     color:"var(--text3)"    },
+                  { key:"prep",   label:"Préparation", color:"var(--gds-color)"},
+                  { key:"charge", label:"Chargement",  color:"var(--orange)"   },
+                  { key:"reste",  label:"Reste",       color:"var(--accent)"   },
+                ].map(c => `
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                    <span style="font-size:11px;font-weight:600;color:${c.color};">${c.label}</span>
+                    <button id="gdsPrepColBtn_${c.key}" onclick="_gdsPrepToggleCol('${c.key}')"
+                      style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);
+                             background:${_gdsPrepCols[c.key] ? "var(--gds-color)" : "var(--bg3)"};
+                             color:${_gdsPrepCols[c.key] ? "#fff" : "var(--text3)"};cursor:pointer;
+                             opacity:${_gdsPrepCols[c.key] ? "1" : "0.45"};
+                             text-decoration:${_gdsPrepCols[c.key] ? "none" : "line-through"};">
+                      ${_gdsPrepCols[c.key] ? "Visible" : "Caché"}
+                    </button>
+                  </div>`).join("")}
+              </div>
+            </th>
+          </tr>
+          <tr>
+            <th></th>
+            ${_gdsPrepCols.stock ? `<th style="text-align:right;color:var(--text3)">C/F</th><th style="text-align:right;color:var(--text3)">U</th>` : ""}
+            ${Object.keys(_gdsPrep.suggested).length && _gdsPrepCols.sugg ? `<th style="text-align:right;color:var(--text3)">C/F</th><th style="text-align:right;color:var(--text3)">U</th>` : ""}
+            ${_gdsPrepCols.prep ? `<th style="text-align:right;color:var(--gds-color)">C/F</th><th style="text-align:right;color:var(--gds-color)">U</th><th style="text-align:right;color:var(--gds-color);font-size:9px;">qty</th>` : ""}
+            ${hasCharge && _gdsPrepCols.charge ? `<th style="text-align:right;color:var(--orange)">C/F</th><th style="text-align:right;color:var(--orange)">U</th><th style="text-align:right;color:var(--orange);font-size:9px;">qty</th>` : ""}
+            ${hasCharge && _gdsPrepCols.reste ? `<th style="text-align:right;color:var(--accent)">C/F</th><th style="text-align:right;color:var(--accent)">U</th><th style="text-align:right;color:var(--accent);font-size:9px;">qty</th>` : ""}
+            ${_gdsPrep.finished ? `<th style="text-align:center">✓</th><th style="text-align:center">Écart</th>` : ""}
+          </tr>
+        </thead><tbody>`;
+
+    byCateg[cat].forEach(({ line, i }) => {
+      const u        = _gdsPrepUnitSize(line);
+      const stockC   = u > 0 ? Math.floor(line.qty / u) : 0;
+      const stockU   = u > 0 ? Math.round(line.qty % u) : Math.round(line.qty);
+      const ch         = _gdsPrep.chargeData[line.pid] || { chargeCarton:0, chargeUnite:0, chargeTotal:0 };
+      const totalPrep  = _gdsPrepTotalPrep(line);
+      const overStock  = totalPrep > line.qty;
+      const overCharge = ch.chargeTotal > 0 && totalPrep === 0 && line._extraCharge;
+      const hasErr     = !!line._hasError || overStock || overCharge;
+      const rowErr     = hasErr;
+      // Reste = prep − chargement (en unités brutes)
+      const prepTotal = line.prepCarton * u + line.prepUnite;
+      const resteTotal = prepTotal - ch.chargeTotal;
+      const resteCarton = u > 0 ? Math.trunc(resteTotal / u) : 0;
+      const resteUnite  = u > 0 ? Math.round(resteTotal - Math.trunc(resteTotal / u) * u) : Math.round(resteTotal);
+      const chargeOverPrep = ch.chargeTotal > prepTotal && prepTotal > 0;
+
+      html += `<tr style="${rowErr ? "background:rgba(239,68,68,.10);" : ""}">
+        <td style="${rowErr ? "color:var(--red);font-weight:600;" : ""}font-size:11px;min-width:120px;max-width:180px;word-break:break-word;white-space:normal;" title="${escHtml(line.name)}">${escHtml(line.name)}
+          ${overStock ? `<span style="font-size:9px;margin-left:4px;color:var(--red)">⚠ dépasse stock</span>` : ""}
+          ${overCharge ? `<span style="font-size:9px;margin-left:4px;color:var(--red)">⚠ chargé sans prépa</span>` : ""}
+        </td>
+        ${_gdsPrepCols.stock ? `<td class="gds-qty" style="color:var(--text3)">${stockC > 0 ? stockC : "—"}</td><td class="gds-qty" style="color:var(--text3)">${stockU > 0 ? stockU : (stockC === 0 ? Math.round(line.qty) : "—")}</td>` : ""}
+        ${Object.keys(_gdsPrep.suggested).length && _gdsPrepCols.sugg ? (() => {
+          const suggQty = _gdsPrep.suggested[line.pid] || 0;
+          const suggC   = u > 0 ? Math.floor(suggQty / u) : 0;
+          const suggU   = u > 0 ? Math.round(suggQty % u) : Math.round(suggQty);
+          return `<td class="gds-qty" style="color:var(--text3)">${suggC > 0 ? suggC : "—"}</td>
+                  <td class="gds-qty" style="color:var(--text3)">${suggU > 0 ? suggU : (suggQty > 0 && suggC === 0 ? suggQty : "—")}</td>`;
+        })() : ""}
+        ${_gdsPrepCols.prep ? `
+        <td class="gds-qty" style="color:${rowErr ? "var(--red)" : "var(--gds-color)"}">
+          ${line.prepCarton > 0 ? line.prepCarton : "—"}
+        </td>
+        <td class="gds-qty" style="color:${rowErr ? "var(--red)" : "var(--gds-color)"}">
+          ${line.prepUnite > 0 ? line.prepUnite : "—"}
+        </td>
+        <td class="gds-qty" style="color:${rowErr ? "var(--red)" : "var(--gds-color)"};opacity:0.7;font-size:10px;">
+          ${prepTotal > 0 ? prepTotal : "—"}
+        </td>` : ""}
+        ${hasCharge && _gdsPrepCols.charge ? `
+        <td class="gds-qty" style="color:${chargeOverPrep?"var(--red)":"var(--orange)"}">
+          ${ch.chargeCarton > 0 ? ch.chargeCarton : "—"}
+          ${chargeOverPrep ? `<span style="font-size:9px;color:var(--red)">⚠</span>` : ""}
+        </td>
+        <td class="gds-qty" style="color:${chargeOverPrep?"var(--red)":"var(--orange)"}">
+          ${ch.chargeUnite > 0 ? ch.chargeUnite : "—"}
+        </td>
+        <td class="gds-qty" style="color:${chargeOverPrep?"var(--red)":"var(--orange)"};opacity:0.7;font-size:10px;">
+          ${ch.chargeTotal > 0 ? ch.chargeTotal : "—"}
+        </td>` : ""}
+        ${hasCharge && _gdsPrepCols.reste ? `
+        <td class="gds-qty" style="color:${resteTotal===0?"var(--green)":resteTotal<0?"var(--red)":"var(--accent)"}">
+  ${resteCarton !== 0 ? resteCarton : (resteTotal===0 ? "0" : "—")}
+</td>
+<td class="gds-qty" style="color:${resteTotal===0?"var(--green)":resteTotal<0?"var(--red)":"var(--accent)"}">
+  ${resteUnite !== 0 ? resteUnite : (resteTotal===0 ? "0" : "—")}
+</td>
+        <td class="gds-qty" style="color:${resteTotal===0?"var(--green)":resteTotal<0?"var(--red)":"var(--accent)"};opacity:0.7;font-size:10px;">
+          ${resteTotal !== 0 ? Math.round(resteTotal) : "0"}
+        </td>` : ""}
+        ${_gdsPrep.finished ? `
+        <td style="text-align:center;padding:2px;">
+          <button class="gds-check-btn" data-pid="${line.pid}"
+            onclick="_gdsPrepToggleCheck(${line.pid})"
+            style="border:1px solid ${line.ecart !== null && line.ecart !== 0 ? 'var(--red)' : line.check ? 'var(--green)' : 'var(--border)'};
+                   color:${line.ecart !== null && line.ecart !== 0 ? 'var(--red)' : line.check ? 'var(--green)' : 'var(--text3)'};
+                   ...">
+            ${line.ecart !== null && line.ecart !== 0 ? '✗' : '✓'}</button>
+        </td>
+        <td style="padding:2px;">
+          <input type="number" step="any"
+            class="gds-prep-input" style="width:54px;text-align:center;"
+            value="${line.ecart != null ? line.ecart : 0}"
+            placeholder="0"
+            oninput="_gdsPrepEcartInput(${line.pid}, this.value)"/>
+        </td>
+        ` : `
+        <td style="text-align:center;white-space:nowrap;min-width:40px;">
+          ${line.history?.length
+            ? `<button class="gds-prep-hist-btn" onclick="gdsPrepShowHist(${i})" title="Historique">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+               </button>`
+            : ""}
+          ${Object.values(_gdsPrep.byPicking).some(mv => mv.some(m => m.product_id?.[0] === line.pid))
+            ? `<button class="gds-prep-hist-btn" onclick="gdsPrepShowCharge(${line.pid})" title="Détail chargement" style="margin-left:2px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                  <circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+                </svg>
+               </button>`
+            : ""}
+        </td>`}
+      </tr>`;
+    });
+    html += `</tbody></table></div></div>`;
+  });
+
+  wrap.innerHTML = html;
+  if (_gdsPrep.finished) _gdsPrepCheckAllDone();
+  _gdsPrepFetchMissingNames();
+}
+
+// ── toggle مجموعة في الجدول ───────────────────────────────────
+function _gdsPrepToggleTblCat(cat) {
+  const key = "tbl_" + cat;
+  _gdsPrep.collapsed[key] = !_gdsPrep.collapsed[key];
+  const body  = document.getElementById("gdsPrepTblCat_" + cat);
+  const arrow = document.getElementById("gdsPrepArrow_" + cat);
+  if (body)  body.style.display = _gdsPrep.collapsed[key] ? "none" : "";
+  if (arrow) arrow.style.transform = _gdsPrep.collapsed[key] ? "rotate(-90deg)" : "";
+}
+
+// ── نافذة السجل ──────────────────────────────────────────────
+function gdsPrepShowHist(idx) {
+  const line = _gdsPrep.lines[idx]; if (!line) return;
+  const modal = document.getElementById("gdsPrepHistModal");
+  if (!modal) return;
+  document.getElementById("gdsPrepHistTitle").textContent = "Historique: " + line.name;
+  const body = document.getElementById("gdsPrepHistBody");
+
+  if (!line.history || line.history.length === 0) {
+    body.innerHTML = `<div class="gds-loading" style="color:var(--text3)">Aucun historique</div>`;
+  } else {
+    let html = `<table class="gds-table">
+      <thead><tr>
+        <th>Heure</th><th>Type</th><th style="text-align:right">C/F</th><th style="text-align:right">U</th>
+      </tr></thead><tbody>`;
+    line.history.forEach(h => {
+      const color = h.type === "Augmentation" || h.type === "Ajout" ? "var(--green)" : h.type === "Réduction" ? "var(--red)" : "var(--gds-color)";
+      html += `<tr>
+        <td style="font-size:10px;color:var(--text3)">${h.ts}</td>
+        <td style="font-weight:600;color:${color}">${h.type}</td>
+        <td class="gds-qty">${h.carton > 0 ? "+"+h.carton : h.carton < 0 ? h.carton : "—"}</td>
+        <td class="gds-qty">${h.unite > 0 ? "+"+h.unite : h.unite < 0 ? h.unite : "—"}</td>
+      </tr>`;
+    });
+    html += `</tbody></table>`;
+    body.innerHTML = html;
+  }
+  modal.style.display = "flex";
+}
+
+function gdsPrepCloseHist() {
+  const m = document.getElementById("gdsPrepHistModal");
+  if (m) m.style.display = "none";
+}
+
+// ── تأكيد الإنهاء ─────────────────────────────────────────────
+function gdsPrepAskFinish() {
+  const modal = document.getElementById("gdsPrepConfirmModal");
+  if (!modal) return;
+  modal.style.display = "flex";
+  const btn  = document.getElementById("gdsPrepConfirmBtn");
+  const cd   = document.getElementById("gdsPrepCountdown");
+  const hint = document.getElementById("gdsPrepCdHint");
+  if (btn) { btn.disabled = true; btn.style.opacity = ".4"; }
+  let sec = 5;
+  if (cd) cd.textContent = sec;
+  const t = setInterval(() => {
+    sec--;
+    if (cd) cd.textContent = sec;
+    if (sec <= 0) {
+      clearInterval(t);
+      if (btn)  { btn.disabled = false; btn.style.opacity = "1"; }
+      if (cd)   cd.textContent = "✓";
+      if (hint) hint.textContent = "يمكنك التأكيد الآن";
+    }
+  }, 1000);
+}
+
+function gdsPrepCloseConfirm() {
+  const m = document.getElementById("gdsPrepConfirmModal");
+  if (m) m.style.display = "none";
+}
+
+function gdsPrepDoFinish() {
+  gdsPrepCloseConfirm();
+  _gdsPrep.finished = true;
+  _gdsPrepSave();
+  renderGdsPreparation();
+  addNotif("✓ Préparation terminée", "success");
+}
+function gdsPrepAskCancel() {
+  const modal = document.getElementById("gdsPrepCancelModal");
+  if (!modal) return;
+  modal.style.display = "flex";
+  const btn = document.getElementById("gdsPrepCancelBtn");
+  const cd  = document.getElementById("gdsPrepCancelCountdown");
+  if (btn) { btn.disabled = true; btn.style.opacity = ".4"; }
+  let sec = 10;
+  if (cd) cd.textContent = sec;
+  const t = setInterval(() => {
+    sec--;
+    if (cd) cd.textContent = sec;
+    if (sec <= 0) {
+      clearInterval(t);
+      if (btn) { btn.disabled = false; btn.style.opacity = "1"; }
+      if (cd)  cd.textContent = "✓";
+    }
+  }, 1000);
+}
+
+function gdsPrepCloseCancel() {
+  const m = document.getElementById("gdsPrepCancelModal");
+  if (m) m.style.display = "none";
+}
+
+function gdsPrepDoCancel() {
+  gdsPrepCloseCancel();
+ _gdsPrep.lines               = [];
+  _gdsPrep.loaded              = false;
+  _gdsPrep.finished            = false;
+  _gdsPrep.collapsed           = {};
+  _gdsPrep.chargeFrom          = null;
+  _gdsPrep.chargeData          = {};
+  _gdsPrep.pickingsMap         = {};
+  _gdsPrep.byPicking           = {};
+  _gdsPrep.excludedPickings    = [];
+  _gdsPrep.outOfDateTransferts = [];
+  localStorage.removeItem(GDS_PREP_STORAGE_KEY);
+  _gdsPrepSaveCloud();
+  renderGdsPreparation();
+  addNotif("Préparation annulée", "warning");
+}
+
+function _gdsPrepToggleCheck(pid) {
+  const line = _gdsPrep.lines.find(l => l.pid === pid); if (!line) return;
+  if (line.ecart !== null && line.ecart !== 0) return; // فارق غير صفر → لا يمكن check
+  line.check = !line.check;
+  _gdsPrepSave();
+  const btn = document.querySelector(`.gds-check-btn[data-pid="${line.pid}"]`);
+  if (btn) {
+    btn.style.color       = line.check ? "var(--green)" : "var(--text3)";
+    btn.style.borderColor = line.check ? "var(--green)" : "var(--border)";
+    btn.textContent       = "✓";
+  }
+  _gdsPrepCheckAllDone();
+}
+
+function _gdsPrepEcartInput(pid, val) {
+  const line = _gdsPrep.lines.find(l => l.pid === pid); if (!line) return;
+const parsed = val === "" ? null : parseFloat(val);
+  line.ecart = parsed;
+  // لا نمس line.check — يبقى كما هو (المستخدم يتحكم فيه بالضغط)
+  // فقط إذا كان الفارق غير صفر نُجبر check=false
+  if (parsed === null) {
+    line.check = false;
+  } else if (parsed === 0) {
+    line.check = true;  // صفر = مخزون صحيح → check تلقائي
+  } else {
+    line.check = false; // فارق موجود → لا check
+  }
+  _gdsPrepSave();
+  // تحديث زر ✓/✗
+  const btn = document.querySelector(`.gds-check-btn[data-pid="${line.pid}"]`);
+  if (btn) {
+    if (parsed !== null && parsed !== 0) {
+      // فارق موجود → ✗ أحمر
+      btn.textContent = "✗"; btn.style.color = "var(--red)"; btn.style.borderColor = "var(--red)";
+    } else if (line.check) {
+      // check مفعّل (سواء بالضغط أو بإرجاع القيمة لصفر) → ✓ أخضر
+      btn.textContent = "✓"; btn.style.color = "var(--green)"; btn.style.borderColor = "var(--green)";
+    } else {
+      // الحالة الافتراضية → ✓ رمادي
+      btn.textContent = "✓"; btn.style.color = "var(--text3)"; btn.style.borderColor = "var(--border)";
+    }
+  }
+  _gdsPrepCheckAllDone();
+}
+
+function _gdsPrepCheckAllDone() {
+  const activeLines = _gdsPrep.lines.filter(l => l.prepCarton > 0 || l.prepUnite > 0 || l._extraCharge);
+  const allDone = activeLines.length > 0 && activeLines.every(l => 
+    l.check === true || (l.ecart !== null && l.ecart !== 0) ||
+    (l._extraCharge && l.name.startsWith("pid:"))
+  );
+  const bar = document.getElementById("gdsPrepNewBar");
+  if (bar) bar.style.display = allDone ? "flex" : "none";
+}
+
+function gdsPrepReprendre() {
+  _gdsPrep.finished = false;
+  // مسح بيانات التحقق
+  _gdsPrep.lines.forEach(l => { l.check = false; l.ecart = 0; });
+  _gdsPrepSave();
+  renderGdsPreparation();
+  addNotif("Préparation reprise", "info");
+}
+
+function gdsPrepAskNew() {
+  const modal = document.getElementById("gdsPrepNewConfirmModal");
+  if (!modal) return;
+  modal.style.display = "flex";
+  const btn  = document.getElementById("gdsPrepNewConfirmBtn");
+  const cd   = document.getElementById("gdsPrepNewCountdown");
+  if (btn) { btn.disabled = true; btn.style.opacity = ".4"; }
+  let sec = 10;
+  if (cd) cd.textContent = sec;
+  const t = setInterval(() => {
+    sec--;
+    if (cd) cd.textContent = sec;
+    if (sec <= 0) {
+      clearInterval(t);
+      if (btn) { btn.disabled = false; btn.style.opacity = "1"; }
+      if (cd)  cd.textContent = "✓";
+    }
+  }, 1000);
+}
+
+function gdsPrepCloseNew() {
+  const m = document.getElementById("gdsPrepNewConfirmModal");
+  if (m) m.style.display = "none";
+}
+
+function gdsPrepDoNew() {
+  gdsPrepCloseNew();
+  _gdsPrepExportXlsx();
+  // reset complet
+  _gdsPrep.lines               = [];
+  _gdsPrep.loaded              = false;
+  _gdsPrep.finished            = false;
+  _gdsPrep.collapsed           = {};
+  _gdsPrep.chargeFrom          = null;
+  _gdsPrep.chargeData          = {};
+  _gdsPrep.excludedPickings    = [];
+  _gdsPrep.outOfDateTransferts = [];
+  localStorage.removeItem(GDS_PREP_STORAGE_KEY);
+  _gdsPrepSaveCloud();
+  renderGdsPreparation();
+  addNotif("✓ Nouvelle préparation démarrée", "success");
+}
+function gdsPrepExportCurrent() {
+  if (!_gdsPrep.lines.length) { addNotif("Aucune donnée à exporter", "warning"); return; }
+  _gdsPrepExportXlsx();
+}
+function _gdsPrepExportXlsx() {
+  const u_fn = line => _gdsPrepUnitSize(line);
+  const now  = new Date();
+  const date = now.toLocaleDateString("fr-FR");
+  const time = now.toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" });
+  const dd   = String(now.getDate()).padStart(2,"0");
+  const mm   = String(now.getMonth()+1).padStart(2,"0");
+  const yyyy = now.getFullYear();
+
+  const byCateg = {};
+  _gdsPrep.lines.filter(l => l.prepCarton > 0 || l.prepUnite > 0 || l._extraCharge).forEach(line => {
+    const cat = line.categ || "—";
+    if (!byCateg[cat]) byCateg[cat] = [];
+    const u         = u_fn(line);
+    const ch        = _gdsPrep.chargeData[line.pid] || { chargeCarton:0, chargeUnite:0, chargeTotal:0 };
+    const prepTotal = line.prepCarton * u + line.prepUnite;
+    const resteTotal  = prepTotal - ch.chargeTotal;
+    const resteCarton = u > 0 ? Math.trunc(resteTotal / u) : 0;
+    const resteUnite  = u > 0 ? Math.round(resteTotal - Math.trunc(resteTotal / u) * u) : Math.round(resteTotal);
+    byCateg[cat].push({ line, u, ch, prepTotal, resteCarton, resteUnite, resteTotal });
+  });
+
+  if (!Object.keys(byCateg).length) return;
+
+  let rows = "";
+  _sortCats(Object.keys(byCateg)).forEach(cat => {
+    const items = byCateg[cat];
+    rows += `<tr class="cat-row"><td colspan="9">${cat}</td></tr>`;
+    items.forEach(({ line, u, ch, prepTotal, resteCarton, resteUnite, resteTotal }) => {
+      const resteColor = resteTotal === 0 ? "#16a34a" : resteTotal < 0 ? "#dc2626" : "#0ea5e9";
+      rows += `<tr>
+        <td>${line.name}</td>
+        <td class="num">${line.prepCarton || "—"}</td>
+        <td class="num">${line.prepUnite  || "—"}</td>
+        <td class="num">${ch.chargeCarton || "—"}</td>
+        <td class="num">${ch.chargeUnite  || "—"}</td>
+        <td class="num" style="color:${resteColor};font-weight:700;">${resteCarton !== 0 ? resteCarton : (resteTotal===0?"0":"—")}</td>
+        <td class="num" style="color:${resteColor};font-weight:700;">${resteUnite  !== 0 ? resteUnite  : (resteTotal===0?"0":"—")}</td>
+        <td class="num">${line.check ? "✓" : ""}</td>
+        <td class="num">${line.ecart != null ? line.ecart : ""}</td>
+      </tr>`;
+    });
+  });
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <style>
+    @page { size: A4; margin: 8mm; }
+    body { font-family: Arial, sans-serif; font-size: 11px; margin: 0; color: #000; }
+    h2 { font-size: 14px; margin: 0 0 2px; color: #1a6b3a; }
+    .sub { font-size: 10px; color: #555; margin-bottom: 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { background: #1a6b3a; color: #fff; border: 1px solid #1a6b3a; padding: 4px 5px; text-align: left; font-size: 10px; }
+    td { border: 1px solid #ccc; padding: 3px 5px; }
+    .num { text-align: center; width: 40px; }
+    tr:nth-child(even) td { background: #f0f7f3; }
+    .cat-row td { background: #1a6b3a; color: #fff; font-weight: bold; font-size: 10px; }
+    tr { page-break-inside: avoid; }
+    thead { display: table-header-group; }
+  </style></head><body>
+  <h2>RAPPORT PRÉPARATION GDS</h2>
+  <div class="sub">${date} — ${time}</div>
+  <table>
+    <thead><tr>
+      <th>Produit</th>
+      <th class="num">Prép C/F</th><th class="num">Prép U</th>
+      <th class="num">Charg C/F</th><th class="num">Charg U</th>
+      <th class="num">Reste C/F</th><th class="num">Reste U</th>
+      <th class="num">✓</th><th class="num">Écart</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  </body></html>`;
+
+  _downloadAsPdf(html, `rapport_preparation_gds_${dd}-${mm}-${yyyy}`);
+}
+function _gdsPrepRenderPickingBtns() {
+  const pm = _gdsPrep.pickingsMap || {};
+  const bp = _gdsPrep.byPicking   || {};
+  if (!Object.keys(pm).length) return "";
+
+  // تجميع حسب partner مع تصفية المستثنيات
+  const byPartner = {};
+  Object.entries(pm).forEach(([pickId, pick]) => {
+    if (_gdsPrep.excludedPickings.includes(pick.name)) return; // مستثنى
+    const partnerName = pick.partner_id?.[1] || "Inconnu";
+    if (!byPartner[partnerName]) byPartner[partnerName] = [];
+    byPartner[partnerName].push({ pickId: Number(pickId), pick });
+  });
+
+  let html = "";
+  Object.entries(byPartner).forEach(([partner, entries]) => {
+    entries.forEach((entry, idx) => {
+      const partnerClean = (entry.pick.partner_id?.[1] || "").replace(/^LIVREUR\s*/i, "").trim();
+      const label = idx === 0 ? partnerClean : `${partnerClean} (${idx + 1})`;
+      html += `<button class="gds-refresh-btn" style="font-size:10px;"
+        onclick="_gdsPrepDownloadPickingPdf(${entry.pickId})">
+        📄 ${escHtml(label)}
+      </button>`;
+    });
+  });
+  return html;
+}
+
+function _gdsPrepDownloadPickingPdf(pickId) {
+  const pid_str = String(pickId);
+  const pick  = _gdsPrep.pickingsMap[pid_str];
+  const moves = _gdsPrep.byPicking[pid_str] || [];
+  if (!pick) return;
+
+  const partner    = pick.partner_id?.[1] || "—";
+  const ref        = pick.name            || "—";
+  const van        = pick.van             || "—";
+  const dateDone   = pick.date_done
+    ? new Date(pick.date_done).toLocaleString("fr-FR")
+    : "—";
+  // بناء اسم الملف: "LIVREUR RDP 01-01 (11-05-2026) REF00001"
+  const _now       = new Date();
+  const _dd        = String(_now.getDate()).padStart(2,"0");
+  const _mm        = String(_now.getMonth()+1).padStart(2,"0");
+  const _yyyy      = _now.getFullYear();
+  const _refNum    = (ref.split("/").pop() || ref).trim();
+  const _partnerSafe = partner.replace(/\//g,"-");
+  const _fileName  = `${_partnerSafe} (${_dd}-${_mm}-${_yyyy}) REF${_refNum}`;
+
+  // تجميع الكميات حسب المنتج مع packaging
+  const prodMap = {};
+  moves.forEach(m => {
+    const pid  = m.product_id?.[0];
+    const name = m.product_id?.[1] || `pid:${pid}`;
+    // مقارنة بـ Number لتجنب String/Number mismatch
+    const line = _gdsPrep.lines.find(l => Number(l.pid) === Number(pid));
+    const unitSize = (line?.unitSize > 0) ? line.unitSize : (line?.carton > 0 ? line.qty / line.carton : 0);
+    if (!prodMap[name]) prodMap[name] = { qty: 0, unitSize };
+    prodMap[name].qty += m.qty_done || 0;
+  });
+
+  const rows = Object.entries(prodMap).map(([name, d], idx) => {
+    const u      = d.unitSize > 0 ? Math.round(d.unitSize) : 0;
+    const carton = u > 0 ? Math.floor(d.qty / u) : "—";
+    const unite  = u > 0 ? Math.round(d.qty % u) : Math.round(d.qty);
+    return `<tr>
+      <td style="text-align:center;color:#888">${idx + 1}</td>
+      <td>${name}</td>
+      <td style="text-align:center">${carton}</td>
+      <td style="text-align:center">${unite}</td>
+      ${App.settings?.showTotalU !== false ? `<td style="text-align:center">${Math.round(d.qty)}</td>` : ''}
+    </tr>`;
+  }).join("");
+
+  const html = `<html><head><meta charset="utf-8"><style>
+    @page { size: A4; margin: 8mm; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: 10px; margin: 0; padding: 0; }
+    h2 { font-size: 13px; color: #1a6b3a; margin: 0 0 6px; }
+    .info { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; margin-bottom: 8px; font-size: 10px; color: #333; }
+    .info b { color: #000; }
+// /table
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.875rem; /* بدل 14px */
+  table-layout: fixed;
+  break-inside: avoid;
+}
+
+/* خلايا النص */
+td.text-cell {
+  font-size: 0.75rem; /* أصغر */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* خلايا الأرقام */
+td.num {
+  font-size: 2rem; /* أكبر */
+  font-weight: 600;
+  text-align: center;
+}
+// /
+
+
+    thead { display: table-header-group; }
+    th { background: #1a6b3a; color: #fff; padding: 4px 5px; text-align: left; border: 1px solid #1a6b3a; }
+    td { padding: 3px 5px; border: 1px solid #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    tr:nth-child(even) td { background: #f0f7f3; }
+    tr { page-break-inside: avoid; }
+  </style></head><body>
+    <h2>Chargement GDS</h2>
+    <div class="info">
+      <div><b>Contact :</b> ${partner}</div>
+      <div><b>Van :</b> ${van}</div>
+      <div><b>Référence :</b> ${ref}</div>
+      <div><b>Date :</b> ${dateDone}</div>
+    </div>
+    <table>
+      <thead><tr>
+        <th style="text-align:center;width:24px">#</th>
+        <th>Produit</th>
+        <th style="text-align:center;width:50px">C/F</th>
+        <th style="text-align:center;width:50px">U</th>
+        ${App.settings?.showTotalU !== false ? '<th style="text-align:center;width:55px">Total U</th>' : ''}
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </body></html>`;
+
+  _downloadAsPdf(html, _fileName);
+}
+
+// ── PDF download helper (print dialog) ───────────────────────
+function _downloadAsPdf(htmlContent, fileName) {
+  const printHtml = htmlContent.replace(
+    /<\/body>/i,
+    `<script>
+      document.title = "${fileName.replace(/"/g,'')}";
+      window.onload = function() {
+        window.print();
+        window.onafterprint = function() { window.close(); };
+      };
+    <\/script></body>`
+  );
+  const blob = new Blob([printHtml], { type: "text/html;charset=utf-8;" });
+  const url  = URL.createObjectURL(blob);
+  const w    = window.open(url, "_blank");
+  if (w) setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+//////////// fin prep
+function setMode(mode) {
+  App.currentMode = mode;
+  const gv = document.getElementById("gdsView");
+  if (gv) gv.style.display = "flex";
+  renderGdsStock();
+  renderGdsVans();
+  renderGdsTransferts();
+}
+
+
+function showView(viewName) {
+  const views = ["main", "settings"];
+  views.forEach(v => {
+    const el = document.getElementById(v + "View");
+    if (el) el.style.display = (v === viewName) ? "" : "none";
+  });
+  if (viewName === "settings") renderCategoryOrderUI();
+}
+
+function renderMain() {
+  setMode(App.currentMode);
+}
+
+// ── Category order UI ─────────────────────────────────────────
+async function renderCategoryOrderUI() {
+  const el = document.getElementById("categoryOrderList");
+  if (!el) return;
+  // جمع كل الفئات من Odoo
+  try {
+    const r = await fetch("/api/web/dataset/call_kw", {
+      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:99, params:{
+        model:"product.category", method:"search_read",
+        args:[[]], kwargs:{ fields:["id","name"], limit:200 }
+      }})
+    });
+    const cats = ((await r.json())?.result || []).map(c => c.name).sort();
+    const saved = App.settings?.categoryOrder || [];
+    // الفئات المحفوظة أولاً، ثم الباقية
+    const ordered = [...saved.filter(c => cats.includes(c)), ...cats.filter(c => !saved.includes(c))];
+    _renderCatOrderList(el, ordered);
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:11px;">Erreur: ${e.message}</div>`;
+  }
+}
+
+function _renderCatOrderList(el, cats) {
+  el.innerHTML = cats.map((cat, i) => `
+    <div class="cat-order-item" data-cat="${escHtml(cat)}"
+      style="display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;cursor:grab;user-select:none;">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;opacity:.5"><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
+      <span style="font-size:11px;flex:1;">${escHtml(cat)}</span>
+      <span style="font-size:10px;color:var(--text3);">${i + 1}</span>
+    </div>`).join("");
+  _initCatOrderDrag(el);
+}
+
+function _initCatOrderDrag(container) {
+  let dragEl = null, dragOver = null;
+  container.querySelectorAll(".cat-order-item").forEach(item => {
+    item.addEventListener("dragstart", e => { dragEl = item; item.style.opacity = ".4"; e.dataTransfer.effectAllowed = "move"; });
+    item.addEventListener("dragend",   () => { if(dragEl) dragEl.style.opacity = ""; dragEl = null; _saveCatOrder(container); });
+    item.addEventListener("dragover",  e => { e.preventDefault(); if (item !== dragEl) { dragOver = item; container.insertBefore(dragEl, item); } });
+    item.draggable = true;
+  });
+}
+
+function _saveCatOrder(container) {
+  const order = [...container.querySelectorAll(".cat-order-item")].map(el => el.dataset.cat);
+  if (!App.settings) App.settings = {};
+  App.settings.categoryOrder = order;
+  Storage.saveSettings(App.settings);
+  console.log("Saved order:", order);
+  // حفظ سحابي
+  fetch(`${_FB_DB_URL}/settings.json`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ categoryOrder: order, showTotalU: App.settings.showTotalU ?? true })
+  }).catch(e => console.warn("Firebase save failed:", e));
+  // تحديث الأرقام
+  container.querySelectorAll(".cat-order-item").forEach((el, i) => {
+    const numEl = el.querySelector("span:last-child");
+    if (numEl) numEl.textContent = i + 1;
+  });
+}
+
+// ── Save settings ─────────────────────────────────────────────
+async function saveSettings() {
+  const s = App.settings;
+  const saveMsg = document.getElementById("saveMsg");
+
+  s.vendors = (s.vendors||[]).filter(v => v.name.trim());
+  s.showTotalU = document.getElementById("toggleTotalU")?.checked ?? true;
+
+  await Storage.saveSettings(s);
+  // حفظ سحابي على Firebase
+  try {
+    await fetch(`${_FB_DB_URL}/settings.json`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ categoryOrder: s.categoryOrder || [], showTotalU: s.showTotalU })
+    });
+  } catch(e) { console.warn("Firebase save failed:", e); }
+  if (saveMsg) { saveMsg.textContent="Sauvegardé ✓"; saveMsg.className="save-msg ok"; setTimeout(()=>{ saveMsg.textContent=""; }, 2000); }
+  addNotif("Paramètres sauvegardés ✓", "success");
+}
+
+
+
+
+// ── View switcher ─────────────────────────────────────────────
+function showView(viewName) {
+  const views = ["main", "settings"];
+  views.forEach(v => {
+    const el = document.getElementById(v + "View");
+    if (el) el.style.display = (v === viewName) ? "" : "none";
+  });
+  if (viewName === "settings") renderCategoryOrderUI();
+}
+
+function renderMain() {
+  setMode(App.currentMode);
+}
+
+// ── bindEvents ────────────────────────────────────────────────
+function bindEvents() {
+  document.getElementById("btnSettings")?.addEventListener("click", async () => {
+  document.getElementById("viewMain").style.display = "none";
+  document.getElementById("viewSettings").style.display = "flex";
+  renderCategoryOrderUI();
+  const tog = document.getElementById("toggleTotalU");
+  if (tog) {
+    const fb = await fetch(`${_FB_DB_URL}/settings.json`).then(r=>r.json()).catch(()=>null);
+    if (fb?.showTotalU !== undefined) App.settings.showTotalU = fb.showTotalU;
+    tog.checked = App.settings?.showTotalU !== false;
+  }
+});
+  document.getElementById("btnBack")?.addEventListener("click", () => {
+  document.getElementById("viewSettings").style.display = "none";
+  document.getElementById("viewMain").style.display = "";
+});
+  document.getElementById("btnClearNotifs")?.addEventListener("click", () => { const l=document.getElementById("notifList"); if(l) l.innerHTML=""; });
+  document.getElementById("btnSaveSettings")?.addEventListener("click", saveSettings);
+  document.getElementById("btnRefreshCats")?.addEventListener("click", renderCategoryOrderUI);
+  document.getElementById("toggleTotalU")?.addEventListener("change", e => {
+    App.settings.showTotalU = e.target.checked;
+    Storage.saveSettings(App.settings);
+    fetch(`${_FB_DB_URL}/settings.json`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ categoryOrder: App.settings.categoryOrder || [], showTotalU: App.settings.showTotalU })
+    }).catch(e => console.warn("Firebase save failed:", e));
+  });
+
+}

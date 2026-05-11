@@ -1,0 +1,12 @@
+{
+  "name": "wafa-tournees-manager",
+  "version": "1.0.0",
+  "description": "Wafa PWA — Odoo Proxy + Static Server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
