@@ -116,7 +116,7 @@ function _sortCats(cats) {
 
 // ── Init ──────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
-  await _checkAndLogin();
+  await checkAndLoginTwoStep();
   await loadData();
   setMode("gds");
   renderSettings();
@@ -222,7 +222,7 @@ async function renderGdsTransferts() {
   const el = document.getElementById("gdsTransfertsContent");
   if (!el) return;
   el.innerHTML = `<div class="gds-refresh-bar">
-    <button class="gds-refresh-btn" onclick="renderGdsTransferts()">
+    <button class="gds-refresh-btn" data-perm="transferts_actualiser" onclick="renderGdsTransferts()">
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
         <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>
       </svg>
@@ -366,7 +366,7 @@ async function renderGdsTransferts() {
     }
 
     el.innerHTML = filtersHtml + `<div class="gds-refresh-bar" style="position:sticky;top:0;z-index:9;background:var(--bg2,#1e2336);">
-      <button class="gds-refresh-btn" onclick="renderGdsTransferts()">
+      <button class="gds-refresh-btn" data-perm="transferts_actualiser" onclick="renderGdsTransferts()">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>
         </svg>
@@ -620,14 +620,14 @@ async function renderGdsStock() {
     const collapsed  = _gdsGetCollapsed();
 
     let html = `<div class="gds-refresh-bar">
-      <button class="gds-refresh-btn" onclick="renderGdsStock()">
+      <button class="gds-refresh-btn" data-perm="stock_actualiser" onclick="renderGdsStock()">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>
         </svg>
         Actualiser
       </button>
-      <button class="gds-refresh-btn" onclick="gdsExpandAll()">▼ Tout ouvrir</button>
-      <button class="gds-refresh-btn" onclick="gdsCollapseAll()">▲ Tout fermer</button>
+      <button class="gds-refresh-btn" data-perm="stock_expand" onclick="gdsExpandAll()">▼ Tout ouvrir</button>
+      <button class="gds-refresh-btn" data-perm="stock_collapse" onclick="gdsCollapseAll()">▲ Tout fermer</button>
       <span class="gds-last-updated">Mis à jour : ${now}</span>
     </div>`;
 
@@ -788,14 +788,14 @@ async function renderGdsVans() {
     const collapsed = _gdsVansGetCollapsed();
 
     let html = `<div class="gds-refresh-bar">
-      <button class="gds-refresh-btn" onclick="renderGdsVans()">
+      <button class="gds-refresh-btn" data-perm="vans_actualiser" onclick="renderGdsVans()">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>
         </svg>
         Actualiser
       </button>
-      <button class="gds-refresh-btn" onclick="gdsVansExpandAll()">▼ Tout ouvrir</button>
-      <button class="gds-refresh-btn" onclick="gdsVansCollapseAll()">▲ Tout fermer</button>
+      <button class="gds-refresh-btn" data-perm="vans_expand" onclick="gdsVansExpandAll()">▼ Tout ouvrir</button>
+      <button class="gds-refresh-btn" data-perm="vans_collapse" onclick="gdsVansCollapseAll()">▲ Tout fermer</button>
       <span class="gds-last-updated">Mis à jour : ${now}</span>
     </div>`;
 
@@ -932,7 +932,7 @@ function _productDisplayName(p) {
 }
 
 // ── Firebase Realtime Database ────────────────────────────────
-const _FB_DB_URL = "https://owdoo-f265f-default-rtdb.europe-west1.firebasedatabase.app";
+// const _FB_DB_URL = "https://owdoo-f265f-default-rtdb.europe-west1.firebasedatabase.app";
 const _FB_KEY    = "wafa_gds_preparation";
 
 async function _gdsPrepSaveCloud() {
@@ -1274,18 +1274,18 @@ const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
   el.innerHTML = `<div class="gds-refresh-bar" style="padding:8px 10px;flex-wrap:wrap;gap:6px;">
     ${hasData ? (
       _gdsPrep.finished
-        ? `<button class="gds-refresh-btn" onclick="gdsPrepReprendre()">↩ Reprendre</button>
+        ? `<button class="gds-refresh-btn" data-perm="prep_reprendre" onclick="gdsPrepReprendre()">↩ Reprendre</button>
            <span class="gds-refresh-btn" style="background:var(--green);cursor:default;">✓ Terminée</span>`
-        : `<button class="gds-refresh-btn" onclick="gdsPrepOpenModal(true)">
+        : `<button class="gds-refresh-btn" data-perm="prep_modifier" onclick="gdsPrepOpenModal(true)">
              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
              </svg>
              Modifier
            </button>
-           <button class="gds-refresh-btn gds-prep-finish-btn" onclick="gdsPrepAskFinish()">✓ Terminer</button>
-<button class="gds-refresh-btn" style="background:var(--red);margin-left:4px;" onclick="gdsPrepAskCancel()">✕ Annuler</button>
-           <button class="gds-refresh-btn" style="background:var(--accent);margin-left:4px;" onclick="gdsPrepExportCurrent()" title="Télécharger rapport actuel">⬇ Rapport</button>`    ) : `<button class="gds-refresh-btn" onclick="gdsPrepOpenModal()">
+           <button class="gds-refresh-btn gds-prep-finish-btn" data-perm="prep_terminer" onclick="gdsPrepAskFinish()">✓ Terminer</button>
+<button class="gds-refresh-btn" data-perm="prep_annuler" style="background:var(--red);margin-left:4px;" onclick="gdsPrepAskCancel()">✕ Annuler</button>
+           <button class="gds-refresh-btn" data-perm="prep_rapport" style="background:var(--accent);margin-left:4px;" onclick="gdsPrepExportCurrent()" title="Télécharger rapport actuel">⬇ Rapport</button>`    ) : `<button class="gds-refresh-btn" data-perm="prep_nouvelle" onclick="gdsPrepOpenModal()">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
         </svg>
@@ -1295,34 +1295,59 @@ const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
       ${hasData ? _gdsPrep.lines.length + " produits" : "Cliquez sur Nouvelle préparation"}
     </span>
     <div id="gdsPrepNewBar" style="display:none;">
-      <button class="gds-refresh-btn" style="background:var(--accent);" onclick="gdsPrepExportCurrent()">⬇ Rapport</button>
-      <button class="gds-refresh-btn" style="background:var(--gds-color);" onclick="gdsPrepAskNew()">
+      <button class="gds-refresh-btn" data-perm="prep_rapport" style="background:var(--accent);" onclick="gdsPrepExportCurrent()">⬇ Rapport</button>
+      <button class="gds-refresh-btn" data-perm="prep_nouvelle" style="background:var(--gds-color);" onclick="gdsPrepAskNew()">
         + Nouvelle préparation
       </button>
     </div>
+    ${hasData ? `<div style="margin-left:auto;position:relative;">
+      <button onclick="_gdsPrepToggleColPanel('__global__')" style="font-size:9px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;display:flex;align-items:center;gap:4px;">
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Col
+      </button>
+      <div id="gdsPrepColPanel___global__" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;flex-direction:column;gap:6px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5);">
+        ${[
+          { key:"stock",  label:"Stock",       color:"var(--text3)"    },
+          { key:"sugg",   label:"Suggéré",     color:"var(--text3)"    },
+          { key:"prep",   label:"Préparation", color:"var(--gds-color)"},
+          { key:"charge", label:"Chargement",  color:"var(--orange)"   },
+          { key:"reste",  label:"Reste",       color:"var(--accent)"   },
+        ].map(c => `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+            <span style="font-size:11px;font-weight:600;color:${c.color};">${c.label}</span>
+            <button id="gdsPrepColBtn_${c.key}" onclick="_gdsPrepToggleCol('${c.key}')"
+              style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);
+                     background:${_gdsPrepCols[c.key] ? "var(--gds-color)" : "var(--bg3)"};
+                     color:${_gdsPrepCols[c.key] ? "#fff" : "var(--text3)"};cursor:pointer;
+                     opacity:${_gdsPrepCols[c.key] ? "1" : "0.45"};
+                     text-decoration:${_gdsPrepCols[c.key] ? "none" : "line-through"};">
+              ${_gdsPrepCols[c.key] ? "Visible" : "Caché"}
+            </button>
+          </div>`).join("")}
+      </div>
+    </div>` : ""}
 </div>
   <!-- Barre chargement depuis -->
-  <div style="display:${_gdsPrep.loaded && !_gdsPrep.finished ? 'flex' : 'none'};align-items:center;gap:8px;padding:6px 10px;background:var(--bg2);border-bottom:1px solid var(--border);flex-wrap:wrap;position:sticky;top:41px;z-index:18;margin-top:-1px;">
-    <span style="font-size:11px;font-weight:600;color:var(--text2);">Chargements depuis :</span>
-    <input type="text" id="gdsPrepChargeFrom" class="gds-prep-dt-input"
+<div style="display:${_gdsPrep.loaded && !_gdsPrep.finished ? 'flex' : 'none'};align-items:center;gap:8px;padding:6px 10px;background:var(--bg2);border-bottom:1px solid var(--border);flex-wrap:wrap;position:sticky;top:41px;z-index:18;margin-top:-1px;">
+    <span data-perm="prep_depuis_a" style="font-size:11px;font-weight:600;color:var(--text2);">Depuis :</span>
+    <input data-perm="prep_depuis_a" type="text" id="gdsPrepChargeFrom" class="gds-prep-dt-input"
       placeholder="jj/mm/aaaa hh:mm"
-      style="min-width:140px;cursor:pointer;"/>
-    <span style="font-size:11px;font-weight:600;color:var(--text2);">A :</span>
-    <input type="text" id="gdsPrepChargeTo" class="gds-prep-dt-input"
+      style="width:130px;min-width:0;cursor:pointer;"/>
+    <span data-perm="prep_depuis_a" style="font-size:11px;font-weight:600;color:var(--text2);">A :</span>
+    <input data-perm="prep_depuis_a" type="text" id="gdsPrepChargeTo" class="gds-prep-dt-input"
       placeholder="jj/mm/aaaa hh:mm"
-      style="min-width:140px;cursor:pointer;"/>
-    <button class="gds-refresh-btn" onclick="gdsPrepFetchCharge()" style="gap:4px;">
+      style="width:130px;min-width:0;cursor:pointer;"/>
+    <button class="gds-refresh-btn" data-perm="prep_charge_actualiser" onclick="gdsPrepFetchCharge()" style="gap:4px;">
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
         <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>
       </svg>
-      Actualiser chargements
+      Actualiser
     </button>
     <span class="gds-last-updated" id="gdsPrepChargeStatus"></span>
-    <button class="gds-refresh-btn" id="gdsPrepExcluBtn" onclick="_gdsPrepShowExcludeList()" style="padding:2px 8px;font-size:11px;background:var(--red);opacity:${_gdsPrep.excludedPickings.length ? '1' : '0.4'};cursor:${_gdsPrep.excludedPickings.length ? 'pointer' : 'default'};" ${_gdsPrep.excludedPickings.length ? '' : 'disabled'}>Exclu (${_gdsPrep.excludedPickings.length})</button>
-    <button class="gds-refresh-btn" onclick="_gdsPrepShowExcludeInput()" style="padding:2px 8px;font-size:11px;background:var(--red);" title="Exclure un transfert">+</button>
-    <button class="gds-refresh-btn" id="gdsPrepOutOfDateBtn" onclick="_gdsPrepShowOutOfDateList()" style="padding:2px 8px;font-size:11px;background:var(--orange,#f59e0b);opacity:${_gdsPrep.outOfDateTransferts.length ? '1' : '0.4'};cursor:${_gdsPrep.outOfDateTransferts.length ? 'pointer' : 'default'};" ${_gdsPrep.outOfDateTransferts.length ? '' : 'disabled'}>Hors date (${_gdsPrep.outOfDateTransferts.length})</button>
-    <button class="gds-refresh-btn" onclick="_gdsPrepShowOutOfDateInput()" style="padding:2px 8px;font-size:11px;background:var(--orange,#f59e0b);" title="Ajouter transfert hors date">+</button>
-    <div id="gdsPrepExcluInputBar" style="display:none;"></div>
+    <button class="gds-refresh-btn" data-perm="prep_exclu" id="gdsPrepExcluBtn" onclick="_gdsPrepShowExcludeList()" style="padding:2px 8px;font-size:11px;background:var(--red);opacity:${Object.keys(_gdsPrep.pickingsMap).length ? '1' : '0.4'};cursor:${Object.keys(_gdsPrep.pickingsMap).length ? 'pointer' : 'default'};" ${Object.keys(_gdsPrep.pickingsMap).length ? '' : 'disabled'}>Exclu (${_gdsPrep.excludedPickings.length}/${Object.keys(_gdsPrep.pickingsMap).length})</button>
+    
+    <button class="gds-refresh-btn" data-perm="prep_hors_date" id="gdsPrepOutOfDateBtn" onclick="_gdsPrepShowOutOfDateList()" style="padding:2px 8px;font-size:11px;background:var(--orange,#f59e0b);opacity:${_gdsPrep.outOfDateTransferts.length ? '1' : '0.4'};cursor:${_gdsPrep.outOfDateTransferts.length ? 'pointer' : 'default'};" ${_gdsPrep.outOfDateTransferts.length ? '' : 'disabled'}>Hors date (${_gdsPrep.outOfDateTransferts.length})</button>
+    <button class="gds-refresh-btn" data-perm="prep_hors_date_add" onclick="_gdsPrepShowOutOfDateInput()" style="padding:2px 8px;font-size:11px;background:var(--orange,#f59e0b);" title="Ajouter transfert hors date">+</button>
+    
     <div style="display:flex;flex-wrap:wrap;gap:4px;margin-left:8px;align-items:center;">
       <div id="gdsPrepPickingBtns" style="display:flex;flex-wrap:wrap;gap:4px;">
         ${_gdsPrepRenderPickingBtns()}
@@ -1765,7 +1790,31 @@ function _gdsPrepRenderModalBody() {
     byCateg[line.categ].push({ line, i });
   });
 
-  let html = "";
+  let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:6px;position:relative;">
+    <button onclick="_gdsPrepToggleColPanel('__global__')" style="font-size:9px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;display:flex;align-items:center;gap:4px;">
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Col
+    </button>
+    <div id="gdsPrepColPanel___global__" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;flex-direction:column;gap:6px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5);">
+      ${[
+        { key:"stock",  label:"Stock",       color:"var(--text3)"    },
+        { key:"sugg",   label:"Suggéré",     color:"var(--text3)"    },
+        { key:"prep",   label:"Préparation", color:"var(--gds-color)"},
+        { key:"charge", label:"Chargement",  color:"var(--orange)"   },
+        { key:"reste",  label:"Reste",       color:"var(--accent)"   },
+      ].map(c => `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <span style="font-size:11px;font-weight:600;color:${c.color};">${c.label}</span>
+          <button id="gdsPrepColBtn_${c.key}" onclick="_gdsPrepToggleCol('${c.key}')"
+            style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);
+                   background:${_gdsPrepCols[c.key] ? "var(--gds-color)" : "var(--bg3)"};
+                   color:${_gdsPrepCols[c.key] ? "#fff" : "var(--text3)"};cursor:pointer;
+                   opacity:${_gdsPrepCols[c.key] ? "1" : "0.45"};
+                   text-decoration:${_gdsPrepCols[c.key] ? "none" : "line-through"};">
+            ${_gdsPrepCols[c.key] ? "Visible" : "Caché"}
+          </button>
+        </div>`).join("")}
+    </div>
+  </div>`;
   _sortCats(Object.keys(byCateg)).forEach(cat => {
     const collapsed = !!_gdsPrep.collapsed["modal_" + cat];
     html += `<div class="gds-prep-modal-cat gds-category-toggle" style="cursor:pointer;" onclick="_gdsPrepToggleModalCat('${escHtml(cat)}')">
@@ -1944,21 +1993,26 @@ function gdsPrepShowCharge(pid) {
   if (!rows.length) {
     body.innerHTML = `<div style="padding:16px;color:var(--text3);text-align:center;">Aucun chargement trouvé</div>`;
   } else {
-    body.innerHTML = `<table class="gds-table" style="font-size:11px;">
+body.innerHTML = `<div style="overflow-x:auto;"><table class="gds-table" style="font-size:11px;min-width:500px;">
       <thead><tr>
-        <th>Van</th><th>Livreur</th><th>Colis</th><th>U</th><th>Heure</th><th>Transfert</th>
+        <th style="white-space:nowrap;">Van</th>
+        <th style="white-space:nowrap;">Livreur</th>
+        <th style="text-align:right;white-space:nowrap;">Colis</th>
+        <th style="text-align:right;">U</th>
+        <th style="text-align:center;white-space:nowrap;">Heure</th>
+        <th style="white-space:nowrap;">Transfert</th>
       </tr></thead><tbody>
-${rows.map(r => {
+	  ${rows.map(r => {
         const vanJuml     = vanCount[r.van]         > 1;
         const partnerJuml = partnerCount[r.partner] > 1;
         const rowJuml     = vanJuml || partnerJuml;
         return `<tr style="${rowJuml ? 'background:rgba(251,146,60,.15);' : ''}">
-          <td>${escHtml(r.van)}${vanJuml ? ' <span style="color:var(--orange);font-weight:700;" title=""></span>' : ''}</td>
-          <td>${escHtml(r.partner)}${partnerJuml ? ' <span style="color:var(--orange);font-weight:700;" title=""></span>' : ''}</td>
+          <td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(r.van)}${vanJuml ? ' <span style="color:var(--orange);font-weight:700;">⚠</span>' : ''}</td>
+          <td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(r.partner)}${partnerJuml ? ' <span style="color:var(--orange);font-weight:700;">⚠</span>' : ''}</td>
           <td style="text-align:right;font-weight:600;">${u > 0 ? Math.floor(r.qty / u) : '—'}</td>
           <td style="text-align:right;">${u > 0 ? Math.round(r.qty % u) : r.qty}</td>
           <td style="text-align:center;">${r.date}</td>
-          <td style="text-align:center;">${escHtml(r.pickRef)}</td>
+          <td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(r.pickRef)}</td>
         </tr>`;
       }).join("")}
       </tbody>
@@ -1968,7 +2022,7 @@ ${rows.map(r => {
         <td style="text-align:right;font-weight:700;">${u > 0 ? Math.round(mergedRows.reduce((s,r)=>s+r.qty,0) % u) : mergedRows.reduce((s,r)=>s+r.qty,0)}</td>
         <td colspan="2"></td>
       </tr></tfoot>
-    </table>`;
+    </table></div>`;
   }
   modal.style.display = "flex";
 }
@@ -2091,139 +2145,79 @@ async function _gdsPrepIsVanLocation(locId) {
   } catch(_) { return false; }
 }
 // ── جلب تحركات الشحن من GDS → Vans ──────────────────────────
-function _gdsPrepShowExcludeInput() {
-  document.getElementById("gdsPrepExcluPopup")?.remove();
-  const btn  = document.querySelector("[title='Exclure un transfert']");
-  const rect = btn ? btn.getBoundingClientRect() : { bottom: 100, left: 100 };
 
-  const popup = document.createElement("div");
-  popup.id = "gdsPrepExcluPopup";
-  popup.style.cssText = `position:fixed;top:${rect.bottom+6}px;left:${rect.left}px;
-    background:var(--bg2);border:1px solid var(--border);border-radius:10px;
-    box-shadow:0 8px 24px #0005;padding:14px;z-index:9999;min-width:280px;`;
-  popup.innerHTML = `
-    <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px;">Exclure un transfert</div>
-    <input id="gdsPrepExcluRef" type="text" placeholder="BT/26/WF/ORN/00001"
-      style="width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:6px;
-      padding:5px 8px;font-size:12px;background:var(--bg3);color:var(--text);margin-bottom:8px;"/>
-    <div style="display:flex;gap:6px;justify-content:flex-end;">
-      <button class="gds-refresh-btn" onclick="_gdsPrepAddExclude()" style="font-size:11px;background:#f06060;color:white;">✓ Exclure</button>
-      <button class="gds-refresh-btn" onclick="document.getElementById('gdsPrepExcluPopup')?.remove()" style="font-size:11px;background:var(--text3);">✕</button>
-    </div>`;
-
-  document.body.appendChild(popup);
-  document.getElementById("gdsPrepExcluRef")?.focus();
-
-  // إغلاق عند الضغط خارجها
-  setTimeout(() => {
-    document.addEventListener("mousedown", function _close(e) {
-      if (!e.target.closest("#gdsPrepExcluPopup")) {
-        document.getElementById("gdsPrepExcluPopup")?.remove();
-        document.removeEventListener("mousedown", _close);
-      }
-    });
-  }, 100);
-}
-
-async function _gdsPrepAddExclude() {
-  const input = document.getElementById("gdsPrepExcluRef");
-  const ref   = input?.value.trim();
-  if (!ref) return;
-
-  _gdsPrepExcluNotif("Vérification…", "info");
-  try {
-    const r = await fetch("/api/web/dataset/call_kw", {
-      method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:70, params:{
-        model:"stock.picking", method:"search_read",
-        args:[[["name","=",ref]]],
-        kwargs:{ fields:["id","name"], limit:1 }
-      }})
-    });
-    const res = (await r.json())?.result || [];
-    if (!res.length) {
-      _gdsPrepExcluNotif(`✗ Référence introuvable: ${ref}`, "error");
-      return;
-    }
-    // تحقق إذا كان محسوباً أصلاً في الـ chargeData
-    const isCalculated = Object.values(_gdsPrep.pickingsMap).some(p => p.name === ref);
-    if (!isCalculated) {
-      _gdsPrepExcluNotif(`⚠ Ce transfert n'est pas dans la période calculée, l'exclusion n'aura aucun effet`, "warning");
-      return;
-    }
-    if (_gdsPrep.excludedPickings.includes(ref)) {
-      _gdsPrepExcluNotif(`Déjà exclu: ${ref}`, "warning");
-      return;
-    }
-    _gdsPrep.excludedPickings.push(ref);
-    document.getElementById("gdsPrepExcluPopup")?.remove();
-    _gdsPrepUpdateExcluBtn();
-    _gdsPrepSave();
-    // حذف زر التحميل الخاص بهذا الـ transfert
-    const pickId = Object.entries(_gdsPrep.pickingsMap).find(([,p]) => p.name === ref)?.[0];
-    if (pickId) {
-      const pickBtnsEl = document.getElementById("gdsPrepPickingBtns");
-      if (pickBtnsEl) pickBtnsEl.innerHTML = _gdsPrepRenderPickingBtns();
-    }
-    _gdsPrepExcluNotif(`✓ Exclu: ${ref} — Actualisez les chargements`, "success");
-  } catch(e) {
-    _gdsPrepExcluNotif("Erreur: " + e.message, "error");
-  }
-}
-
-function _gdsPrepExcluNotif(msg, type) {
-  document.getElementById("gdsPrepExcluNotif")?.remove();
-  const colors = { success:"var(--green)", error:"var(--red)", warning:"#f59e0b", info:"var(--text3)" };
-  const n = document.createElement("div");
-  n.id = "gdsPrepExcluNotif";
-  n.style.cssText = `position:fixed;bottom:24px;right:24px;z-index:99999;
-    background:var(--bg2);border:1px solid ${colors[type]||"var(--border)"};
-    border-left:4px solid ${colors[type]||"var(--border)"};
-    border-radius:8px;padding:10px 16px;font-size:12px;color:var(--text);
-    box-shadow:0 4px 16px #0004;max-width:320px;transition:opacity .3s;`;
-  n.textContent = msg;
-  document.body.appendChild(n);
-  if (type !== "info") setTimeout(() => { n.style.opacity="0"; setTimeout(()=>n.remove(),300); }, 3000);
-}
 
 function _gdsPrepUpdateExcluBtn() {
   const btn = document.getElementById("gdsPrepExcluBtn");
   if (!btn) return;
   const n = _gdsPrep.excludedPickings.length;
-  btn.textContent    = `Exclu (${n})`;
-  btn.disabled       = n === 0;
-  btn.style.opacity  = n ? "1" : "0.4";
-  btn.style.cursor   = n ? "pointer" : "default";
+  const total = Object.keys(_gdsPrep.pickingsMap).length;
+  btn.textContent    = `Exclu (${n}/${total})`;
+  btn.disabled       = total === 0;
+  btn.style.opacity  = total ? "1" : "0.4";
+  btn.style.cursor   = total ? "pointer" : "default";
 }
 
 function _gdsPrepShowExcludeList() {
-  // إزالة modal سابق
   document.getElementById("gdsPrepExcluModal")?.remove();
   const modal = document.createElement("div");
   modal.id = "gdsPrepExcluModal";
   modal.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;";
+
+  const allPickings = Object.values(_gdsPrep.pickingsMap);
+
+  const rows = allPickings.length === 0
+    ? `<div style="color:var(--text3);font-size:12px;">Aucun transfert calculé</div>`
+    : allPickings.map(p => {
+        const isExcluded = _gdsPrep.excludedPickings.includes(p.name);
+        const partner = (p.partner_id?.[1] || "—").replace(/^LIVREUR\s*/i, "").trim();
+        const toggleId = "exclu_tog_" + p.name.replace(/\W/g,"_");
+        return `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);">
+            <div style="display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;">
+              <span style="font-size:12px;color:${isExcluded ? 'var(--text3)' : 'var(--text)'};text-decoration:${isExcluded ? 'line-through' : 'none'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.name}</span>
+              <span style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${partner}</span>
+            </div>
+            <label for="${toggleId}" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-left:12px;flex-shrink:0;">
+              <span style="font-size:10px;color:${isExcluded ? 'var(--red)' : 'var(--green)'};">${isExcluded ? 'Exclu' : 'Inclus'}</span>
+              <div style="position:relative;width:36px;height:20px;flex-shrink:0;">
+                <input type="checkbox" id="${toggleId}" ${isExcluded ? '' : 'checked'}
+                  onchange="_gdsPrepToggleExcludeByName('${p.name}', !this.checked)"
+                  style="opacity:0;width:0;height:0;position:absolute;"/>
+                <div style="position:absolute;inset:0;border-radius:20px;background:${isExcluded ? 'var(--border)' : 'var(--green)'};transition:background .2s;"></div>
+                <div style="position:absolute;top:2px;left:${isExcluded ? '2px' : '18px'};width:16px;height:16px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 4px #0004;"></div>
+              </div>
+            </label>
+          </div>`;
+      }).join("");
+
   modal.innerHTML = `
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;min-width:320px;max-width:480px;box-shadow:0 8px 24px #0005;">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);">
-        <span style="font-weight:600;font-size:13px;">Transferts exclus</span>
+        <span style="font-weight:600;font-size:13px;">Transferts (${allPickings.length})</span>
         <button onclick="document.getElementById('gdsPrepExcluModal').remove()" style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--text2);">✕</button>
       </div>
-      <div style="padding:10px 14px;max-height:300px;overflow-y:auto;">
-        ${_gdsPrep.excludedPickings.length === 0
-          ? `<div style="color:var(--text3);font-size:12px;">Aucun transfert exclu</div>`
-          : _gdsPrep.excludedPickings.map((ref,i) => `
-            <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
-              <span style="font-size:12px;color:var(--text);">${ref}</span>
-              <button onclick="_gdsPrepRemoveExclude(${i})" style="background:var(--red);border:none;border-radius:5px;color:#fff;font-size:11px;padding:2px 8px;cursor:pointer;">✕ Retirer</button>
-            </div>`).join("")
-        }
-      </div>
+      <div style="padding:10px 14px;max-height:360px;overflow-y:auto;">${rows}</div>
       <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;">
-        ${_gdsPrep.excludedPickings.length ? `<button class="gds-refresh-btn" style="background:var(--red);" onclick="_gdsPrepClearExcludes()">Tout retirer</button>` : ""}
+        ${_gdsPrep.excludedPickings.length ? `<button class="gds-refresh-btn" style="background:var(--red);" onclick="_gdsPrepClearExcludes()">Tout inclure</button>` : ""}
         <button class="gds-refresh-btn" style="background:var(--text3);" onclick="document.getElementById('gdsPrepExcluModal').remove()">Fermer</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
+}
+
+function _gdsPrepToggleExcludeByName(ref, shouldExclude) {
+  if (shouldExclude) {
+    if (!_gdsPrep.excludedPickings.includes(ref)) {
+      _gdsPrep.excludedPickings.push(ref);
+    }
+  } else {
+    const i = _gdsPrep.excludedPickings.indexOf(ref);
+    if (i !== -1) _gdsPrep.excludedPickings.splice(i, 1);
+  }
+  _gdsPrepUpdateExcluBtn();
+  _gdsPrepSave();
+  _gdsPrepShowExcludeList();
 }
 
 function _gdsPrepRemoveExclude(i) {
@@ -2852,57 +2846,32 @@ const activeLines = [
 
   let html = "";
   _sortCats(Object.keys(byCateg)).forEach(cat => {
-    const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
+const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
     html += `<div class="gds-category" style="margin:0 0 14px;">
       <div class="gds-category-title gds-category-toggle" onclick="_gdsPrepToggleTblCat('${escHtml(cat)}')">
         <svg id="gdsPrepArrow_${escHtml(cat)}" class="gds-collapse-arrow" style="transform:${collapsed?"rotate(-90deg)":""}" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
         ${escHtml(cat)}
       </div>
       <div id="gdsPrepTblCat_${escHtml(cat)}" style="display:${collapsed?"none":""}">
-      <table class="gds-table" style="min-width:max-content;width:100%;">
+      <table class="gds-table gds-prep-main-table" style="width:100%;border-spacing:0;border-collapse:collapse;table-layout:fixed;">
         <thead>
           <tr>
-            <th style="text-align:left;color:var(--text2)">Produit</th>
+            <th style="text-align:left;color:var(--text2);padding:2px 3px;font-size:10px;">Produit</th>
             ${_gdsPrepCols.stock ? `<th colspan="2" style="text-align:center;border-bottom:1px solid var(--border);color:var(--text3);">Stock</th>` : ""}
             ${Object.keys(_gdsPrep.suggested).length && _gdsPrepCols.sugg ? `<th colspan="2" style="text-align:center;border-bottom:1px solid var(--border);color:var(--text3);">Suggéré</th>` : ""}
             ${_gdsPrepCols.prep ? `<th colspan="3" style="text-align:center;border-bottom:1px solid var(--border);color:var(--gds-color)">Préparation</th>` : ""}
             ${hasCharge && _gdsPrepCols.charge ? `<th colspan="3" style="text-align:center;border-bottom:1px solid var(--border);color:var(--orange)">Chargement</th>` : ""}
             ${hasCharge && _gdsPrepCols.reste ? `<th colspan="3" style="text-align:center;border-bottom:1px solid var(--border);color:var(--accent)">Reste</th>` : ""}
             ${_gdsPrep.finished ? `<th colspan="2" style="text-align:center;border-bottom:1px solid var(--border);color:var(--text2)">Vérif.</th>` : ""}
-            <th style="text-align:right;white-space:nowrap;position:relative;" rowspan="2">
-              <button onclick="_gdsPrepToggleColPanel('${escHtml(cat)}')" style="font-size:9px;padding:2px 6px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;line-height:1.4;">
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:2px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Col
-              </button>
-              <div id="gdsPrepColPanel_${escHtml(cat)}" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;flex-direction:column;gap:6px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5);">
-                ${[
-                  { key:"stock",  label:"Stock",       color:"var(--text3)"    },
-                  { key:"sugg",   label:"Suggéré",     color:"var(--text3)"    },
-                  { key:"prep",   label:"Préparation", color:"var(--gds-color)"},
-                  { key:"charge", label:"Chargement",  color:"var(--orange)"   },
-                  { key:"reste",  label:"Reste",       color:"var(--accent)"   },
-                ].map(c => `
-                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-                    <span style="font-size:11px;font-weight:600;color:${c.color};">${c.label}</span>
-                    <button id="gdsPrepColBtn_${c.key}" onclick="_gdsPrepToggleCol('${c.key}')"
-                      style="font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);
-                             background:${_gdsPrepCols[c.key] ? "var(--gds-color)" : "var(--bg3)"};
-                             color:${_gdsPrepCols[c.key] ? "#fff" : "var(--text3)"};cursor:pointer;
-                             opacity:${_gdsPrepCols[c.key] ? "1" : "0.45"};
-                             text-decoration:${_gdsPrepCols[c.key] ? "none" : "line-through"};">
-                      ${_gdsPrepCols[c.key] ? "Visible" : "Caché"}
-                    </button>
-                  </div>`).join("")}
-              </div>
-            </th>
           </tr>
           <tr>
             <th></th>
-            ${_gdsPrepCols.stock ? `<th style="text-align:right;color:var(--text3)">Colis</th><th style="text-align:right;color:var(--text3)">U</th>` : ""}
-            ${Object.keys(_gdsPrep.suggested).length && _gdsPrepCols.sugg ? `<th style="text-align:right;color:var(--text3)">Colis</th><th style="text-align:right;color:var(--text3)">U</th>` : ""}
-            ${_gdsPrepCols.prep ? `<th style="text-align:right;color:var(--gds-color)">Colis</th><th style="text-align:right;color:var(--gds-color)">U</th><th style="text-align:right;color:var(--gds-color);font-size:9px;">qty</th>` : ""}
-            ${hasCharge && _gdsPrepCols.charge ? `<th style="text-align:right;color:var(--orange)">Colis</th><th style="text-align:right;color:var(--orange)">U</th><th style="text-align:right;color:var(--orange);font-size:9px;">qty</th>` : ""}
-            ${hasCharge && _gdsPrepCols.reste ? `<th style="text-align:right;color:var(--accent)">Colis</th><th style="text-align:right;color:var(--accent)">U</th><th style="text-align:right;color:var(--accent);font-size:9px;">qty</th>` : ""}
-            ${_gdsPrep.finished ? `<th style="text-align:center">✓</th><th style="text-align:center">Écart</th>` : ""}
+            ${_gdsPrepCols.stock ? `<th style="text-align:right;color:var(--text3);padding:2px 3px;font-size:9px;">Colis</th><th style="text-align:right;color:var(--text3);padding:2px 3px;font-size:9px;">U</th>` : ""}
+            ${Object.keys(_gdsPrep.suggested).length && _gdsPrepCols.sugg ? `<th style="text-align:right;color:var(--text3);padding:2px 3px;font-size:9px;">Colis</th><th style="text-align:right;color:var(--text3);padding:2px 3px;font-size:9px;">U</th>` : ""}
+            ${_gdsPrepCols.prep ? `<th style="text-align:right;color:var(--gds-color);padding:2px 3px;font-size:9px;">Colis</th><th style="text-align:right;color:var(--gds-color);padding:2px 3px;font-size:9px;">U</th><th style="text-align:right;color:var(--gds-color);font-size:8px;padding:2px 2px;">qty</th>` : ""}
+            ${hasCharge && _gdsPrepCols.charge ? `<th style="text-align:right;color:var(--orange);padding:2px 3px;font-size:9px;">Colis</th><th style="text-align:right;color:var(--orange);padding:2px 3px;font-size:9px;">U</th><th style="text-align:right;color:var(--orange);font-size:8px;padding:2px 2px;">qty</th>` : ""}
+            ${hasCharge && _gdsPrepCols.reste ? `<th style="text-align:right;color:var(--accent);padding:2px 3px;font-size:9px;">Colis</th><th style="text-align:right;color:var(--accent);padding:2px 3px;font-size:9px;">U</th><th style="text-align:right;color:var(--accent);font-size:8px;padding:2px 2px;">qty</th>` : ""}
+            ${_gdsPrep.finished ? `<th style="text-align:center;padding:2px 3px;font-size:9px;">✓</th><th style="text-align:center;padding:2px 3px;font-size:9px;">Écart</th>` : ""}
           </tr>
         </thead><tbody>`;
 
@@ -2924,7 +2893,7 @@ const activeLines = [
       const chargeOverPrep = ch.chargeTotal > prepTotal && prepTotal > 0;
 
       html += `<tr style="${rowErr ? "background:rgba(239,68,68,.10);" : ""}">
-        <td style="${rowErr ? "color:var(--red);font-weight:600;" : ""}font-size:11px;min-width:120px;max-width:180px;word-break:break-word;white-space:normal;" title="${escHtml(line.name)}">${escHtml(line.name)}
+        <td style="${rowErr ? "color:var(--red);font-weight:600;" : ""}font-size:10px;min-width:80px;max-width:120px;word-break:break-word;white-space:normal;" title="${escHtml(line.name)}">${escHtml(line.name)}
           ${overStock ? `<span style="font-size:9px;margin-left:4px;color:var(--red)">⚠ dépasse stock</span>` : ""}
           ${overCharge ? `<span style="font-size:9px;margin-left:4px;color:var(--red)">⚠ chargé sans prépa</span>` : ""}
         </td>
@@ -3007,6 +2976,7 @@ const activeLines = [
   });
 
   wrap.innerHTML = html;
+  _gdsPrepApplyColWidths();
   if (_gdsPrep.finished) _gdsPrepCheckAllDone();
   _gdsPrepFetchMissingNames();
 }
@@ -3019,6 +2989,56 @@ function _gdsPrepToggleTblCat(cat) {
   const arrow = document.getElementById("gdsPrepArrow_" + cat);
   if (body)  body.style.display = _gdsPrep.collapsed[key] ? "none" : "";
   if (arrow) arrow.style.transform = _gdsPrep.collapsed[key] ? "rotate(-90deg)" : "";
+}
+function _gdsPrepApplyColWidths() {
+  const hasCharge = Object.keys(_gdsPrep.chargeData).length > 0;
+  const hasSugg   = Object.keys(_gdsPrep.suggested).length > 0;
+
+  // احسب عدد الأعمدة الظاهرة
+  const groups = [
+    { key: "prod",   span: 1, always: true },
+    { key: "stock",  span: 2, vis: _gdsPrepCols.stock },
+    { key: "sugg",   span: 2, vis: hasSugg && _gdsPrepCols.sugg },
+    { key: "prep",   span: 3, vis: _gdsPrepCols.prep },
+    { key: "charge", span: 3, vis: hasCharge && _gdsPrepCols.charge },
+    { key: "reste",  span: 3, vis: hasCharge && _gdsPrepCols.reste },
+    { key: "verif",  span: 2, vis: _gdsPrep.finished },
+    { key: "action", span: 1, vis: false },
+  ].filter(g => g.always || g.vis);
+
+  const totalCols = groups.reduce((s, g) => s + g.span, 0);
+  const W = Math.min(window.innerWidth, document.documentElement.clientWidth);
+  const isMobile = W < 600;
+
+  // عرض عمود المنتج: ثابت نسبياً، الباقي يتوزع
+  const prodPct   = isMobile ? 28 : 22;
+  const actionPct = 6;
+  const numCols   = totalCols - 1; // بدون prod فقط
+  const numPct    = (100 - prodPct) / Math.max(numCols, 1);
+
+  // بناء colgroup HTML
+  let colgroupHtml = `<colgroup>`;
+  groups.forEach(g => {
+    if (g.key === "prod")   { colgroupHtml += `<col style="width:${prodPct}%">`; return; }
+    if (g.key === "action") { colgroupHtml += `<col style="width:${actionPct}%">`; return; }
+    for (let s = 0; s < g.span; s++) {
+      colgroupHtml += `<col style="width:${numPct.toFixed(2)}%">`;
+    }
+  });
+  colgroupHtml += `</colgroup>`;
+
+  // تطبيق على كل الجداول
+  document.querySelectorAll(".gds-prep-main-table").forEach(tbl => {
+    tbl.querySelector("colgroup")?.remove();
+    tbl.insertAdjacentHTML("afterbegin", colgroupHtml);
+  });
+
+  // منع تكسير النصوص في خلايا الأرقام
+  document.querySelectorAll(".gds-prep-main-table td.gds-qty, .gds-prep-main-table th").forEach(el => {
+    el.style.whiteSpace = "nowrap";
+    el.style.overflow   = "hidden";
+    el.style.textOverflow = "ellipsis";
+  });
 }
 
 // ── نافذة السجل ──────────────────────────────────────────────
@@ -3606,6 +3626,9 @@ function renderMain() {
 
 // ── bindEvents ────────────────────────────────────────────────
 function bindEvents() {
+  window.addEventListener("resize", () => {
+    if (document.querySelector(".gds-prep-main-table")) _gdsPrepApplyColWidths();
+  });
   document.getElementById("btnSettings")?.addEventListener("click", async () => {
   document.getElementById("viewMain").style.display = "none";
   document.getElementById("viewSettings").style.display = "flex";
@@ -3617,6 +3640,14 @@ function bindEvents() {
     tog.checked = App.settings?.showTotalU !== false;
   }
 });
+if (isAdmin()) {
+  const container = document.getElementById("userManagementContainer");
+  if (container) container.style.display = "";
+  const rpc = document.getElementById("rolePermissionsContainer");
+  if (rpc) rpc.style.display = "";
+  renderUserManagementUI();
+  renderRolePermissionsUI();
+}
   document.getElementById("btnBack")?.addEventListener("click", () => {
   document.getElementById("viewSettings").style.display = "none";
   document.getElementById("viewMain").style.display = "";

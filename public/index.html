@@ -228,9 +228,19 @@
         </div>
       </div>
 
-      <div class="settings-scroll">
+      <div class="settings-scroll" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
       <div class="settings-body">
 
+
+        <!-- Role Permissions -->
+        <div class="settings-section" id="rolePermissionsContainer" style="display:none">
+          <div class="section-title-row">
+            <label class="settings-label" style="margin:0">Permissions par rôle</label>
+            <button class="gds-refresh-btn" onclick="renderRolePermissionsUI()">Actualiser</button>
+          </div>
+          <p class="settings-hint">Décochez un bouton pour le masquer pour ce rôle.</p>
+          <div id="rolePermissionsSection" style="margin-top:8px;"></div>
+        </div>
 
         <!-- Print Settings -->
         <div class="settings-section">
@@ -244,6 +254,13 @@
         </div>
 
         <!-- Category Order -->
+		<div class="settings-section" id="userManagementContainer" style="display:none">
+  <div class="section-title-row">
+    <label class="settings-label" style="margin:0">Gestion des utilisateurs</label>
+    <button class="gds-refresh-btn" onclick="renderUserManagementUI()">Actualiser</button>
+  </div>
+  <div id="userManagementSection" style="margin-top:8px;"></div>
+</div>
         <div class="settings-section">
           <div class="section-title-row">
             <label class="settings-label" style="margin:0">Ordre des catégories</label>
@@ -267,9 +284,11 @@
 
   <!-- Scripts — order matters -->
   <script src="/src/lib/xlsx.full.min.js"></script>
-  <script src="/src/storage.js"></script>
-  <script src="/src/utils.js"></script>
-  <script src="/src/renderer.js"></script>
+<script src="/src/storage.js"></script>
+<script src="/src/utils.js"></script>
+<script src="/src/renderer.js"></script>
+<script src="/src/auth.js"></script>
 <script src="/src/app.js"></script>
+
 </body>
 </html>
