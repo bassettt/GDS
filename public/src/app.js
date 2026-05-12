@@ -3483,20 +3483,36 @@ td.num {
 
 // ── PDF download helper (print dialog) ───────────────────────
 function _downloadAsPdf(htmlContent, fileName) {
-  const printHtml = htmlContent.replace(
-    /<\/body>/i,
-    `<script>
-      document.title = "${fileName.replace(/"/g,'')}";
-      window.onload = function() {
-        window.print();
-        window.onafterprint = function() { window.close(); };
-      };
-    <\/script></body>`
-  );
-  const blob = new Blob([printHtml], { type: "text/html;charset=utf-8;" });
-  const url  = URL.createObjectURL(blob);
-  const w    = window.open(url, "_blank");
-  if (w) setTimeout(() => URL.revokeObjectURL(url), 10000);
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+  if (isMobile) {
+    // موبايل: تحميل مباشر كـ HTML
+    const blob = new Blob([htmlContent], { type: "text/html;charset=utf-8;" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = fileName.replace(/\.pdf$/i, "") + ".html";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } else {
+    // desktop: print dialog كالمعتاد
+    const printHtml = htmlContent.replace(
+      /<\/body>/i,
+      `<script>
+        document.title = "${fileName.replace(/"/g,'')}";
+        window.onload = function() {
+          window.print();
+          window.onafterprint = function() { window.close(); };
+        };
+      <\/script></body>`
+    );
+    const blob = new Blob([printHtml], { type: "text/html;charset=utf-8;" });
+    const url  = URL.createObjectURL(blob);
+    const w    = window.open(url, "_blank");
+    if (w) setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
 }
 
 //////////// fin prep

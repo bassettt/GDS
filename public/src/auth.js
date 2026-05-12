@@ -67,8 +67,8 @@ async function appLogin(username, password) {
   const hash = await _hashPassword(password);
   if (hash !== user.password) throw new Error("Identifiant ou mot de passe incorrect");
 
-  AppAuth.currentUser = { username: user.username, role: user.role };
-  sessionStorage.setItem("owdoo_app_user", JSON.stringify(AppAuth.currentUser));
+  AppAuth.currentUser = { username: user.username, role: user.role, passwordHash: hash };
+sessionStorage.setItem("owdoo_app_user", JSON.stringify(AppAuth.currentUser));
   return AppAuth.currentUser;
 }
 
@@ -79,11 +79,18 @@ function appLogout() {
 }
 
 // ── Restore session ───────────────────────────────────────────
-function _restoreAppSession() {
+async function _restoreAppSession() {
   try {
     const saved = sessionStorage.getItem("owdoo_app_user");
     if (saved) {
-      AppAuth.currentUser = JSON.parse(saved);
+      const parsed = JSON.parse(saved);
+      // تحقق من الـ hash مقابل Firebase
+      const fbUser = await _fbGet(`app_users/${parsed.username}`);
+      if (!fbUser || fbUser.password !== parsed.passwordHash) {
+        sessionStorage.removeItem("owdoo_app_user");
+        return false;
+      }
+      AppAuth.currentUser = { username: parsed.username, role: fbUser.role, passwordHash: parsed.passwordHash };
       return true;
     }
   } catch (_) {}
@@ -195,28 +202,8 @@ document.querySelectorAll("[data-perm]").forEach(el => {
       const allowed = _decodePerm(raw);
       // undefined = never configured → show by default
       // [] = all hidden (sentinel decoded) → hide all
-      const visible  = (allowed === undefined) || allowed.includes(perm);
-      const allowed_ = visible;
-
-      // إخفاء العناصر المحجوبة
-      el.style.display = allowed_ ? "" : "none";
-
-      // منع الاستخدام حتى لو أُظهرت يدوياً
-      if (allowed_) {
-        el.disabled = false;
-        el.style.pointerEvents = "";
-        el.style.opacity = "";
-        el.removeAttribute("aria-disabled");
-        el.onclick = el._origOnclick ?? el.onclick;
-      } else {
-        el.disabled = true;
-        el.style.pointerEvents = "none";
-        el.style.opacity = "0.4";
-        el.setAttribute("aria-disabled", "true");
-        // حفظ وإلغاء onclick
-        if (el.onclick && !el._origOnclick) el._origOnclick = el.onclick;
-        el.onclick = e => { e.preventDefault(); e.stopImmediatePropagation(); return false; };
-      }
+      const visible = (allowed === undefined) || allowed.includes(perm);
+      el.style.display = visible ? "" : "none";
     });
 
     // Reconnect observer after DOM changes are done
@@ -371,7 +358,7 @@ async function _doAppLogin() {
   await _ensureDefaultAdmin();
 
   // Check existing session
-  if (_restoreAppSession()) return;
+  if (await _restoreAppSession()) return;
 
   const screen = _buildAppLoginScreen();
 
@@ -492,6 +479,91 @@ async function changeAppUserRole(username, newRole) {
   await _fbPatch(`app_users/${username.toLowerCase()}`, { role: newRole });
 }
 
+async function adminEditUser(oldUsername, newUsername, newPassword) {
+  if (!isAdmin()) throw new Error("Accès refusé");
+  oldUsername = oldUsername.toLowerCase();
+  newUsername = newUsername.toLowerCase();
+
+  const users = await _fbGet("app_users");
+  const user  = users?.[oldUsername];
+  if (!user) throw new Error("Utilisateur introuvable");
+
+  const patch = {};
+
+  // تغيير اسم المستخدم
+  if (newUsername && newUsername !== oldUsername) {
+    if (users[newUsername]) throw new Error("Cet identifiant existe déjà");
+    // Firebase لا يدعم rename مباشرة → نحذف القديم وننشئ جديد
+    const newData = { ...user, username: newUsername };
+    if (newPassword) newData.password = await _hashPassword(newPassword);
+    await _fbSet(`app_users/${newUsername}`, newData);
+    await _fbDelete(`app_users/${oldUsername}`);
+    return;
+  }
+
+  // تغيير كلمة السر فقط
+  if (newPassword) {
+    patch.password = await _hashPassword(newPassword);
+    await _fbPatch(`app_users/${oldUsername}`, patch);
+  }
+}
+
+function _showAdminEditModal(username, role) {
+  const existing = document.getElementById("adminEditModal");
+  if (existing) existing.remove();
+
+  const isSelf = username === AppAuth.currentUser.username;
+
+  const modal = document.createElement("div");
+  modal.id = "adminEditModal";
+  modal.style.cssText = "position:fixed;inset:0;z-index:20000;background:#0008;display:flex;align-items:center;justify-content:center;";
+  modal.innerHTML = `
+    <div style="background:#1e2336;border:1px solid #2a2f45;border-radius:12px;padding:20px;width:270px;display:flex;flex-direction:column;gap:10px;">
+      <div style="font-size:13px;font-weight:700;color:#e2e8f0">Modifier — ${username}</div>
+      <div style="font-size:11px;color:#94a3b8">Laisser vide pour ne pas modifier</div>
+      <input id="aeNewName" type="text" placeholder="Nouvel identifiant" value="${username}"
+        style="padding:9px 12px;border-radius:7px;border:1px solid #2a2f45;background:#0f1117;color:#e2e8f0;font-size:12px;outline:none"/>
+      <input id="aeNewPass" type="password" placeholder="Nouveau mot de passe"
+        style="padding:9px 12px;border-radius:7px;border:1px solid #2a2f45;background:#0f1117;color:#e2e8f0;font-size:12px;outline:none"/>
+      <input id="aeNewPass2" type="password" placeholder="Confirmer le mot de passe"
+        style="padding:9px 12px;border-radius:7px;border:1px solid #2a2f45;background:#0f1117;color:#e2e8f0;font-size:12px;outline:none"/>
+      <div id="aeErr" style="color:#f87171;font-size:11px;min-height:14px;"></div>
+      <div style="display:flex;gap:8px;">
+        <button id="aeCancel" style="flex:1;padding:8px;border-radius:7px;background:#2a2f45;color:#94a3b8;font-size:12px;border:none;cursor:pointer;">Annuler</button>
+        <button id="aeSave" style="flex:1;padding:8px;border-radius:7px;background:#4f8ef7;color:#fff;font-size:12px;font-weight:700;border:none;cursor:pointer;">Enregistrer</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  document.getElementById("aeCancel").onclick = () => modal.remove();
+  modal.onclick = e => { if (e.target === modal) modal.remove(); };
+
+  document.getElementById("aeSave").onclick = async () => {
+    const newName = document.getElementById("aeNewName").value.trim();
+    const newPass = document.getElementById("aeNewPass").value.trim();
+    const newPass2= document.getElementById("aeNewPass2").value.trim();
+    const err     = document.getElementById("aeErr");
+    const btn     = document.getElementById("aeSave");
+
+    if (!newName) { err.textContent = "L'identifiant ne peut pas être vide"; return; }
+    if (newPass && newPass !== newPass2) { err.textContent = "Les mots de passe ne correspondent pas"; return; }
+    if (newPass && newPass.length < 4) { err.textContent = "Mot de passe trop court (min 4)"; return; }
+
+    btn.textContent = "…"; btn.disabled = true;
+    try {
+      await adminEditUser(username, newName, newPass || null);
+      err.style.color = "#22c55e";
+      err.textContent = "Modifié ✓";
+      setTimeout(() => { modal.remove(); renderUserManagementUI(); }, 900);
+    } catch(e) {
+      err.style.color = "#f87171";
+      err.textContent = e.message;
+      btn.textContent = "Enregistrer"; btn.disabled = false;
+    }
+  };
+}
+
 // ── Render User Management UI (in settings) ───────────────────
 async function renderUserManagementUI() {
   const container = document.getElementById("userManagementSection");
@@ -517,6 +589,14 @@ async function renderUserManagementUI() {
           <span style="font-size:10px;color:${roleColors[u.role]};background:${roleColors[u.role]}22;padding:1px 6px;border-radius:4px;min-width:55px;text-align:center">
             ${roleLabels[u.role]}
           </span>
+          <button onclick="_showAdminEditModal('${u.username}', '${u.role}')"
+            style="background:none;border:none;cursor:pointer;color:#4f8ef7;padding:2px 4px;border-radius:4px"
+            title="Modifier">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
           ${u.username !== AppAuth.currentUser.username ? `
             <button onclick="_deleteUserUI('${u.username}')"
               style="background:none;border:none;cursor:pointer;color:#f87171;padding:2px 4px;border-radius:4px"
