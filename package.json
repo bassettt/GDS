@@ -1,5 +1,5 @@
 {
-  "name": "wafa-tournees-manager",
+  "name": "GDS WAFA",
   "version": "1.0.0",
   "description": "Wafa PWA — Odoo Proxy + Static Server",
   "main": "server.js",

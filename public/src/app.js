@@ -1654,12 +1654,7 @@ function gdsPrepDownloadPrepPdf() {
     <thead><tr><th>Produit</th><th class="num">Colis</th><th class="num">U</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
-  <script>
-    window.onload = () => {
-      window.print();
-      window.onafterprint = () => window.close();
-    };
-  <\/script>
+  
   </body></html>`;
 
   const today = new Date();
@@ -1790,7 +1785,7 @@ function _gdsPrepRenderModalBody() {
     byCateg[line.categ].push({ line, i });
   });
 
-  let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:6px;position:relative;">
+  let html = `<div style="display:none;justify-content:flex-end;margin-bottom:6px;position:relative;">
     <button onclick="_gdsPrepToggleColPanel('__global__')" style="font-size:9px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;display:flex;align-items:center;gap:4px;">
       <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Col
     </button>
@@ -1822,16 +1817,16 @@ function _gdsPrepRenderModalBody() {
       ${escHtml(cat)}
     </div>
     <div id="gdsPrepModalCat_${escHtml(cat)}" style="display:${collapsed?"none":""}">
-    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
-    <table class="gds-table" style="margin-bottom:10px;min-width:${isEdit ? "420px" : "300px"};">
+    <div style="-webkit-overflow-scrolling:touch;">
+    <table class="gds-table ${isEdit ? "edit-mode" : ""}" style="margin-bottom:10px;">
       <thead><tr>
         <th style="min-width:80px;">Produit</th>
-        <th style="text-align:right;white-space:nowrap">S.Colis</th>
-        <th style="text-align:right;white-space:nowrap">S.U</th>
+        <th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">S.Colis</th>
+        <th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">S.U</th>
         ${isEdit
-          ? `<th style="text-align:right;white-space:nowrap">Act.Colis</th><th style="text-align:right;white-space:nowrap">Act.U</th>
-             <th style="text-align:right;white-space:nowrap">Δ Colis</th><th style="text-align:right;white-space:nowrap">Δ U</th>`
-          : `<th style="text-align:right;white-space:nowrap">Prép. Colis</th><th style="text-align:right;white-space:nowrap">Prép. U</th>`}
+          ? `<th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Act.Colis</th><th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Act.U</th>
+             <th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Δ Colis</th><th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Δ U</th>`
+          : `<th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Prép. Colis</th><th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Prép. U</th>`}
       </tr></thead><tbody>`;
 
     byCateg[cat].forEach(({ line, i }) => {
@@ -1866,22 +1861,14 @@ function _gdsPrepRenderModalBody() {
           <td class="gds-qty" style="color:var(--gds-color)">${line.prepCarton || "—"}</td>
           <td class="gds-qty" style="color:var(--gds-color)">${line.prepUnite  || "—"}</td>
           <td class="gds-qty">
-            <div style="display:flex;align-items:center;gap:1px;white-space:nowrap;">
-              <button class="gds-prep-delta-btn" onclick="_gdsPrepDelta(${line.pid},'prepCarton',-1,this)" style="padding:0 5px;min-width:22px;">−</button>
-              <input type="number" class="gds-prep-input" style="width:36px;text-align:center;padding:2px;" data-idx="${line.pid}" data-field="deltaCarton"
-                value="${line._deltaCarton || 0}"
-                onchange="_gdsPrepDeltaInput(${line.pid},'prepCarton',this)"/>
-              <button class="gds-prep-delta-btn" onclick="_gdsPrepDelta(${line.pid},'prepCarton',+1,this)" style="padding:0 5px;min-width:22px;">+</button>
-            </div>
+            <input type="number" class="gds-prep-input" style="width:38px;text-align:center;padding:2px;" data-idx="${line.pid}" data-field="deltaCarton"
+              value="${line._deltaCarton || 0}"
+              onchange="_gdsPrepDeltaInput(${line.pid},'prepCarton',this)"/>
           </td>
           <td class="gds-qty">
-            <div style="display:flex;align-items:center;gap:1px;white-space:nowrap;">
-              <button class="gds-prep-delta-btn" onclick="_gdsPrepDelta(${line.pid},'prepUnite',-1,this)" style="padding:0 5px;min-width:22px;">−</button>
-              <input type="number" class="gds-prep-input" style="width:36px;text-align:center;padding:2px;" data-idx="${line.pid}" data-field="deltaUnite"
-                value="${line._deltaUnite || 0}"
-                onchange="_gdsPrepDeltaInput(${line.pid},'prepUnite',this)"/>
-              <button class="gds-prep-delta-btn" onclick="_gdsPrepDelta(${line.pid},'prepUnite',+1,this)" style="padding:0 5px;min-width:22px;">+</button>
-            </div>
+            <input type="number" class="gds-prep-input" style="width:38px;text-align:center;padding:2px;" data-idx="${line.pid}" data-field="deltaUnite"
+              value="${line._deltaUnite || 0}"
+              onchange="_gdsPrepDeltaInput(${line.pid},'prepUnite',this)"/>
           </td>
         </tr>`;
       }
@@ -1938,9 +1925,10 @@ inputEl.style.borderColor = "";
         inputEl.value = remUnite || "";
       }
     } else {
-      line.prepUnite = val;
-    }
+    line.prepUnite = val;
   }
+  _gdsPrepUpdateConfirmBtn();
+}
 }
 
 function gdsPrepShowCharge(pid) {
@@ -1993,26 +1981,34 @@ function gdsPrepShowCharge(pid) {
   if (!rows.length) {
     body.innerHTML = `<div style="padding:16px;color:var(--text3);text-align:center;">Aucun chargement trouvé</div>`;
   } else {
-body.innerHTML = `<div style="overflow-x:auto;"><table class="gds-table" style="font-size:11px;min-width:500px;">
+body.innerHTML = `<div><table class="gds-table" style="font-size:11px;width:100%;table-layout:fixed;border-collapse:collapse;">
+      <colgroup>
+        <col style="width:22%">
+        <col style="width:28%">
+        <col style="width:9%">
+        <col style="width:7%">
+        <col style="width:10%">
+        <col style="width:24%">
+      </colgroup>
       <thead><tr>
-        <th style="white-space:nowrap;">Van</th>
-        <th style="white-space:nowrap;">Livreur</th>
-        <th style="text-align:right;white-space:nowrap;">Colis</th>
-        <th style="text-align:right;">U</th>
-        <th style="text-align:center;white-space:nowrap;">Heure</th>
-        <th style="white-space:nowrap;">Transfert</th>
+        <th style="white-space:normal;word-break:break-word;">Van</th>
+        <th style="white-space:normal;word-break:break-word;">Livreur</th>
+        <th style="text-align:right;white-space:normal;">Colis</th>
+        <th style="text-align:right;white-space:normal;">U</th>
+        <th style="text-align:center;white-space:normal;">Heure</th>
+        <th style="white-space:normal;word-break:break-word;">Transfert</th>
       </tr></thead><tbody>
 	  ${rows.map(r => {
         const vanJuml     = vanCount[r.van]         > 1;
         const partnerJuml = partnerCount[r.partner] > 1;
         const rowJuml     = vanJuml || partnerJuml;
         return `<tr style="${rowJuml ? 'background:rgba(251,146,60,.15);' : ''}">
-          <td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(r.van)}${vanJuml ? ' <span style="color:var(--orange);font-weight:700;">⚠</span>' : ''}</td>
-          <td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(r.partner)}${partnerJuml ? ' <span style="color:var(--orange);font-weight:700;">⚠</span>' : ''}</td>
+          <td style="white-space:normal;word-break:break-word;overflow:hidden;">${escHtml(r.van)}${vanJuml ? ' <span style="color:var(--orange);font-weight:700;">⚠</span>' : ''}</td>
+          <td style="white-space:normal;word-break:break-word;overflow:hidden;">${escHtml(r.partner)}${partnerJuml ? ' <span style="color:var(--orange);font-weight:700;">⚠</span>' : ''}</td>
           <td style="text-align:right;font-weight:600;">${u > 0 ? Math.floor(r.qty / u) : '—'}</td>
           <td style="text-align:right;">${u > 0 ? Math.round(r.qty % u) : r.qty}</td>
           <td style="text-align:center;">${r.date}</td>
-          <td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(r.pickRef)}</td>
+          <td style="white-space:normal;word-break:break-word;overflow:hidden;">${escHtml(r.pickRef)}</td>
         </tr>`;
       }).join("")}
       </tbody>
@@ -2060,6 +2056,20 @@ function _gdsPrepDeltaInput(pid, field, inputEl) {
   }
   const deltaField = field === "prepCarton" ? "_deltaCarton" : "_deltaUnite";
   line[deltaField] = val;
+  // تحقق مباشر لتجميد/تفعيل زر Confirmer
+  const u = _gdsPrepUnitSize(line);
+  const newC = line.prepCarton + (line._deltaCarton || 0);
+  const newU = line.prepUnite  + (line._deltaUnite  || 0);
+  line._hasError = newC < 0 || newU < 0 || newC * u + newU > line.qty;
+  _gdsPrepUpdateConfirmBtn();
+}
+
+function _gdsPrepUpdateConfirmBtn() {
+  const btn = document.querySelector("#gdsPrepModal .gds-prep-modal-footer .gds-refresh-btn");
+  if (!btn) return;
+  const hasErr = _gdsPrep.lines.some(l => l._hasError);
+  btn.disabled = hasErr;
+  btn.style.opacity = hasErr ? ".4" : "1";
 }
 
 // ── تأكيد النافذة ─────────────────────────────────────────────
@@ -2087,7 +2097,8 @@ function gdsPrepModalConfirm() {
         line.prepCarton = v.c;
         line.prepUnite  = v.u || 0;
         if (line.prepCarton > 0 || line.prepUnite > 0)
-          line.history.push({ ts: now, type: "Ajout", carton: line.prepCarton, unite: line.prepUnite });
+          if (!line.history) line.history = [];
+line.history.push({ ts: now, type: "Ajout", carton: line.prepCarton, unite: line.prepUnite });
       }
     });
   } else {
@@ -2107,7 +2118,8 @@ function gdsPrepModalConfirm() {
       line.prepCarton   = newC;
       line.prepUnite    = newU;
       const type = dc > 0 || du > 0 ? "Augmentation" : "Réduction";
-      line.history.push({ ts: now, type, carton: dc, unite: du });
+      if (!line.history) line.history = [];
+line.history.push({ ts: now, type, carton: dc, unite: du });
       line._deltaCarton = 0;
       line._deltaUnite  = 0;
     });
@@ -3486,16 +3498,8 @@ function _downloadAsPdf(htmlContent, fileName) {
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
   if (isMobile) {
-    // موبايل: تحميل مباشر كـ HTML
-    const blob = new Blob([htmlContent], { type: "text/html;charset=utf-8;" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href     = url;
-    a.download = fileName.replace(/\.pdf$/i, "") + ".html";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    const encoded = "data:text/html;charset=utf-8," + encodeURIComponent(htmlContent);
+    window.location.href = encoded;
   } else {
     // desktop: print dialog كالمعتاد
     const printHtml = htmlContent.replace(

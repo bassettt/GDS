@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#0f1117"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-  <meta name="apple-mobile-web-app-title" content="GDS WAFA"/>
-  <title>GDS WAFA</title>
+  <meta name="apple-mobile-web-app-title" content="OwDoo"/>
+  <title>OwDoo</title>
   <link rel="manifest" href="/manifest.json"/>
   <link rel="apple-touch-icon" href="/icons/icon192.png"/>
   <link rel="stylesheet" href="/src/style.css"/>
@@ -109,36 +109,21 @@
 <body>
 
   <!-- LOGIN SCREEN -->
-  <div id="loginScreen" style="display:none;position:fixed;inset:0;z-index:9999;background:#f9fafb;flex-direction:column;align-items:center;justify-content:center;padding:24px;">
-    <div style="width:100%;max-width:360px;background:#fff;border-radius:16px;box-shadow:0 4px 32px #0001;padding:36px 28px;display:flex;flex-direction:column;align-items:center;gap:18px;">
-      <!-- Odoo-style logo area -->
-      <div style="display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:4px;">
-        <div style="background:#714B67;border-radius:12px;width:52px;height:52px;display:flex;align-items:center;justify-content:center;">
-          <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
-            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </div>
-        <div style="color:#1a1a2e;font-size:20px;font-weight:800;">OwDoo</div>
-        <div style="color:#714B67;font-size:12px;font-weight:600;letter-spacing:.03em;">Connexion Odoo — Étape 2/2</div>
-      </div>
-      <div style="width:100%;display:flex;flex-direction:column;gap:10px;">
-        <div style="display:flex;flex-direction:column;gap:4px;">
-          <label style="font-size:13px;font-weight:600;color:#374151;">Identifiant</label>
-          <input id="loginUser" type="text" placeholder="Votre identifiant Odoo" autocomplete="username"
-            style="width:100%;padding:14px;border-radius:8px;border:1.5px solid #e5e7eb;background:#f9fafb;color:#111827;font-size:16px;outline:none;-webkit-appearance:none;"/>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:4px;">
-          <label style="font-size:13px;font-weight:600;color:#374151;">Mot de passe</label>
-          <input id="loginPass" type="password" placeholder="Votre mot de passe" autocomplete="current-password"
-            style="width:100%;padding:14px;border-radius:8px;border:1.5px solid #e5e7eb;background:#f9fafb;color:#111827;font-size:16px;outline:none;-webkit-appearance:none;"/>
-        </div>
-        <div id="loginErr" style="color:#ef4444;font-size:12px;min-height:16px;text-align:center;"></div>
-        <button id="loginBtn"
-          style="width:100%;padding:14px;border-radius:8px;background:#714B67;color:#fff;font-size:16px;font-weight:700;border:none;cursor:pointer;-webkit-appearance:none;">
-          Se connecter
-        </button>
-      </div>
-    </div>
+  <div id="loginScreen" style="display:none;position:fixed;inset:0;z-index:9999;background:#0f1117;flex-direction:column;align-items:center;justify-content:center;gap:14px">
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#4f8ef7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div style="color:#e2e8f0;font-size:15px;font-weight:700">OwDoo</div>
+    <div style="color:#64748b;font-size:11px;margin-bottom:4px">Connexion requise</div>
+    <input id="loginUser" type="text" placeholder="Identifiant" autocomplete="username"
+      style="width:220px;padding:10px 12px;border-radius:8px;border:1px solid #2a2f45;background:#1e2336;color:#e2e8f0;font-size:13px;outline:none"/>
+    <input id="loginPass" type="password" placeholder="Mot de passe" autocomplete="current-password"
+      style="width:220px;padding:10px 12px;border-radius:8px;border:1px solid #2a2f45;background:#1e2336;color:#e2e8f0;font-size:13px;outline:none"/>
+    <button id="loginBtn"
+      style="width:220px;padding:10px;border-radius:8px;background:#4f8ef7;color:#fff;font-size:13px;font-weight:700;border:none;cursor:pointer">
+      Se connecter
+    </button>
+    <div id="loginErr" style="color:#f87171;font-size:11px;min-height:16px"></div>
   </div>
 
   <div id="app">

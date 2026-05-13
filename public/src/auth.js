@@ -67,8 +67,8 @@ async function appLogin(username, password) {
   const hash = await _hashPassword(password);
   if (hash !== user.password) throw new Error("Identifiant ou mot de passe incorrect");
 
-  AppAuth.currentUser = { username: user.username, role: user.role };
-  sessionStorage.setItem("owdoo_app_user", JSON.stringify(AppAuth.currentUser));
+  AppAuth.currentUser = { username: user.username, role: user.role, passwordHash: hash };
+sessionStorage.setItem("owdoo_app_user", JSON.stringify(AppAuth.currentUser));
   return AppAuth.currentUser;
 }
 
@@ -79,11 +79,18 @@ function appLogout() {
 }
 
 // ── Restore session ───────────────────────────────────────────
-function _restoreAppSession() {
+async function _restoreAppSession() {
   try {
     const saved = sessionStorage.getItem("owdoo_app_user");
     if (saved) {
-      AppAuth.currentUser = JSON.parse(saved);
+      const parsed = JSON.parse(saved);
+      // تحقق من الـ hash مقابل Firebase
+      const fbUser = await _fbGet(`app_users/${parsed.username}`);
+      if (!fbUser || fbUser.password !== parsed.passwordHash) {
+        sessionStorage.removeItem("owdoo_app_user");
+        return false;
+      }
+      AppAuth.currentUser = { username: parsed.username, role: fbUser.role, passwordHash: parsed.passwordHash };
       return true;
     }
   } catch (_) {}
@@ -95,211 +102,221 @@ function isAdmin()   { return AppAuth.currentUser?.role === "admin"; }
 function isViewer()  { return AppAuth.currentUser?.role === "viewer"; }
 function canEdit()   { return ["admin", "user"].includes(AppAuth.currentUser?.role); }
 
-// ── Role-based permissions ────────────────────────────────────
-// Default permissions per role (can be overridden via Firebase)
-const DEFAULT_ROLE_PERMISSIONS = {
-  admin: {}, // admin sees everything always
-  user: {
-    "stock-refresh": true,
-    "stock-expand": true,
-    "stock-collapse": true,
-    "vans-refresh": true,
-    "vans-expand": true,
-    "vans-collapse": true,
-    "vans-print": true,
-    "transferts-refresh": true,
-    "transferts-detail": true,
-    "transferts-odoo-link": true,
-    "preparation-refresh": true,
-    "preparation-validate": true,
-    "preparation-print": true,
-  },
-  viewer: {
-    "stock-refresh": true,
-    "stock-expand": true,
-    "stock-collapse": true,
-    "vans-refresh": false,
-    "vans-expand": true,
-    "vans-collapse": true,
-    "vans-print": false,
-    "transferts-refresh": true,
-    "transferts-detail": true,
-    "transferts-odoo-link": false,
-    "preparation-refresh": true,
-    "preparation-validate": false,
-    "preparation-print": false,
-  }
+// ── Permission map (matches data-perm attributes in app.js) ───
+const ROLE_PERMISSIONS = {
+  gds_stock: [
+    { perm: "stock_actualiser", label: "Stock — Actualiser" },
+    { perm: "stock_expand",     label: "Stock — Tout ouvrir" },
+    { perm: "stock_collapse",   label: "Stock — Tout fermer" },
+  ],
+  gds_vans: [
+    { perm: "vans_actualiser", label: "Vans — Actualiser" },
+    { perm: "vans_expand",     label: "Vans — Tout ouvrir" },
+    { perm: "vans_collapse",   label: "Vans — Tout fermer" },
+  ],
+  gds_transferts: [
+    { perm: "transferts_actualiser", label: "Transferts — Actualiser" },
+  ],
+  gds_preparation: [
+    { perm: "prep_nouvelle",          label: "Préparation — Nouvelle" },
+    { perm: "prep_modifier",          label: "Préparation — Modifier" },
+    { perm: "prep_terminer",          label: "Préparation — Terminer" },
+    { perm: "prep_annuler",           label: "Préparation — Annuler" },
+    { perm: "prep_rapport",           label: "Préparation — Rapport" },
+    { perm: "prep_reprendre",         label: "Préparation — Reprendre" },
+    { perm: "prep_charge_actualiser", label: "Préparation — Actualiser chargement" },
+    { perm: "prep_depuis_a",          label: "Préparation — Depuis / À (dates)" },
+    { perm: "prep_exclu",             label: "Préparation — Exclu" },
+    { perm: "prep_hors_date",         label: "Préparation — Hors date" },
+    { perm: "prep_hors_date_add",     label: "Préparation — Hors date (+)" },
+  ],
 };
 
-// Human-readable labels for permission keys
-const PERMISSION_LABELS = {
-  "stock-refresh":          { section: "Stock GDS",   label: "Actualiser" },
-  "stock-expand":           { section: "Stock GDS",   label: "Tout développer" },
-  "stock-collapse":         { section: "Stock GDS",   label: "Tout réduire" },
-  "vans-refresh":           { section: "Vans",        label: "Actualiser" },
-  "vans-expand":            { section: "Vans",        label: "Tout développer" },
-  "vans-collapse":          { section: "Vans",        label: "Tout réduire" },
-  "vans-print":             { section: "Vans",        label: "Imprimer PDF" },
-  "transferts-refresh":     { section: "Transferts",  label: "Actualiser" },
-  "transferts-detail":      { section: "Transferts",  label: "Voir détails" },
-  "transferts-odoo-link":   { section: "Transferts",  label: "Ouvrir dans Odoo" },
-  "preparation-refresh":    { section: "Préparation", label: "Actualiser" },
-  "preparation-validate":   { section: "Préparation", label: "Valider" },
-  "preparation-print":      { section: "Préparation", label: "Imprimer PDF" },
+const ROLE_SECTION_LABELS = {
+  gds_stock:       "GDS — Stock",
+  gds_vans:        "GDS — Vans",
+  gds_transferts:  "GDS — Transferts",
+  gds_preparation: "GDS — Préparation",
 };
 
-// Cache loaded permissions
-let _loadedPermissions = null;
+// ── Firebase helpers for permissions ─────────────────────────
+// Firebase deletes keys with empty arrays [] automatically.
+// We store "__none__" as sentinel when all perms are removed.
+const _PERM_NONE = "__none__";
 
 async function _loadRolePermissions() {
-  try {
-    const r = await fetch(`${_FB_DB_URL}/role_permissions.json`);
-    const data = await r.json();
-    if (data) { _loadedPermissions = data; return data; }
-  } catch(_) {}
-  _loadedPermissions = JSON.parse(JSON.stringify(DEFAULT_ROLE_PERMISSIONS));
-  return _loadedPermissions;
+  try { const d = await _fbGet("role_permissions"); return d || {}; } catch(_) { return {}; }
 }
-
 async function _saveRolePermissions(perms) {
-  _loadedPermissions = perms;
-  await fetch(`${_FB_DB_URL}/role_permissions.json`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(perms),
-  });
+  // Replace empty arrays with sentinel before saving
+  const safe = JSON.parse(JSON.stringify(perms));
+  for (const section of Object.keys(safe)) {
+    for (const role of Object.keys(safe[section])) {
+      if (Array.isArray(safe[section][role]) && safe[section][role].length === 0) {
+        safe[section][role] = _PERM_NONE;
+      }
+    }
+  }
+  await _fbSet("role_permissions", safe);
 }
 
-function _getPermForRole(role, key) {
-  if (role === "admin") return true;
-  const perms = _loadedPermissions || DEFAULT_ROLE_PERMISSIONS;
-  const rolePerms = perms[role] || {};
-  return rolePerms[key] !== undefined ? rolePerms[key] : (DEFAULT_ROLE_PERMISSIONS[role]?.[key] ?? true);
+// Decode loaded perms: convert sentinel back to []
+function _decodePerm(val) {
+  if (val === _PERM_NONE) return [];
+  if (Array.isArray(val)) return val;
+  return undefined; // not configured
 }
 
-// Called with data-perm attribute on buttons to check if allowed
-function hasPermission(key) {
+// ── Build flat lookup: perm → section ────────────────────────
+function _permSectionMap() {
+  const map = {};
+  for (const [section, btns] of Object.entries(ROLE_PERMISSIONS))
+    btns.forEach(b => { map[b.perm] = section; });
+  return map;
+}
+
+// ── Core: hide/show [data-perm] for current role ─────────────
+let _permCache = null;
+let _permObserver = null;
+let _permApplying = false;
+
+async function applyRolePermissions() {
+  if (isAdmin()) return;
   const role = AppAuth.currentUser?.role;
-  if (!role) return false;
-  return _getPermForRole(role, key);
-}
+  if (!role) return;
 
-// ── Apply role-based button restrictions ──────────────────────
-function _applyRoleRestrictions() {
-  const role = AppAuth.currentUser?.role;
-  if (!role || role === "admin") return;
+  _permCache = await _loadRolePermissions();
+  const sectionMap = _permSectionMap();
 
-  // Apply data-perm buttons
-  document.querySelectorAll("[data-perm]").forEach(el => {
-    const key = el.getAttribute("data-perm");
-    const allowed = _getPermForRole(role, key);
-    _setElementAllowed(el, allowed);
-  });
+  function _applyPerms() {
+    if (_permApplying) return;
+    _permApplying = true;
+    // Disconnect observer during apply to avoid infinite loop
+    if (_permObserver) _permObserver.disconnect();
 
-  // Legacy: viewer gets all inputs disabled
-  if (role === "viewer") {
-    document.querySelectorAll("input:not([type=checkbox]), select, textarea").forEach(el => {
-      el.disabled = true;
+document.querySelectorAll("[data-perm]").forEach(el => {
+      const perm    = el.dataset.perm;
+      const section = sectionMap[perm];
+      if (!section) return;
+      const raw     = _permCache[section]?.[role];
+      const allowed = _decodePerm(raw);
+      // undefined = never configured → show by default
+      // [] = all hidden (sentinel decoded) → hide all
+      const visible = (allowed === undefined) || allowed.includes(perm);
+      el.style.display = visible ? "" : "none";
+    });
+
+    // Reconnect observer after DOM changes are done
+    requestAnimationFrame(() => {
+      if (_permObserver) {
+        _permObserver.observe(
+          document.getElementById("app") || document.body,
+          { childList: true, subtree: true }
+        );
+      }
+      _permApplying = false;
     });
   }
+
+  _permObserver = new MutationObserver((mutations) => {
+    // Only re-apply if new [data-perm] elements were added
+    const hasNewPermEl = mutations.some(m =>
+      [...m.addedNodes].some(n =>
+        n.nodeType === 1 && (n.matches?.("[data-perm]") || n.querySelector?.("[data-perm]"))
+      )
+    );
+    if (hasNewPermEl) _applyPerms();
+  });
+
+  _applyPerms();
+  _permObserver.observe(
+    document.getElementById("app") || document.body,
+    { childList: true, subtree: true }
+  );
 }
 
-function _setElementAllowed(el, allowed) {
-  if (allowed) {
-    el.disabled = false;
-    el.style.display = "";
-    el.style.opacity = "";
-    el.style.cursor = "";
-    el.removeAttribute("title");
-  } else {
-    el.disabled = true;
-    el.style.display = "none"; // hide completely
+// Block click on hidden buttons forced visible via devtools
+document.addEventListener("click", e => {
+  const el = e.target.closest("[data-perm]");
+  if (el && el.style.display === "none") {
+    e.stopImmediatePropagation();
+    e.preventDefault();
   }
-}
+}, true);
 
-// Keep legacy name for compatibility
-function _applyViewerRestrictions() {
-  _applyRoleRestrictions();
-}
-
-// ── Render Role Permissions UI (admin settings) ───────────────
+// ── Admin UI: render permissions panel in settings ────────────
 async function renderRolePermissionsUI() {
   const container = document.getElementById("rolePermissionsSection");
   if (!container || !isAdmin()) return;
-
   container.innerHTML = `<div style="font-size:11px;color:var(--text2)">Chargement…</div>`;
-  await _loadRolePermissions();
 
-  const roles = ["user", "viewer"];
+  const perms      = await _loadRolePermissions();
+  const roles      = ["user", "viewer"];
   const roleLabels = { user: "Utilisateur", viewer: "Lecteur" };
-  const roleColors = { user: "#22c55e", viewer: "#f59e0b" };
+  const roleColors = { user: "#22c55e",     viewer: "#f59e0b" };
 
-  // Group permissions by section
-  const sections = {};
-  for (const [key, meta] of Object.entries(PERMISSION_LABELS)) {
-    if (!sections[meta.section]) sections[meta.section] = [];
-    sections[meta.section].push({ key, label: meta.label });
+  let html = "";
+  for (const [section, buttons] of Object.entries(ROLE_PERMISSIONS)) {
+    html += `
+      <div style="margin-bottom:10px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;">
+        <div style="font-size:12px;font-weight:700;color:var(--text1);margin-bottom:8px">${ROLE_SECTION_LABELS[section]}</div>
+        ${roles.map(role => `
+          <div style="margin-bottom:8px;">
+            <div style="font-size:10px;font-weight:600;color:${roleColors[role]};margin-bottom:4px">${roleLabels[role]}</div>
+            <div style="display:flex;flex-direction:column;gap:4px;">
+              ${buttons.map(btn => {
+                const raw     = perms[section]?.[role];
+                const decoded = _decodePerm(raw);
+                // undefined = not configured → checked. [] = all hidden → unchecked
+                const checked = (decoded === undefined) || decoded.includes(btn.perm);
+                return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;color:var(--text2)">
+                  <input type="checkbox"
+                    data-section="${section}" data-role="${role}" data-btnperm="${btn.perm}"
+                    ${checked ? "checked" : ""}
+                    onchange="_onPermChange(this)"
+                    style="width:14px;height:14px;cursor:pointer;accent-color:${roleColors[role]}"/>
+                  ${btn.label}
+                </label>`;
+              }).join("")}
+            </div>
+          </div>`).join("")}
+      </div>`;
   }
-
-  let html = `<div style="overflow-x:auto;">
-    <table style="width:100%;border-collapse:collapse;font-size:11px;">
-      <thead>
-        <tr style="background:var(--bg3,#252a3d);">
-          <th style="text-align:left;padding:6px 10px;color:var(--text2);font-weight:600;border-bottom:1px solid var(--border);">Action</th>
-          ${roles.map(r => `
-            <th style="text-align:center;padding:6px 10px;color:${roleColors[r]};font-weight:600;border-bottom:1px solid var(--border);min-width:70px;">
-              ${roleLabels[r]}
-            </th>`).join("")}
-        </tr>
-      </thead>
-      <tbody>`;
-
-  for (const [section, items] of Object.entries(sections)) {
-    html += `<tr>
-      <td colspan="${roles.length + 1}" style="padding:8px 10px 2px;font-size:10px;font-weight:700;color:var(--text3,#64748b);text-transform:uppercase;letter-spacing:.05em;background:var(--bg2);">
-        ${section}
-      </td>
-    </tr>`;
-    items.forEach(({ key, label }) => {
-      html += `<tr style="border-bottom:1px solid var(--border);">
-        <td style="padding:5px 10px;color:var(--text1);">${label}</td>
-        ${roles.map(r => {
-          const allowed = _getPermForRole(r, key);
-          return `<td style="text-align:center;padding:5px 10px;">
-            <input type="checkbox"
-              data-role="${r}" data-key="${key}"
-              ${allowed ? "checked" : ""}
-              onchange="_onPermCheckboxChange(this)"
-              style="width:15px;height:15px;cursor:pointer;accent-color:${roleColors[r]}"/>
-          </td>`;
-        }).join("")}
-      </tr>`;
-    });
-  }
-
-  html += `</tbody></table></div>
-  <div id="permSaveMsg" style="font-size:11px;color:#22c55e;min-height:14px;margin-top:6px;text-align:right;"></div>`;
-
   container.innerHTML = html;
 }
 
-async function _onPermCheckboxChange(checkbox) {
-  const role = checkbox.dataset.role;
-  const key  = checkbox.dataset.key;
-  const val  = checkbox.checked;
+let _permSaving = false;
+let _permDirty = [];
 
-  if (!_loadedPermissions) await _loadRolePermissions();
-  if (!_loadedPermissions[role]) _loadedPermissions[role] = {};
-  _loadedPermissions[role][key] = val;
+async function _onPermChange(cb) {
+  const section = cb.dataset.section;
+  const role    = cb.dataset.role;
+  const perm    = cb.dataset.btnperm;
+  const perms   = await _loadRolePermissions();
 
-  try {
-    await _saveRolePermissions(_loadedPermissions);
-    const msg = document.getElementById("permSaveMsg");
-    if (msg) { msg.textContent = "Sauvegardé ✓"; setTimeout(() => { msg.textContent = ""; }, 1500); }
-  } catch(e) {
-    console.error("Failed to save permissions:", e);
+  if (!perms[section]) perms[section] = {};
+
+  // Decode current value (handle sentinel)
+  const current = _decodePerm(perms[section][role]);
+  // If undefined (never set), initialize with all allowed
+  let arr = (current === undefined)
+    ? ROLE_PERMISSIONS[section].map(b => b.perm)
+    : [...current];
+
+  if (cb.checked) {
+    if (!arr.includes(perm)) arr.push(perm);
+  } else {
+    arr = arr.filter(p => p !== perm);
   }
+
+  // Store array (sentinel applied inside _saveRolePermissions)
+  perms[section][role] = arr;
+  _permCache = perms;
+  await _saveRolePermissions(perms);
 }
+
+// ── Viewer restrictions (kept for backward compat) ────────────
+function _applyViewerRestrictions() {}
 
 // ── Block settings for non-admins ─────────────────────────────
 function _guardSettings() {
@@ -307,6 +324,30 @@ function _guardSettings() {
   if (!btn) return;
   if (!isAdmin()) {
     btn.style.display = "none";
+    // منع الوصول لصفحة الإعدادات بأي طريقة
+    btn.onclick = e => { e.stopImmediatePropagation(); e.preventDefault(); };
+
+    // مراقبة إذا ظهرت صفحة الإعدادات وإغلاقها فوراً
+    const observer = new MutationObserver(() => {
+      const vs = document.getElementById("viewSettings");
+      if (vs && vs.style.display !== "none" && vs.style.display !== "") {
+        vs.style.display = "none";
+        const vm = document.getElementById("viewMain");
+        if (vm) vm.style.display = "";
+      }
+    });
+    observer.observe(document.body, { attributes: true, subtree: true, attributeFilter: ["style"] });
+
+    // تعطيل كل العناصر التفاعلية داخل الإعدادات
+    const vs = document.getElementById("viewSettings");
+    if (vs) {
+      vs.querySelectorAll("input, select, button, textarea").forEach(el => {
+        if (el.id === "btnBack") return; // اسمح بالرجوع فقط
+        el.disabled = true;
+        el.style.pointerEvents = "none";
+        el.style.opacity = "0.4";
+      });
+    }
   }
 }
 
@@ -314,27 +355,23 @@ function _guardSettings() {
 function _buildAppLoginScreen() {
   const div = document.createElement("div");
   div.id = "appLoginScreen";
-  div.style.cssText = "display:flex;position:fixed;inset:0;z-index:10000;background:#0f1117;flex-direction:column;align-items:center;justify-content:center;padding:24px;";
+  div.style.cssText = "display:flex;position:fixed;inset:0;z-index:10000;background:#0f1117;flex-direction:column;align-items:center;justify-content:center;gap:14px";
   div.innerHTML = `
-    <div style="width:100%;max-width:360px;display:flex;flex-direction:column;align-items:center;gap:20px;">
-      <img src="/icons/icon512.png" width="90" height="90" style="border-radius:22px;box-shadow:0 4px 24px #4f8ef740;"/>
-      <div style="text-align:center;">
-        <div style="color:#e2e8f0;font-size:22px;font-weight:800;letter-spacing:-.5px">OwDoo</div>
-        <div style="color:#64748b;font-size:13px;margin-top:4px">Connectez-vous pour continuer</div>
-      </div>
-      <div style="width:100%;display:flex;flex-direction:column;gap:12px;">
-        <input id="appLoginUser" type="text" placeholder="Identifiant" autocomplete="username"
-          style="width:100%;padding:16px;border-radius:12px;border:1.5px solid #2a2f45;background:#1e2336;color:#e2e8f0;font-size:16px;outline:none;-webkit-appearance:none;"/>
-        <input id="appLoginPass" type="password" placeholder="Mot de passe" autocomplete="current-password"
-          style="width:100%;padding:16px;border-radius:12px;border:1.5px solid #2a2f45;background:#1e2336;color:#e2e8f0;font-size:16px;outline:none;-webkit-appearance:none;"/>
-        <div id="appLoginErr" style="color:#f87171;font-size:12px;min-height:16px;text-align:center;"></div>
-        <button id="appLoginBtn"
-          style="width:100%;padding:16px;border-radius:12px;background:#4f8ef7;color:#fff;font-size:16px;font-weight:700;border:none;cursor:pointer;-webkit-appearance:none;">
-          Se connecter
-        </button>
-      </div>
-      <div style="color:#334155;font-size:11px;">Étape 1/2 — Accès application</div>
-    </div>
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#4f8ef7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div style="color:#e2e8f0;font-size:15px;font-weight:700">OwDoo</div>
+    <div style="color:#64748b;font-size:11px;margin-bottom:4px">Connexion à l'application</div>
+    <input id="appLoginUser" type="text" placeholder="Identifiant" autocomplete="username"
+      style="width:220px;padding:10px 12px;border-radius:8px;border:1px solid #2a2f45;background:#1e2336;color:#e2e8f0;font-size:13px;outline:none"/>
+    <input id="appLoginPass" type="password" placeholder="Mot de passe" autocomplete="current-password"
+      style="width:220px;padding:10px 12px;border-radius:8px;border:1px solid #2a2f45;background:#1e2336;color:#e2e8f0;font-size:13px;outline:none"/>
+    <button id="appLoginBtn"
+      style="width:220px;padding:10px;border-radius:8px;background:#4f8ef7;color:#fff;font-size:13px;font-weight:700;border:none;cursor:pointer">
+      Se connecter
+    </button>
+    <div id="appLoginErr" style="color:#f87171;font-size:11px;min-height:16px"></div>
+    <div style="color:#334155;font-size:10px;margin-top:8px">Étape 1/2 — Accès application</div>
   `;
   document.body.appendChild(div);
   return div;
@@ -345,7 +382,7 @@ async function _doAppLogin() {
   await _ensureDefaultAdmin();
 
   // Check existing session
-  if (_restoreAppSession()) return;
+  if (await _restoreAppSession()) return;
 
   const screen = _buildAppLoginScreen();
 
@@ -466,6 +503,91 @@ async function changeAppUserRole(username, newRole) {
   await _fbPatch(`app_users/${username.toLowerCase()}`, { role: newRole });
 }
 
+async function adminEditUser(oldUsername, newUsername, newPassword) {
+  if (!isAdmin()) throw new Error("Accès refusé");
+  oldUsername = oldUsername.toLowerCase();
+  newUsername = newUsername.toLowerCase();
+
+  const users = await _fbGet("app_users");
+  const user  = users?.[oldUsername];
+  if (!user) throw new Error("Utilisateur introuvable");
+
+  const patch = {};
+
+  // تغيير اسم المستخدم
+  if (newUsername && newUsername !== oldUsername) {
+    if (users[newUsername]) throw new Error("Cet identifiant existe déjà");
+    // Firebase لا يدعم rename مباشرة → نحذف القديم وننشئ جديد
+    const newData = { ...user, username: newUsername };
+    if (newPassword) newData.password = await _hashPassword(newPassword);
+    await _fbSet(`app_users/${newUsername}`, newData);
+    await _fbDelete(`app_users/${oldUsername}`);
+    return;
+  }
+
+  // تغيير كلمة السر فقط
+  if (newPassword) {
+    patch.password = await _hashPassword(newPassword);
+    await _fbPatch(`app_users/${oldUsername}`, patch);
+  }
+}
+
+function _showAdminEditModal(username, role) {
+  const existing = document.getElementById("adminEditModal");
+  if (existing) existing.remove();
+
+  const isSelf = username === AppAuth.currentUser.username;
+
+  const modal = document.createElement("div");
+  modal.id = "adminEditModal";
+  modal.style.cssText = "position:fixed;inset:0;z-index:20000;background:#0008;display:flex;align-items:center;justify-content:center;";
+  modal.innerHTML = `
+    <div style="background:#1e2336;border:1px solid #2a2f45;border-radius:12px;padding:20px;width:270px;display:flex;flex-direction:column;gap:10px;">
+      <div style="font-size:13px;font-weight:700;color:#e2e8f0">Modifier — ${username}</div>
+      <div style="font-size:11px;color:#94a3b8">Laisser vide pour ne pas modifier</div>
+      <input id="aeNewName" type="text" placeholder="Nouvel identifiant" value="${username}"
+        style="padding:9px 12px;border-radius:7px;border:1px solid #2a2f45;background:#0f1117;color:#e2e8f0;font-size:12px;outline:none"/>
+      <input id="aeNewPass" type="password" placeholder="Nouveau mot de passe"
+        style="padding:9px 12px;border-radius:7px;border:1px solid #2a2f45;background:#0f1117;color:#e2e8f0;font-size:12px;outline:none"/>
+      <input id="aeNewPass2" type="password" placeholder="Confirmer le mot de passe"
+        style="padding:9px 12px;border-radius:7px;border:1px solid #2a2f45;background:#0f1117;color:#e2e8f0;font-size:12px;outline:none"/>
+      <div id="aeErr" style="color:#f87171;font-size:11px;min-height:14px;"></div>
+      <div style="display:flex;gap:8px;">
+        <button id="aeCancel" style="flex:1;padding:8px;border-radius:7px;background:#2a2f45;color:#94a3b8;font-size:12px;border:none;cursor:pointer;">Annuler</button>
+        <button id="aeSave" style="flex:1;padding:8px;border-radius:7px;background:#4f8ef7;color:#fff;font-size:12px;font-weight:700;border:none;cursor:pointer;">Enregistrer</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  document.getElementById("aeCancel").onclick = () => modal.remove();
+  modal.onclick = e => { if (e.target === modal) modal.remove(); };
+
+  document.getElementById("aeSave").onclick = async () => {
+    const newName = document.getElementById("aeNewName").value.trim();
+    const newPass = document.getElementById("aeNewPass").value.trim();
+    const newPass2= document.getElementById("aeNewPass2").value.trim();
+    const err     = document.getElementById("aeErr");
+    const btn     = document.getElementById("aeSave");
+
+    if (!newName) { err.textContent = "L'identifiant ne peut pas être vide"; return; }
+    if (newPass && newPass !== newPass2) { err.textContent = "Les mots de passe ne correspondent pas"; return; }
+    if (newPass && newPass.length < 4) { err.textContent = "Mot de passe trop court (min 4)"; return; }
+
+    btn.textContent = "…"; btn.disabled = true;
+    try {
+      await adminEditUser(username, newName, newPass || null);
+      err.style.color = "#22c55e";
+      err.textContent = "Modifié ✓";
+      setTimeout(() => { modal.remove(); renderUserManagementUI(); }, 900);
+    } catch(e) {
+      err.style.color = "#f87171";
+      err.textContent = e.message;
+      btn.textContent = "Enregistrer"; btn.disabled = false;
+    }
+  };
+}
+
 // ── Render User Management UI (in settings) ───────────────────
 async function renderUserManagementUI() {
   const container = document.getElementById("userManagementSection");
@@ -491,6 +613,14 @@ async function renderUserManagementUI() {
           <span style="font-size:10px;color:${roleColors[u.role]};background:${roleColors[u.role]}22;padding:1px 6px;border-radius:4px;min-width:55px;text-align:center">
             ${roleLabels[u.role]}
           </span>
+          <button onclick="_showAdminEditModal('${u.username}', '${u.role}')"
+            style="background:none;border:none;cursor:pointer;color:#4f8ef7;padding:2px 4px;border-radius:4px"
+            title="Modifier">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
           ${u.username !== AppAuth.currentUser.username ? `
             <button onclick="_deleteUserUI('${u.username}')"
               style="background:none;border:none;cursor:pointer;color:#f87171;padding:2px 4px;border-radius:4px"
@@ -564,18 +694,8 @@ async function checkAndLoginTwoStep() {
   // Post-login setup
   _addUserBadge();
   _guardSettings();
-
-  // Load permissions then apply restrictions for non-admins
-  if (!isAdmin()) {
-    await _loadRolePermissions();
-    setTimeout(_applyRoleRestrictions, 600);
-    // Re-apply on DOM changes (dynamically rendered content)
-    const obs = new MutationObserver(() => {
-      clearTimeout(obs._t);
-      obs._t = setTimeout(_applyRoleRestrictions, 150);
-    });
-    obs.observe(document.getElementById("app") || document.body, { childList: true, subtree: true });
-  }
+  // Apply role-based permissions for all non-admin roles
+  applyRolePermissions();
 }
 
 // ── Odoo session check (extracted from old _checkAndLogin) ────

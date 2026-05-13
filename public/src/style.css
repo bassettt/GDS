@@ -192,7 +192,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 .gds-table th {
   background:var(--bg2); color:var(--text2); font-weight:600;
   padding:6px 8px; text-align:left; border-bottom:1px solid var(--border);
-  white-space:nowrap;
+  white-space:normal;
 }
 .gds-table td {
   padding:5px 8px; border-bottom:1px solid var(--border);
@@ -402,11 +402,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 }
 .gds-table td:first-child,
 .gds-table th:first-child {
-  width: 30%;
-  min-width: 30%;
-  max-width: 30%;
   white-space: normal;
   word-break: break-word;
+  overflow-wrap: break-word;
 }
 #gdsPreparationContent > div:nth-child(2) {
   position: sticky;
@@ -421,3 +419,50 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   border-radius: 4px;
   font-size: 12px;
 }
+.gds-prep-main-table {
+  table-layout: auto !important;
+}
+
+/* ── Modal Prep tables (Saisir & Modifier) ── */
+.gds-prep-modal-body table.gds-table {
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
+  min-width: unset !important;
+}
+.gds-prep-modal-body table.gds-table th,
+.gds-prep-modal-body table.gds-table td {
+  white-space: normal;
+  overflow: hidden;
+}
+.gds-prep-modal-body table.gds-table th:first-child,
+.gds-prep-modal-body table.gds-table td:first-child {
+  width: 40%;
+  min-width: unset;
+  max-width: unset;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: normal;
+}
+/* S.C */
+.gds-prep-modal-body table.gds-table th:nth-child(2),
+.gds-prep-modal-body table.gds-table td:nth-child(2) { width: 7%; }
+/* S.U */
+.gds-prep-modal-body table.gds-table th:nth-child(3),
+.gds-prep-modal-body table.gds-table td:nth-child(3) { width: 6%; }
+/* A.C */
+.gds-prep-modal-body table.gds-table th:nth-child(4),
+.gds-prep-modal-body table.gds-table td:nth-child(4) { width: 7%; }
+/* A.U */
+.gds-prep-modal-body table.gds-table th:nth-child(5),
+.gds-prep-modal-body table.gds-table td:nth-child(5) { width: 6%; }
+/* Δ C / Δ U */
+.gds-prep-modal-body table.gds-table th:nth-child(6),
+.gds-prep-modal-body table.gds-table td:nth-child(6),
+.gds-prep-modal-body table.gds-table th:nth-child(7),
+.gds-prep-modal-body table.gds-table td:nth-child(7) { width: 13%; }
+/* Colis / U (saisir mode — cols 4 & 5) */
+.gds-prep-modal-body table.gds-table:not(.edit-mode) th:nth-child(4),
+.gds-prep-modal-body table.gds-table:not(.edit-mode) td:nth-child(4),
+.gds-prep-modal-body table.gds-table:not(.edit-mode) th:nth-child(5),
+.gds-prep-modal-body table.gds-table:not(.edit-mode) td:nth-child(5) { width: 14%; }
