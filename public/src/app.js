@@ -1635,26 +1635,37 @@ function gdsPrepDownloadPrepPdf() {
     });
   });
 
+  const copy = `
+    <div class="copy-header">
+      <strong>STOCK PRÉPARATION</strong>
+      <span class="sub">${date} — ${time}</span>
+    </div>
+    <table>
+      <thead><tr><th>Produit</th><th class="num">Colis</th><th class="num">U</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
   <style>
-    @page { size: A4; margin: 8mm; }
-    body { font-family: Arial, sans-serif; font-size: 12px; margin: 0; color: #000; }
-    h2 { font-size: 14px; margin: 0 0 2px; }
-    .sub { font-size: 10px; color: #555; margin-bottom: 8px; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: 10px; margin: 6mm; color: #000; }
+    .wrapper { display: flex; gap: 5mm; align-items: flex-start; }
+    .col { width: calc(50% - 2.5mm); border-right: 1px dashed #aaa; padding-right: 4mm; }
+    .col:last-child { border-right: none; padding-right: 0; }
+    .copy-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3mm; }
+    .copy-header strong { font-size: 11px; }
+    .sub { font-size: 9px; color: #555; }
     table { width: 100%; border-collapse: collapse; }
-    th { background: #f0f0f0; border: 1px solid #ccc; padding: 4px 6px; text-align: left; font-size: 11px; }
-    td { border: 1px solid #ddd; padding: 3px 6px; }
-    .num { text-align: center; width: 35px; font-size: 14px; font-weight: bold; }
-    th.num { font-size: 11px; font-weight: normal; }
-    .cat-row td { background: #e8f5e9; font-weight: bold; font-size: 10px; color: #2e7d32; }
+    th { background: #f0f0f0; border: 1px solid #ccc; padding: 2px 4px; font-size: 9px; text-align: left; }
+    td { border: 1px solid #ddd; padding: 2px 4px; font-size: 10px; word-break: break-word; white-space: normal; }
+    .num { text-align: center; width: 28px; font-weight: bold; font-size: 11px; }
+    th.num { font-size: 9px; font-weight: normal; }
+    .cat-row td { background: #e8f5e9; font-weight: bold; font-size: 9px; color: #2e7d32; }
   </style></head><body>
-  <h2>STOCK PRÉPARATION</h2>
-  <div class="sub">${date} — ${time}</div>
-  <table>
-    <thead><tr><th>Produit</th><th class="num">Colis</th><th class="num">U</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>
-  
+  <div class="wrapper">
+    <div class="col">${copy}</div>
+    <div class="col">${copy}</div>
+  </div>
   </body></html>`;
 
   const today = new Date();
@@ -2464,7 +2475,7 @@ async function gdsPrepFetchCharge() {
         body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:52, params:{
           model:"stock.picking", method:"search_read",
           args:[[["id","in",pickingIds]]],
-          kwargs:{ fields:["id","name","partner_id","date_done"], limit:500 }
+          kwargs:{ fields:["id","name","partner_id","date_done","location_dest_id"], limit:500 }
         }})
       });
       const pickRes = (await rPick.json())?.result || [];
@@ -2475,10 +2486,21 @@ async function gdsPrepFetchCharge() {
     // إضافة اسم الـ van من أول move لكل picking
     moves.forEach(m => {
       const pickId = m.picking_id?.[0];
-      if (pickId && pickingsMap[pickId] && !pickingsMap[pickId].van) {
+      if (pickId && pickingsMap[pickId]) {
         const fullPath = m.location_dest_id?.[1] || "";
-    const parts    = fullPath.split("/");
-    pickingsMap[pickId].van = parts[parts.length - 1].trim() || "—";
+        const parts    = fullPath.split("/");
+        const vanName  = parts[parts.length - 1].trim();
+        // نحدّث فقط إذا وجدنا اسماً أفضل من السابق
+        if (vanName && vanName !== "—" && (!pickingsMap[pickId].van || pickingsMap[pickId].van === "—")) {
+          pickingsMap[pickId].van = vanName;
+        }
+      }
+    });
+    // fallback: استخدام اسم الـ picking نفسه إذا لم يُعثر على van
+    Object.values(pickingsMap).forEach(p => {
+      if (!p.van || p.van === "—") {
+        const parts = (p.name || "").split("/");
+        p.van = parts[parts.length - 1].trim() || "—";
       }
     });
     }
@@ -3394,7 +3416,9 @@ function _gdsPrepDownloadPickingPdf(pickId) {
 
   const partner    = pick.partner_id?.[1] || "—";
   const ref        = pick.name            || "—";
-  const van        = pick.van             || "—";
+  const van        = pick.van && pick.van !== "—"
+    ? pick.van
+    : (pick.location_dest_id?.[1] || "").split("/").pop().trim() || "—";
   const dateDone   = pick.date_done
     ? new Date(pick.date_done).toLocaleString("fr-FR")
     : "—";
@@ -3411,9 +3435,8 @@ function _gdsPrepDownloadPickingPdf(pickId) {
   const prodMap = {};
   moves.forEach(m => {
     const pid  = m.product_id?.[0];
-    const name = m.product_id?.[1] || `pid:${pid}`;
-    // مقارنة بـ Number لتجنب String/Number mismatch
     const line = _gdsPrep.lines.find(l => Number(l.pid) === Number(pid));
+    const name = line?.name || m.product_id?.[1] || `pid:${pid}`;
     const unitSize = (line?.unitSize > 0) ? line.unitSize : (line?.carton > 0 ? line.qty / line.carton : 0);
     if (!prodMap[name]) prodMap[name] = { qty: 0, unitSize };
     prodMap[name].qty += m.qty_done || 0;
@@ -3423,71 +3446,63 @@ function _gdsPrepDownloadPickingPdf(pickId) {
     const u      = d.unitSize > 0 ? Math.round(d.unitSize) : 0;
     const carton = u > 0 ? Math.floor(d.qty / u) : "—";
     const unite  = u > 0 ? Math.round(d.qty % u) : Math.round(d.qty);
+    const cleanName = name.replace(/^\[.*?\]\s*/, "");
     return `<tr>
       <td style="text-align:center;color:#888">${idx + 1}</td>
-      <td>${name}</td>
-      <td style="text-align:center">${carton}</td>
-      <td style="text-align:center">${unite}</td>
-      ${App.settings?.showTotalU !== false ? `<td style="text-align:center">${Math.round(d.qty)}</td>` : ''}
+      <td>${cleanName}</td>
+      <td style="text-align:center;font-size:13px;font-weight:700;">${carton}</td>
+      <td style="text-align:center;font-size:13px;font-weight:700;">${unite}</td>
+      ${App.settings?.showTotalU !== false ? `<td style="text-align:center;font-size:13px;font-weight:700;">${Math.round(d.qty)}</td>` : ''}
     </tr>`;
   }).join("");
 
-  const html = `<html><head><meta charset="utf-8"><style>
-    @page { size: A4; margin: 8mm; }
-    * { box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; font-size: 10px; margin: 0; padding: 0; }
-    h2 { font-size: 13px; color: #1a6b3a; margin: 0 0 6px; }
-    .info { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; margin-bottom: 8px; font-size: 10px; color: #333; }
-    .info b { color: #000; }
-// /table
-table {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 0.875rem; /* بدل 14px */
-  table-layout: fixed;
-  break-inside: avoid;
-}
+  const tableBlock = `
+    <table>
+      <thead><tr>
+        <th style="text-align:center;width:20px">#</th>
+        <th>Produit</th>
+        <th style="text-align:center;width:40px">Colis</th>
+        <th style="text-align:center;width:40px">U</th>
+        ${App.settings?.showTotalU !== false ? '<th style="text-align:center;width:45px">Total U</th>' : ''}
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
 
-/* خلايا النص */
-td.text-cell {
-  font-size: 0.75rem; /* أصغر */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* خلايا الأرقام */
-td.num {
-  font-size: 2rem; /* أكبر */
-  font-weight: 600;
-  text-align: center;
-}
-// /
-
-
-    thead { display: table-header-group; }
-    th { background: #1a6b3a; color: #fff; padding: 4px 5px; text-align: left; border: 1px solid #1a6b3a; }
-    td { padding: 3px 5px; border: 1px solid #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    tr:nth-child(even) td { background: #f0f7f3; }
-    tr { page-break-inside: avoid; }
-  </style></head><body>
+  const infoBlock = `
     <h2>Chargement GDS</h2>
     <div class="info">
       <div><b>Contact :</b> ${partner}</div>
       <div><b>Van :</b> ${van}</div>
       <div><b>Référence :</b> ${ref}</div>
       <div><b>Date :</b> ${dateDone}</div>
-    </div>
-    <table>
-      <thead><tr>
-        <th style="text-align:center;width:24px">#</th>
-        <th>Produit</th>
-        <th style="text-align:center;width:50px">Colis</th>
-        <th style="text-align:center;width:50px">U</th>
-        ${App.settings?.showTotalU !== false ? '<th style="text-align:center;width:55px">Total U</th>' : ''}
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
+    </div>`;
+
+ const html = `<html><head><meta charset="utf-8">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    @page { size: A4 portrait; margin: 7mm; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: 9.5px; margin: 0; padding: 0; color: #111; word-spacing: 1px; }
+    td { padding: 3px 4px; border: 1px solid #d0d0d0; white-space: normal; overflow-wrap: break-word; line-height: 1.6; }
+    h2 { font-size: 14px; color: #1a6b3a; margin: 0 0 4px; font-weight: 700; }
+    .info { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-bottom: 6px; font-size: 11px; color: #444; }
+    .info div { white-space: nowrap; }
+    .info b { color: #111; font-weight: 700; }
+    .wrapper { display: flex; gap: 0; align-items: flex-start; width: 100%; }
+    .col { width: 50%; padding: 0 3mm; }
+    .col:first-child { padding-left: 0; border-right: 1.5px dashed #bbb; }
+    .col:last-child  { padding-right: 0; }
+    table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+    thead { display: table-header-group; }
+    th { background: #1a6b3a; color: #fff; padding: 4px 4px; text-align: left; font-size: 9px; font-weight: 700; border: 1px solid #1a6b3a; }
+    td { padding: 3px 4px; border: 1px solid #d0d0d0; font-size: 9px; white-space: normal; word-break: normal; overflow-wrap: break-word; line-height: 1.5; }
+    tr:nth-child(even) td { background: #f0f7f3; }
+    tr:nth-child(odd)  td { background: #fff; }
+  </style></head><body>
+  <div class="wrapper">
+    <div class="col">${infoBlock}${tableBlock}</div>
+    <div class="col">${infoBlock}${tableBlock}</div>
+  </div>
   </body></html>`;
 
   _downloadAsPdf(html, _fileName);
@@ -3495,28 +3510,57 @@ td.num {
 
 // ── PDF download helper (print dialog) ───────────────────────
 function _downloadAsPdf(htmlContent, fileName) {
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-
-  if (isMobile) {
-    const encoded = "data:text/html;charset=utf-8," + encodeURIComponent(htmlContent);
-    window.location.href = encoded;
-  } else {
-    // desktop: print dialog كالمعتاد
-    const printHtml = htmlContent.replace(
-      /<\/body>/i,
-      `<script>
-        document.title = "${fileName.replace(/"/g,'')}";
-        window.onload = function() {
-          window.print();
-          window.onafterprint = function() { window.close(); };
-        };
-      <\/script></body>`
-    );
-    const blob = new Blob([printHtml], { type: "text/html;charset=utf-8;" });
-    const url  = URL.createObjectURL(blob);
-    const w    = window.open(url, "_blank");
-    if (w) setTimeout(() => URL.revokeObjectURL(url), 10000);
+  function _loadScript(src) {
+    return new Promise((res, rej) => {
+      if (document.querySelector(`script[src="${src}"]`)) return res();
+      const s = document.createElement("script");
+      s.src = src; s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
   }
+
+  addNotif("⏳ Génération du PDF...", "info");
+
+  Promise.all([
+    _loadScript("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"),
+    _loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js")
+  ]).then(() => {
+    const A4_W = 794, A4_H = 1123; // A4 portrait px at 96dpi
+
+    const iframe = document.createElement("iframe");
+    iframe.style.cssText = `position:fixed;top:-9999px;left:-9999px;width:${A4_W}px;height:1px;border:none;`;
+    document.body.appendChild(iframe);
+    iframe.contentDocument.open();
+    iframe.contentDocument.write(htmlContent);
+    iframe.contentDocument.close();
+
+    setTimeout(() => {
+      const body = iframe.contentDocument.body;
+      // انتظار تحميل الخطوط
+      (iframe.contentDocument.fonts ? iframe.contentDocument.fonts.ready : Promise.resolve()).then(() => {
+      const totalH = body.scrollHeight;
+      iframe.style.height = totalH + "px";
+
+      html2canvas(body, { scale: 2, useCORS: true, width: A4_W, windowWidth: A4_W }).then(canvas => {
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ orientation: "portrait", unit: "px", format: [A4_W, A4_H] });
+        const imgData = canvas.toDataURL("image/jpeg", 0.95);
+        const imgH = (canvas.height * A4_W) / canvas.width;
+        let y = 0;
+        while (y < imgH) {
+          if (y > 0) pdf.addPage([A4_W, A4_H]);
+          pdf.addImage(imgData, "JPEG", 0, -y, A4_W, imgH);
+          y += A4_H;
+        }
+        pdf.save(fileName.endsWith(".pdf") ? fileName : fileName + ".pdf");
+        document.body.removeChild(iframe);
+        addNotif("✓ PDF téléchargé", "success");
+      });
+      }); // fonts.ready
+    }, 800);
+  }).catch(() => {
+    addNotif("⚠ Erreur chargement librairies PDF", "error");
+  });
 }
 
 //////////// fin prep

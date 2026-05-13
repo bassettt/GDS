@@ -1,5 +1,5 @@
 {
-  "name": "gds-wfa",
+  "name": "gds-wafa",
   "version": "1.0.0",
   "description": "Wafa PWA — Odoo Proxy + Static Server",
   "main": "server.js",
