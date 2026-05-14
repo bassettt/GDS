@@ -1292,7 +1292,7 @@ const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
         Nouvelle préparation
       </button>`}
     <span class="gds-last-updated" id="gdsPrepStatus">
-      ${hasData ? _gdsPrep.lines.length + " produits" : "Cliquez sur Nouvelle préparation"}
+  <!--    ${hasData ? _gdsPrep.lines.length + " produits" : ""}-->
     </span>
     <div id="gdsPrepNewBar" style="display:none;">
       <button class="gds-refresh-btn" data-perm="prep_rapport" style="background:var(--accent);" onclick="gdsPrepExportCurrent()">⬇ Rapport</button>
@@ -3329,53 +3329,98 @@ function _gdsPrepExportXlsx() {
 
   if (!Object.keys(byCateg).length) return;
 
-  let rows = "";
+  const rs = App.settings || {};
+  const rC = (k, def=true) => rs[k] ?? def;
+  const _rptFontP  = rs.rptFontProduct ?? 10;
+  const _rptFontQ  = rs.rptFontQty     ?? 11;
+  const _rptPad    = rs.rptRowPadding  ?? 3;
+  const _rptCols   = rs.rptColumns     ?? 1;
+
+  // عدد الأعمدة الديناميكي لـ colspan
+  const colCount = 1
+    + (rC("rptColPrepCarton") ? 1:0) + (rC("rptColPrepUnite")  ? 1:0)
+    + (rC("rptColChargCarton")? 1:0) + (rC("rptColChargUnite") ? 1:0)
+    + (rC("rptColResteCarton")? 1:0) + (rC("rptColResteUnite") ? 1:0)
+    + (rC("rptColCheck")      ? 1:0) + (rC("rptColEcart")      ? 1:0)
+    + (rC("rptColQty")        ? 1:0);
+
+  const thead = `<thead><tr>
+    <th>Produit</th>
+    ${rC("rptColPrepCarton")  ? '<th class="num">Prép C</th>'   : ''}
+    ${rC("rptColPrepUnite")   ? '<th class="num">Prép U</th>'   : ''}
+    ${rC("rptColChargCarton") ? '<th class="num">Charg C</th>'  : ''}
+    ${rC("rptColChargUnite")  ? '<th class="num">Charg U</th>'  : ''}
+    ${rC("rptColResteCarton") ? '<th class="num">Reste C</th>'  : ''}
+    ${rC("rptColResteUnite")  ? '<th class="num">Reste U</th>'  : ''}
+    ${rC("rptColCheck")       ? '<th class="num">✓</th>'        : ''}
+    ${rC("rptColEcart")       ? '<th class="num">Écart</th>'    : ''}
+    ${rC("rptColQty")         ? '<th class="num">Qty</th>'      : ''}
+  </tr></thead>`;
+
+  let allRows = [];
   _sortCats(Object.keys(byCateg)).forEach(cat => {
-    const items = byCateg[cat];
-    rows += `<tr class="cat-row"><td colspan="9">${cat}</td></tr>`;
-    items.forEach(({ line, u, ch, prepTotal, resteCarton, resteUnite, resteTotal }) => {
-      const resteColor = resteTotal === 0 ? "#16a34a" : resteTotal < 0 ? "#dc2626" : "#0ea5e9";
-      rows += `<tr>
-        <td>${line.name}</td>
-        <td class="num">${line.prepCarton || "—"}</td>
-        <td class="num">${line.prepUnite  || "—"}</td>
-        <td class="num">${ch.chargeCarton || "—"}</td>
-        <td class="num">${ch.chargeUnite  || "—"}</td>
-        <td class="num" style="color:${resteColor};font-weight:700;">${resteCarton !== 0 ? resteCarton : (resteTotal===0?"0":"—")}</td>
-        <td class="num" style="color:${resteColor};font-weight:700;">${resteUnite  !== 0 ? resteUnite  : (resteTotal===0?"0":"—")}</td>
-        <td class="num">${line.check ? "✓" : ""}</td>
-        <td class="num">${line.ecart != null ? line.ecart : ""}</td>
-      </tr>`;
-    });
+    allRows.push({ type: "cat", cat });
+    byCateg[cat].forEach(item => allRows.push({ type: "row", ...item }));
   });
+
+  const buildRow = (item, idx) => {
+    if (item.type === "cat") {
+      return `<tr class="cat-row"><td colspan="${colCount}">${item.cat}</td></tr>`;
+    }
+    const { line, ch, resteCarton, resteUnite, resteTotal } = item;
+    const resteColor = resteTotal === 0 ? "#16a34a" : resteTotal < 0 ? "#dc2626" : "#0ea5e9";
+    return `<tr>
+      <td style="font-size:${_rptFontP}px">${line.name}</td>
+      ${rC("rptColPrepCarton")  ? `<td class="num" style="font-size:${_rptFontQ}px">${line.prepCarton||"—"}</td>` : ''}
+      ${rC("rptColPrepUnite")   ? `<td class="num" style="font-size:${_rptFontQ}px">${line.prepUnite ||"—"}</td>` : ''}
+      ${rC("rptColChargCarton") ? `<td class="num" style="font-size:${_rptFontQ}px">${ch.chargeCarton||"—"}</td>` : ''}
+      ${rC("rptColChargUnite")  ? `<td class="num" style="font-size:${_rptFontQ}px">${ch.chargeUnite ||"—"}</td>` : ''}
+      ${rC("rptColResteCarton") ? `<td class="num" style="font-size:${_rptFontQ}px;color:${resteColor};font-weight:700">${resteCarton!==0?resteCarton:(resteTotal===0?"0":"—")}</td>` : ''}
+      ${rC("rptColResteUnite")  ? `<td class="num" style="font-size:${_rptFontQ}px;color:${resteColor};font-weight:700">${resteUnite !==0?resteUnite :(resteTotal===0?"0":"—")}</td>` : ''}
+      ${rC("rptColCheck")       ? `<td class="num" style="font-size:${_rptFontQ}px">${line.check?"✓":""}</td>`    : ''}
+      ${rC("rptColEcart")       ? `<td class="num" style="font-size:${_rptFontQ}px">${line.ecart!=null?line.ecart:""}</td>` : ''}
+      ${rC("rptColQty")         ? `<td class="num" style="font-size:${_rptFontQ}px">${line.qty!=null?line.qty:""}</td>`     : ''}
+    </tr>`;
+  };
+
+  let bodyHtml;
+  if (_rptCols === 2) {
+    const half = Math.ceil(allRows.length / 2);
+    const left  = allRows.slice(0, half).map(buildRow).join("");
+    const right = allRows.slice(half).map(buildRow).join("");
+    bodyHtml = `
+      <div style="display:flex;gap:4mm;align-items:flex-start;">
+        <div style="width:calc(50% - 2mm);border-right:1px dashed #aaa;padding-right:4mm;">
+          <table><${thead}<tbody>${left}</tbody></table>
+        </div>
+        <div style="width:calc(50% - 2mm);">
+          <table><${thead}<tbody>${right}</tbody></table>
+        </div>
+      </div>`;
+  } else {
+    const rows = allRows.map(buildRow).join("");
+    bodyHtml = `<table><${thead}<tbody>${rows}</tbody></table>`;
+  }
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
   <style>
     @page { size: A4; margin: 8mm; }
-    body { font-family: Arial, sans-serif; font-size: 11px; margin: 0; color: #000; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: ${_rptFontP}px; margin: 0; color: #000; }
     h2 { font-size: 14px; margin: 0 0 2px; color: #1a6b3a; }
     .sub { font-size: 10px; color: #555; margin-bottom: 8px; }
-    table { width: 100%; border-collapse: collapse; }
-    th { background: #1a6b3a; color: #fff; border: 1px solid #1a6b3a; padding: 4px 5px; text-align: left; font-size: 10px; }
-    td { border: 1px solid #ccc; padding: 3px 5px; }
-    .num { text-align: center; width: 40px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th { background: #1a6b3a; color: #fff; border: 1px solid #1a6b3a; padding: ${_rptPad}px 4px; text-align: left; font-size: ${_rptFontP}px; }
+    td { border: 1px solid #ccc; padding: ${_rptPad}px 4px; word-break: break-word; white-space: normal; }
+    .num { text-align: center; width: 36px; }
     tr:nth-child(even) td { background: #f0f7f3; }
-    .cat-row td { background: #1a6b3a; color: #fff; font-weight: bold; font-size: 10px; }
+    .cat-row td { background: #1a6b3a; color: #fff; font-weight: bold; font-size: ${_rptFontP}px; }
     tr { page-break-inside: avoid; }
     thead { display: table-header-group; }
   </style></head><body>
   <h2>RAPPORT PRÉPARATION GDS</h2>
   <div class="sub">${date} — ${time}</div>
-  <table>
-    <thead><tr>
-      <th>Produit</th>
-      <th class="num">Prép Colis</th><th class="num">Prép U</th>
-      <th class="num">Charg Colis</th><th class="num">Charg U</th>
-      <th class="num">Reste Colis</th><th class="num">Reste U</th>
-      <th class="num">✓</th><th class="num">Écart</th>
-    </tr></thead>
-    <tbody>${rows}</tbody>
-  </table>
+  ${bodyHtml}
   </body></html>`;
 
   _downloadAsPdf(html, `rapport_preparation_gds_${dd}-${mm}-${yyyy}`);
@@ -3442,17 +3487,31 @@ function _gdsPrepDownloadPickingPdf(pickId) {
     prodMap[name].qty += m.qty_done || 0;
   });
 
-  const rows = Object.entries(prodMap).map(([name, d], idx) => {
+  const categoryOrder = App.settings?.categoryOrder || [];
+
+  const sortedEntries = Object.entries(prodMap).sort(([nameA], [nameB]) => {
+    const lineA = _gdsPrep.lines.find(l => l.name === nameA);
+    const lineB = _gdsPrep.lines.find(l => l.name === nameB);
+    const catA  = lineA?.categ || "";
+    const catB  = lineB?.categ || "";
+    const idxA  = categoryOrder.indexOf(catA);
+    const idxB  = categoryOrder.indexOf(catB);
+    const rankA = idxA === -1 ? 9999 : idxA;
+    const rankB = idxB === -1 ? 9999 : idxB;
+    return rankA - rankB;
+  });
+
+  const rows = sortedEntries.map(([name, d], idx) => {
     const u      = d.unitSize > 0 ? Math.round(d.unitSize) : 0;
     const carton = u > 0 ? Math.floor(d.qty / u) : "—";
     const unite  = u > 0 ? Math.round(d.qty % u) : Math.round(d.qty);
     const cleanName = name.replace(/^\[.*?\]\s*/, "");
     return `<tr>
       <td style="text-align:center;color:#888">${idx + 1}</td>
-      <td>${cleanName}</td>
-      <td style="text-align:center;font-size:13px;font-weight:700;">${carton}</td>
-      <td style="text-align:center;font-size:13px;font-weight:700;">${unite}</td>
-      ${App.settings?.showTotalU !== false ? `<td style="text-align:center;font-size:13px;font-weight:700;">${Math.round(d.qty)}</td>` : ''}
+      <td style="font-size:${App.settings?.pdfFontProduct??10}px;">${cleanName}</td>
+      <td style="text-align:center;font-size:${App.settings?.pdfFontQty??13}px;font-weight:700;">${carton}</td>
+      <td style="text-align:center;font-size:${App.settings?.pdfFontQty??13}px;font-weight:700;">${unite}</td>
+      ${App.settings?.showTotalU !== false ? `<td style="text-align:center;font-size:${App.settings?.pdfFontQty??13}px;font-weight:700;">${Math.round(d.qty)}</td>` : ''}
     </tr>`;
   }).join("");
 
@@ -3477,32 +3536,35 @@ function _gdsPrepDownloadPickingPdf(pickId) {
       <div><b>Date :</b> ${dateDone}</div>
     </div>`;
 
- const html = `<html><head><meta charset="utf-8">
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;700&display=swap" rel="stylesheet">
+ const _cols     = App.settings?.pdfColumns ?? 2;
+  const _rowPad   = App.settings?.pdfRowPadding ?? 1;
+
+  const wrapperHtml = _cols === 1
+    ? `<div class="wrapper single">${infoBlock}${tableBlock}</div>`
+    : `<div class="wrapper"><div class="col">${infoBlock}${tableBlock}</div><div class="col">${infoBlock}${tableBlock}</div></div>`;
+
+  const html = `<html><head><meta charset="utf-8">
   <style>
     @page { size: A4 portrait; margin: 7mm; }
     * { box-sizing: border-box; }
     body { font-family: Arial, sans-serif; font-size: 9.5px; margin: 0; padding: 0; color: #111; word-spacing: 1px; }
-    td { padding: 3px 4px; border: 1px solid #d0d0d0; white-space: normal; overflow-wrap: break-word; line-height: 1.6; }
     h2 { font-size: 14px; color: #1a6b3a; margin: 0 0 4px; font-weight: 700; }
     .info { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-bottom: 6px; font-size: 11px; color: #444; }
     .info div { white-space: nowrap; }
     .info b { color: #111; font-weight: 700; }
     .wrapper { display: flex; gap: 0; align-items: flex-start; width: 100%; }
+    .wrapper.single { display: block; }
     .col { width: 50%; padding: 0 3mm; }
     .col:first-child { padding-left: 0; border-right: 1.5px dashed #bbb; }
     .col:last-child  { padding-right: 0; }
     table { border-collapse: collapse; width: 100%; table-layout: fixed; }
     thead { display: table-header-group; }
     th { background: #1a6b3a; color: #fff; padding: 4px 4px; text-align: left; font-size: 9px; font-weight: 700; border: 1px solid #1a6b3a; }
-    td { padding: 3px 4px; border: 1px solid #d0d0d0; font-size: 9px; white-space: normal; word-break: normal; overflow-wrap: break-word; line-height: 1.5; }
+    td { padding: ${_rowPad}px 4px; border: 1px solid #d0d0d0; font-size: 9px; white-space: normal; word-break: normal; overflow-wrap: break-word; line-height: 1.2; }
     tr:nth-child(even) td { background: #f0f7f3; }
     tr:nth-child(odd)  td { background: #fff; }
   </style></head><body>
-  <div class="wrapper">
-    <div class="col">${infoBlock}${tableBlock}</div>
-    <div class="col">${infoBlock}${tableBlock}</div>
-  </div>
+  ${wrapperHtml}
   </body></html>`;
 
   _downloadAsPdf(html, _fileName);
@@ -3655,8 +3717,25 @@ async function saveSettings() {
   const s = App.settings;
   const saveMsg = document.getElementById("saveMsg");
 
-  s.vendors = (s.vendors||[]).filter(v => v.name.trim());
-  s.showTotalU = document.getElementById("toggleTotalU")?.checked ?? true;
+s.vendors        = (s.vendors||[]).filter(v => v.name.trim());
+  s.showTotalU     = document.getElementById("toggleTotalU")?.checked ?? true;
+  s.pdfColumns     = parseInt(document.getElementById("pdfColumns")?.value     || "2");
+  s.pdfFontProduct = parseInt(document.getElementById("pdfFontProduct")?.value || "10");
+  s.pdfFontQty     = parseInt(document.getElementById("pdfFontQty")?.value     || "13");
+  s.pdfRowPadding    = parseInt(document.getElementById("pdfRowPadding")?.value  || "1");
+  s.rptColumns       = parseInt(document.getElementById("rptColumns")?.value     || "1");
+  s.rptFontProduct   = parseInt(document.getElementById("rptFontProduct")?.value || "10");
+  s.rptFontQty       = parseInt(document.getElementById("rptFontQty")?.value     || "11");
+  s.rptRowPadding    = parseInt(document.getElementById("rptRowPadding")?.value  || "3");
+  s.rptColPrepCarton = document.getElementById("rptColPrepCarton")?.checked ?? true;
+  s.rptColPrepUnite  = document.getElementById("rptColPrepUnite")?.checked  ?? true;
+  s.rptColChargCarton= document.getElementById("rptColChargCarton")?.checked?? true;
+  s.rptColChargUnite = document.getElementById("rptColChargUnite")?.checked ?? true;
+  s.rptColResteCarton= document.getElementById("rptColResteCarton")?.checked?? true;
+  s.rptColResteUnite = document.getElementById("rptColResteUnite")?.checked ?? true;
+  s.rptColCheck      = document.getElementById("rptColCheck")?.checked      ?? true;
+  s.rptColEcart      = document.getElementById("rptColEcart")?.checked      ?? true;
+  s.rptColQty        = document.getElementById("rptColQty")?.checked        ?? true;
 
   await Storage.saveSettings(s);
   // حفظ سحابي على Firebase
@@ -3664,7 +3743,27 @@ async function saveSettings() {
     await fetch(`${_FB_DB_URL}/settings.json`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ categoryOrder: s.categoryOrder || [], showTotalU: s.showTotalU })
+      body: JSON.stringify({
+        categoryOrder:   s.categoryOrder  || [],
+        showTotalU:      s.showTotalU,
+        pdfColumns:      s.pdfColumns,
+        pdfFontProduct:  s.pdfFontProduct,
+        pdfFontQty:      s.pdfFontQty,
+        pdfRowPadding:    s.pdfRowPadding,
+        rptColumns:       s.rptColumns,
+        rptFontProduct:   s.rptFontProduct,
+        rptFontQty:       s.rptFontQty,
+        rptRowPadding:    s.rptRowPadding,
+        rptColPrepCarton: s.rptColPrepCarton,
+        rptColPrepUnite:  s.rptColPrepUnite,
+        rptColChargCarton:s.rptColChargCarton,
+        rptColChargUnite: s.rptColChargUnite,
+        rptColResteCarton:s.rptColResteCarton,
+        rptColResteUnite: s.rptColResteUnite,
+        rptColCheck:      s.rptColCheck,
+        rptColEcart:      s.rptColEcart,
+        rptColQty:        s.rptColQty
+      })
     });
   } catch(e) { console.warn("Firebase save failed:", e); }
   if (saveMsg) { saveMsg.textContent="Sauvegardé ✓"; saveMsg.className="save-msg ok"; setTimeout(()=>{ saveMsg.textContent=""; }, 2000); }
@@ -3698,11 +3797,35 @@ function bindEvents() {
   document.getElementById("viewSettings").style.display = "flex";
   renderCategoryOrderUI();
   const tog = document.getElementById("toggleTotalU");
-  if (tog) {
-    const fb = await fetch(`${_FB_DB_URL}/settings.json`).then(r=>r.json()).catch(()=>null);
-    if (fb?.showTotalU !== undefined) App.settings.showTotalU = fb.showTotalU;
-    tog.checked = App.settings?.showTotalU !== false;
+  const fb = await fetch(`${_FB_DB_URL}/settings.json`).then(r=>r.json()).catch(()=>null);
+  if (fb) {
+    if (fb.showTotalU     !== undefined) App.settings.showTotalU     = fb.showTotalU;
+    if (fb.pdfColumns     !== undefined) App.settings.pdfColumns     = fb.pdfColumns;
+    if (fb.pdfFontProduct !== undefined) App.settings.pdfFontProduct = fb.pdfFontProduct;
+    if (fb.pdfFontQty     !== undefined) App.settings.pdfFontQty     = fb.pdfFontQty;
+    if (fb.pdfRowPadding  !== undefined) App.settings.pdfRowPadding  = fb.pdfRowPadding;
   }
+  if (tog) tog.checked = App.settings?.showTotalU !== false;
+  const s = App.settings || {};
+  const elSet = (id, val) => { const e = document.getElementById(id); if(e) e.value = val; };
+  elSet("pdfColumns",      s.pdfColumns      ?? 2);
+  elSet("pdfFontProduct",  s.pdfFontProduct  ?? 10);
+  elSet("pdfFontQty",      s.pdfFontQty      ?? 13);
+  elSet("pdfRowPadding",   s.pdfRowPadding   ?? 1);
+  elSet("rptColumns",      s.rptColumns      ?? 1);
+  elSet("rptFontProduct",  s.rptFontProduct  ?? 10);
+  elSet("rptFontQty",      s.rptFontQty      ?? 11);
+  elSet("rptRowPadding",   s.rptRowPadding   ?? 3);
+  const chk = (id, val) => { const e = document.getElementById(id); if(e) e.checked = val; };
+  chk("rptColPrepCarton",  s.rptColPrepCarton  ?? true);
+  chk("rptColPrepUnite",   s.rptColPrepUnite   ?? true);
+  chk("rptColChargCarton", s.rptColChargCarton ?? true);
+  chk("rptColChargUnite",  s.rptColChargUnite  ?? true);
+  chk("rptColResteCarton", s.rptColResteCarton ?? true);
+  chk("rptColResteUnite",  s.rptColResteUnite  ?? true);
+  chk("rptColCheck",       s.rptColCheck       ?? true);
+  chk("rptColEcart",       s.rptColEcart       ?? true);
+  chk("rptColQty",         s.rptColQty         ?? true);
 });
 if (isAdmin()) {
   const container = document.getElementById("userManagementContainer");
@@ -3721,12 +3844,15 @@ if (isAdmin()) {
   document.getElementById("btnRefreshCats")?.addEventListener("click", renderCategoryOrderUI);
   document.getElementById("toggleTotalU")?.addEventListener("change", e => {
     App.settings.showTotalU = e.target.checked;
-    Storage.saveSettings(App.settings);
-    fetch(`${_FB_DB_URL}/settings.json`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ categoryOrder: App.settings.categoryOrder || [], showTotalU: App.settings.showTotalU })
-    }).catch(e => console.warn("Firebase save failed:", e));
+    saveSettings();
+  });
+
+  ["pdfColumns","pdfFontProduct","pdfFontQty","pdfRowPadding",
+   "rptColumns","rptFontProduct","rptFontQty","rptRowPadding",
+   "rptColPrepCarton","rptColPrepUnite","rptColChargCarton","rptColChargUnite",
+   "rptColResteCarton","rptColResteUnite","rptColCheck","rptColEcart","rptColQty"
+  ].forEach(id => {
+    document.getElementById(id)?.addEventListener("change", () => saveSettings());
   });
 
 }
