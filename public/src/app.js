@@ -348,9 +348,10 @@ async function renderGdsTransferts() {
         <td style="color:var(--text2)">${escHtml(partner)}</td>
         <td style="color:var(--text3)">${date}</td>
         <td><span class="gds-tr-state" style="background:${st.color}20;color:${st.color}">${st.label}</span></td>
-        <td style="display:flex;gap:4px;align-items:center;">
-          <button class="gds-refresh-btn" onclick="window.open((ODOO_BASE||'')+'/web#id=${t.id}&action=233&active_id=76&model=stock.picking&view_type=form&cids=1&menu_id=115','_blank')" style="padding:2px 8px;">↗</button>
-          <button class="gds-refresh-btn" style="padding:2px 8px;background:var(--bg3);color:var(--text);" onclick="gdsShowPickingDetail(${t.id},'${escHtml(t.name)}')">☰</button>
+        <td class="gds-tr-action-cell">
+          <button class="gds-refresh-btn gds-tr-action-btn" onclick="window.open((ODOO_BASE||'')+'/web#id=${t.id}&action=233&active_id=76&model=stock.picking&view_type=form&cids=1&menu_id=115','_blank')">↗</button>
+          <button class="gds-refresh-btn gds-tr-action-btn" style="background:var(--bg3);color:var(--text);" onclick="gdsShowPickingDetail(${t.id},'${escHtml(t.name)}')">☰</button>
+          <button class="gds-refresh-btn gds-tr-action-btn" title="Copier la référence" style="background:var(--bg3);color:var(--text2);" onclick="(b=>{navigator.clipboard.writeText('${escHtml(t.name)}').then(()=>{b.textContent='✓';b.style.color='#22c55e';setTimeout(()=>{b.textContent='⎘';b.style.color='';},1200)})})(this)">⎘</button>
         </td>
       </tr>`;
     });
@@ -374,6 +375,14 @@ async function renderGdsTransferts() {
       </button>
       <span class="gds-last-updated">Mis à jour : ${now} — ${transfers.length} transfert(s)</span>
     </div>
+    <style>
+      .gds-tr-action-cell { display:flex; gap:4px; align-items:center; }
+      .gds-tr-action-btn  { padding:2px 8px; }
+      @media (max-width:600px) {
+        .gds-tr-action-cell { flex-direction:column; gap:2px; }
+        .gds-tr-action-btn  { padding:2px 4px; font-size:11px; }
+      }
+    </style>
     <div style="overflow-x:auto">
       <table class="gds-table gds-tr-table">
         <thead><tr>
@@ -644,7 +653,16 @@ async function renderGdsStock() {
           ${escapedCat}
         </div>
         <div id="gdsbody_${escapedCat}" style="display:${isCollapsed ? "none" : ""}">
-          <table class="gds-table">
+          <table class="gds-table" style="table-layout:fixed;width:100%">
+            <colgroup>
+              <col style="width:35%"/>
+              <col style="width:65px"/>
+              <col style="width:55px"/>
+              <col style="width:40px"/>
+              <col style="width:80px"/>
+              <col style="width:60px"/>
+              <col style="width:40px"/>
+            </colgroup>
             <thead><tr>
               <th>Produit</th>
               <th style="text-align:right">Stock Colis</th>
@@ -831,7 +849,16 @@ async function renderGdsVans() {
         cats.forEach(cat => {
           const items = van.categories[cat].sort((a,b) => a.name.localeCompare(b.name));
           html += `<div class="gds-van-cat-label">${escHtml(cat)}</div>
-            <table class="gds-table">
+            <table class="gds-table" style="table-layout:fixed;width:100%">
+              <colgroup>
+                <col style="width:35%"/>
+                <col style="width:65px"/>
+                <col style="width:55px"/>
+                <col style="width:40px"/>
+                <col style="width:80px"/>
+                <col style="width:60px"/>
+                <col style="width:40px"/>
+              </colgroup>
               <thead><tr>
                 <th>Produit</th>
                 <th style="text-align:right">Stock Colis</th>
@@ -2182,7 +2209,13 @@ function _gdsPrepUpdateExcluBtn() {
 }
 
 function _gdsPrepShowExcludeList() {
-  document.getElementById("gdsPrepExcluModal")?.remove();
+  // حفظ scroll إذا كان الـ modal مفتوحاً مسبقاً
+  const existingModal = document.getElementById("gdsPrepExcluModal");
+  const prevScroll = existingModal
+    ? (existingModal.querySelector("div[style*='overflow-y']")?.scrollTop || 0)
+    : 0;
+  existingModal?.remove();
+
   const modal = document.createElement("div");
   modal.id = "gdsPrepExcluModal";
   modal.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;";
@@ -2194,23 +2227,20 @@ function _gdsPrepShowExcludeList() {
     : allPickings.map(p => {
         const isExcluded = _gdsPrep.excludedPickings.includes(p.name);
         const partner = (p.partner_id?.[1] || "—").replace(/^LIVREUR\s*/i, "").trim();
-        const toggleId = "exclu_tog_" + p.name.replace(/\W/g,"_");
+        const safeId  = p.name.replace(/\W/g,"_");
         return `
           <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);">
             <div style="display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;">
-              <span style="font-size:12px;color:${isExcluded ? 'var(--text3)' : 'var(--text)'};text-decoration:${isExcluded ? 'line-through' : 'none'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.name}</span>
+              <span id="exclu_name_${safeId}" style="font-size:12px;color:${isExcluded ? 'var(--text3)' : 'var(--text)'};text-decoration:${isExcluded ? 'line-through' : 'none'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.name}</span>
               <span style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${partner}</span>
             </div>
-            <label for="${toggleId}" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-left:12px;flex-shrink:0;">
-              <span style="font-size:10px;color:${isExcluded ? 'var(--red)' : 'var(--green)'};">${isExcluded ? 'Exclu' : 'Inclus'}</span>
+            <div style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-left:12px;flex-shrink:0;" onclick="_gdsPrepToggleExcludeByName('${p.name.replace(/'/g,"\\'")}')">
+              <span id="exclu_label_${safeId}" style="font-size:10px;color:${isExcluded ? 'var(--red)' : 'var(--green)'};">${isExcluded ? 'Exclu' : 'Inclus'}</span>
               <div style="position:relative;width:36px;height:20px;flex-shrink:0;">
-                <input type="checkbox" id="${toggleId}" ${isExcluded ? '' : 'checked'}
-                  onchange="_gdsPrepToggleExcludeByName('${p.name}', !this.checked)"
-                  style="opacity:0;width:0;height:0;position:absolute;"/>
-                <div style="position:absolute;inset:0;border-radius:20px;background:${isExcluded ? 'var(--border)' : 'var(--green)'};transition:background .2s;"></div>
-                <div style="position:absolute;top:2px;left:${isExcluded ? '2px' : '18px'};width:16px;height:16px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 4px #0004;"></div>
+                <div id="exclu_track_${safeId}" style="position:absolute;inset:0;border-radius:20px;background:${isExcluded ? 'var(--border)' : 'var(--green)'};transition:background .2s;"></div>
+                <div id="exclu_thumb_${safeId}" style="position:absolute;top:2px;left:${isExcluded ? '2px' : '18px'};width:16px;height:16px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 4px #0004;"></div>
               </div>
-            </label>
+            </div>
           </div>`;
       }).join("");
 
@@ -2220,27 +2250,61 @@ function _gdsPrepShowExcludeList() {
         <span style="font-weight:600;font-size:13px;">Transferts (${allPickings.length})</span>
         <button onclick="document.getElementById('gdsPrepExcluModal').remove()" style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--text2);">✕</button>
       </div>
-      <div style="padding:10px 14px;max-height:360px;overflow-y:auto;">${rows}</div>
+      <div id="gdsPrepExcluScroll" style="padding:10px 14px;max-height:360px;overflow-y:auto;">${rows}</div>
       <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;">
         ${_gdsPrep.excludedPickings.length ? `<button class="gds-refresh-btn" style="background:var(--red);" onclick="_gdsPrepClearExcludes()">Tout inclure</button>` : ""}
         <button class="gds-refresh-btn" style="background:var(--text3);" onclick="document.getElementById('gdsPrepExcluModal').remove()">Fermer</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
+
+  // إرجاع الـ scroll
+  if (prevScroll > 0) {
+    requestAnimationFrame(() => {
+      const scrollEl = document.getElementById("gdsPrepExcluScroll");
+      if (scrollEl) scrollEl.scrollTop = prevScroll;
+    });
+  }
 }
 
-function _gdsPrepToggleExcludeByName(ref, shouldExclude) {
-  if (shouldExclude) {
-    if (!_gdsPrep.excludedPickings.includes(ref)) {
-      _gdsPrep.excludedPickings.push(ref);
-    }
+function _gdsPrepToggleExcludeByName(ref) {
+  const isExcluded = _gdsPrep.excludedPickings.includes(ref);
+  if (isExcluded) {
+    _gdsPrep.excludedPickings = _gdsPrep.excludedPickings.filter(r => r !== ref);
   } else {
-    const i = _gdsPrep.excludedPickings.indexOf(ref);
-    if (i !== -1) _gdsPrep.excludedPickings.splice(i, 1);
+    _gdsPrep.excludedPickings.push(ref);
   }
+  const nowExcluded = _gdsPrep.excludedPickings.includes(ref);
   _gdsPrepUpdateExcluBtn();
   _gdsPrepSave();
-  _gdsPrepShowExcludeList();
+
+  // تحديث الـ UI مباشرة بدون إعادة بناء الـ modal
+  const safeId = ref.replace(/\W/g,"_");
+  const nameEl  = document.getElementById("exclu_name_"  + safeId);
+  const labelEl = document.getElementById("exclu_label_" + safeId);
+  const track   = document.getElementById("exclu_track_" + safeId);
+  const thumb   = document.getElementById("exclu_thumb_" + safeId);
+  if (nameEl)  { nameEl.style.color = nowExcluded ? "var(--text3)" : "var(--text)"; nameEl.style.textDecoration = nowExcluded ? "line-through" : "none"; }
+  if (labelEl) { labelEl.textContent = nowExcluded ? "Exclu" : "Inclus"; labelEl.style.color = nowExcluded ? "var(--red)" : "var(--green)"; }
+  if (track)   track.style.background = nowExcluded ? "var(--border)" : "var(--green)";
+  if (thumb)   thumb.style.left = nowExcluded ? "2px" : "18px";
+
+  // تحديث زر "Tout inclure" في footer
+  const footer = document.querySelector("#gdsPrepExcluModal > div > div:last-child");
+  if (footer) {
+    const clearBtn = footer.querySelector("button[onclick*='ClearExcludes']");
+    if (_gdsPrep.excludedPickings.length && !clearBtn) {
+      const fermerBtn = footer.querySelector("button:last-child");
+      const btn = document.createElement("button");
+      btn.className = "gds-refresh-btn";
+      btn.style.background = "var(--red)";
+      btn.setAttribute("onclick","_gdsPrepClearExcludes()");
+      btn.textContent = "Tout inclure";
+      footer.insertBefore(btn, fermerBtn);
+    } else if (!_gdsPrep.excludedPickings.length && clearBtn) {
+      clearBtn.remove();
+    }
+  }
 }
 
 function _gdsPrepRemoveExclude(i) {

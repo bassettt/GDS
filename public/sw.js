@@ -1,5 +1,5 @@
 // sw.js — Wafa PWA Service Worker
-const CACHE = "wafa-v2";
+const CACHE = "wafa-v3";
 const ASSETS = [
   "/",
   "/index.html",
@@ -14,7 +14,11 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(CACHE)
+      .then(c => c.addAll(ASSETS))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", e => {
@@ -26,12 +30,36 @@ self.addEventListener("activate", e => {
 });
 
 self.addEventListener("fetch", e => {
-  // Pass through API / Odoo requests — never cache
   const url = new URL(e.request.url);
-if (url.pathname.startsWith("/api/") || url.pathname.includes("/web/image")) {
-    return; // let browser handle
+
+  // API و Odoo — لا تخزن أبداً
+  if (url.pathname.startsWith("/api/") || url.pathname.includes("/web/image")) {
+    return;
   }
+
+  // ملفات JS و CSS و HTML — Network First (السيرفر أولاً، الكاش احتياطي)
+  if (
+    url.pathname.endsWith(".js") ||
+    url.pathname.endsWith(".css") ||
+    url.pathname.endsWith(".html") ||
+    url.pathname === "/"
+  ) {
+    e.respondWith(
+      fetch(e.request)
+        .then(res => {
+          // حدّث الكاش بالنسخة الجديدة
+          const clone = res.clone();
+          caches.open(CACHE).then(c => c.put(e.request, clone));
+          return res;
+        })
+        .catch(() => caches.match(e.request))
+    );
+    return;
+  }
+
+  // باقي الملفات (صور، fonts...) — Cache First
   e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request).catch(() => caches.match("/index.html")))
+    caches.match(e.request)
+      .then(r => r || fetch(e.request).catch(() => caches.match("/index.html")))
   );
 });
