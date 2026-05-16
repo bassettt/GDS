@@ -1,5 +1,5 @@
 // sw.js — Wafa PWA Service Worker
-const CACHE = "wafa-v3";
+const CACHE = "wafa-v4";
 const ASSETS = [
   "/",
   "/index.html",
@@ -14,18 +14,18 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", e => {
+  // تفعيل فوري بدون انتظار إغلاق الـ tabs
+  self.skipWaiting();
   e.waitUntil(
-    caches.open(CACHE)
-      .then(c => c.addAll(ASSETS))
-      .then(() => self.skipWaiting())
+    caches.open(CACHE).then(c => c.addAll(ASSETS))
   );
 });
 
 self.addEventListener("activate", e => {
   e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
@@ -37,7 +37,7 @@ self.addEventListener("fetch", e => {
     return;
   }
 
-  // ملفات JS و CSS و HTML — Network First (السيرفر أولاً، الكاش احتياطي)
+  // ملفات JS و CSS و HTML — Network First مع no-cache
   if (
     url.pathname.endsWith(".js") ||
     url.pathname.endsWith(".css") ||
@@ -45,9 +45,8 @@ self.addEventListener("fetch", e => {
     url.pathname === "/"
   ) {
     e.respondWith(
-      fetch(e.request)
+      fetch(e.request, { cache: "no-cache" })
         .then(res => {
-          // حدّث الكاش بالنسخة الجديدة
           const clone = res.clone();
           caches.open(CACHE).then(c => c.put(e.request, clone));
           return res;
@@ -57,7 +56,7 @@ self.addEventListener("fetch", e => {
     return;
   }
 
-  // باقي الملفات (صور، fonts...) — Cache First
+  // باقي الملفات — Cache First
   e.respondWith(
     caches.match(e.request)
       .then(r => r || fetch(e.request).catch(() => caches.match("/index.html")))
