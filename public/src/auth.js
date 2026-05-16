@@ -68,26 +68,31 @@ async function appLogin(username, password) {
   if (hash !== user.password) throw new Error("Identifiant ou mot de passe incorrect");
 
   AppAuth.currentUser = { username: user.username, role: user.role, passwordHash: hash };
-sessionStorage.setItem("owdoo_app_user", JSON.stringify(AppAuth.currentUser));
+localStorage.setItem("owdoo_app_user", JSON.stringify({ ...AppAuth.currentUser, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 }));
   return AppAuth.currentUser;
 }
 
 // ── App Logout ────────────────────────────────────────────────
 function appLogout() {
   AppAuth.currentUser = null;
-  sessionStorage.removeItem("owdoo_app_user");
+  localStorage.removeItem("owdoo_app_user");
 }
 
 // ── Restore session ───────────────────────────────────────────
 async function _restoreAppSession() {
   try {
-    const saved = sessionStorage.getItem("owdoo_app_user");
+    const saved = localStorage.getItem("owdoo_app_user");
     if (saved) {
       const parsed = JSON.parse(saved);
+      // تحقق من انتهاء الصلاحية
+      if (parsed.expiresAt && Date.now() > parsed.expiresAt) {
+        localStorage.removeItem("owdoo_app_user");
+        return false;
+      }
       // تحقق من الـ hash مقابل Firebase
       const fbUser = await _fbGet(`app_users/${parsed.username}`);
       if (!fbUser || fbUser.password !== parsed.passwordHash) {
-        sessionStorage.removeItem("owdoo_app_user");
+        localStorage.removeItem("owdoo_app_user");
         return false;
       }
       AppAuth.currentUser = { username: parsed.username, role: fbUser.role, passwordHash: parsed.passwordHash };
