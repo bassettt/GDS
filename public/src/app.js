@@ -1661,28 +1661,39 @@ function gdsPrepDownloadPrepPdf() {
   });
   if (!Object.keys(byCateg).length) return;
 
- let rows = "";
+ const allRows = [];
   _sortCats(Object.keys(byCateg)).forEach(cat => {
     const lines = byCateg[cat];
-    rows += `<tr class="cat-row"><td colspan="3">${cat}</td></tr>`;
-    lines.forEach(line => {
-      rows += `<tr>
-        <td>${line.name}</td>
-        <td class="num">${line.prepCarton > 0 ? line.prepCarton : "—"}</td>
-        <td class="num">${line.prepUnite  > 0 ? line.prepUnite  : "—"}</td>
-      </tr>`;
-    });
+    allRows.push({ isCat: true, cat });
+    lines.forEach(line => allRows.push({ isCat: false, line }));
   });
 
-  const copy = `
-    <div class="copy-header">
-      <strong>STOCK PRÉPARATION</strong>
-      <span class="sub">${date} — ${time}</span>
-    </div>
-    <table>
-      <thead><tr><th>Produit</th><th class="num">Colis</th><th class="num">U</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+  const half   = Math.ceil(allRows.length / 2);
+  const left   = allRows.slice(0, half);
+  const right  = allRows.slice(half);
+
+  function buildRows(arr) {
+    return arr.map(r => r.isCat
+      ? `<tr class="cat-row"><td colspan="3">${r.cat}</td></tr>`
+      : `<tr>
+          <td>${r.line.name}</td>
+          <td class="num">${r.line.prepCarton > 0 ? r.line.prepCarton : "—"}</td>
+          <td class="num">${r.line.prepUnite  > 0 ? r.line.prepUnite  : "—"}</td>
+        </tr>`
+    ).join("");
+  }
+
+  function buildCol(arr, label) {
+    return `
+      <div class="copy-header">
+        <strong>STOCK PRÉPARATION</strong>
+        <span class="sub">${label} — ${date} — ${time}</span>
+      </div>
+      <table>
+        <thead><tr><th>Produit</th><th class="num">Colis</th><th class="num">U</th></tr></thead>
+        <tbody>${buildRows(arr)}</tbody>
+      </table>`;
+  }
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
   <style>
@@ -1702,8 +1713,8 @@ function gdsPrepDownloadPrepPdf() {
     .cat-row td { background: #e8f5e9; font-weight: bold; font-size: 9px; color: #2e7d32; }
   </style></head><body>
   <div class="wrapper">
-    <div class="col">${copy}</div>
-    <div class="col">${copy}</div>
+    <div class="col">${buildCol(left, "1/2")}</div>
+    <div class="col">${buildCol(right, "2/2")}</div>
   </div>
   </body></html>`;
 
