@@ -137,7 +137,8 @@ async function loadData() {
     const fb = await r.json();
     if (fb) {
       if (fb.categoryOrder?.length) App.settings.categoryOrder = fb.categoryOrder;
-      if (fb.showTotalU !== undefined) App.settings.showTotalU = fb.showTotalU;
+     if (fb.showTotalU  !== undefined) App.settings.showTotalU  = fb.showTotalU;
+      if (fb.showPrepQty !== undefined) App.settings.showPrepQty = fb.showPrepQty;
     }
   } catch(e) { console.warn("Firebase load failed:", e); }
 }
@@ -2957,18 +2958,18 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
             <th style="text-align:left;color:var(--text2);padding:2px 3px;font-size:10px;">Produit</th>
             ${_gdsPrepCols.stock ? `<th colspan="2" style="text-align:center;border-bottom:1px solid var(--border);color:var(--text3);">Stock</th>` : ""}
             ${Object.keys(_gdsPrep.suggested).length && _gdsPrepCols.sugg ? `<th colspan="2" style="text-align:center;border-bottom:1px solid var(--border);color:var(--text3);">Suggéré</th>` : ""}
-            ${_gdsPrepCols.prep ? `<th colspan="3" style="text-align:center;border-bottom:1px solid var(--border);color:var(--gds-color)">Préparation</th>` : ""}
-            ${hasCharge && _gdsPrepCols.charge ? `<th colspan="3" style="text-align:center;border-bottom:1px solid var(--border);color:var(--orange)">Chargement</th>` : ""}
-            ${hasCharge && _gdsPrepCols.reste ? `<th colspan="3" style="text-align:center;border-bottom:1px solid var(--border);color:var(--accent)">Reste</th>` : ""}
+            ${_gdsPrepCols.prep ? `<th colspan="${App.settings?.showPrepQty !== false ? 3 : 2}" style="text-align:center;border-bottom:1px solid var(--border);color:var(--gds-color)">Préparation</th>` : ""}
+            ${hasCharge && _gdsPrepCols.charge ? `<th colspan="${App.settings?.showPrepQty !== false ? 3 : 2}" style="text-align:center;border-bottom:1px solid var(--border);color:var(--orange)">Chargement</th>` : ""}
+            ${hasCharge && _gdsPrepCols.reste ? `<th colspan="${App.settings?.showPrepQty !== false ? 3 : 2}" style="text-align:center;border-bottom:1px solid var(--border);color:var(--accent)">Reste</th>` : ""}
             ${_gdsPrep.finished ? `<th colspan="2" style="text-align:center;border-bottom:1px solid var(--border);color:var(--text2)">Vérif.</th>` : ""}
           </tr>
           <tr>
             <th></th>
             ${_gdsPrepCols.stock ? `<th style="text-align:right;color:var(--text3);padding:2px 3px;font-size:9px;">Colis</th><th style="text-align:right;color:var(--text3);padding:2px 3px;font-size:9px;">U</th>` : ""}
             ${Object.keys(_gdsPrep.suggested).length && _gdsPrepCols.sugg ? `<th style="text-align:right;color:var(--text3);padding:2px 3px;font-size:9px;">Colis</th><th style="text-align:right;color:var(--text3);padding:2px 3px;font-size:9px;">U</th>` : ""}
-            ${_gdsPrepCols.prep ? `<th style="text-align:right;color:var(--gds-color);padding:2px 3px;font-size:9px;">Colis</th><th style="text-align:right;color:var(--gds-color);padding:2px 3px;font-size:9px;">U</th><th style="text-align:right;color:var(--gds-color);font-size:8px;padding:2px 2px;">qty</th>` : ""}
-            ${hasCharge && _gdsPrepCols.charge ? `<th style="text-align:right;color:var(--orange);padding:2px 3px;font-size:9px;">Colis</th><th style="text-align:right;color:var(--orange);padding:2px 3px;font-size:9px;">U</th><th style="text-align:right;color:var(--orange);font-size:8px;padding:2px 2px;">qty</th>` : ""}
-            ${hasCharge && _gdsPrepCols.reste ? `<th style="text-align:right;color:var(--accent);padding:2px 3px;font-size:9px;">Colis</th><th style="text-align:right;color:var(--accent);padding:2px 3px;font-size:9px;">U</th><th style="text-align:right;color:var(--accent);font-size:8px;padding:2px 2px;">qty</th>` : ""}
+            ${_gdsPrepCols.prep ? `<th style="text-align:right;color:var(--gds-color);padding:2px 3px;font-size:9px;">Colis</th><th style="text-align:right;color:var(--gds-color);padding:2px 3px;font-size:9px;">U</th>${App.settings?.showPrepQty !== false ? `<th style="text-align:right;color:var(--gds-color);font-size:8px;padding:2px 2px;">qty</th>` : ""}` : ""}
+            ${hasCharge && _gdsPrepCols.charge ? `<th style="text-align:right;color:var(--orange);padding:2px 3px;font-size:9px;">Colis</th><th style="text-align:right;color:var(--orange);padding:2px 3px;font-size:9px;">U</th>${App.settings?.showPrepQty !== false ? `<th style="text-align:right;color:var(--orange);font-size:8px;padding:2px 2px;">qty</th>` : ""}` : ""}
+            ${hasCharge && _gdsPrepCols.reste ? `<th style="text-align:right;color:var(--accent);padding:2px 3px;font-size:9px;">Colis</th><th style="text-align:right;color:var(--accent);padding:2px 3px;font-size:9px;">U</th>${App.settings?.showPrepQty !== false ? `<th style="text-align:right;color:var(--accent);font-size:8px;padding:2px 2px;">qty</th>` : ""}` : ""}
             ${_gdsPrep.finished ? `<th style="text-align:center;padding:2px 3px;font-size:9px;">✓</th><th style="text-align:center;padding:2px 3px;font-size:9px;">Écart</th>` : ""}
           </tr>
         </thead><tbody>`;
@@ -3010,9 +3011,8 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
         <td class="gds-qty" style="color:${rowErr ? "var(--red)" : "var(--gds-color)"}">
           ${line.prepUnite > 0 ? line.prepUnite : "—"}
         </td>
-        <td class="gds-qty" style="color:${rowErr ? "var(--red)" : "var(--gds-color)"};opacity:0.7;font-size:10px;">
-          ${prepTotal > 0 ? prepTotal : "—"}
-        </td>` : ""}
+        ${App.settings?.showPrepQty !== false ? `<td class="gds-qty" style="color:${rowErr ? "var(--red)" : "var(--gds-color)"};opacity:0.7;font-size:10px;">${prepTotal > 0 ? prepTotal : "—"}</td>` : ""}
+        ` : ""}
         ${hasCharge && _gdsPrepCols.charge ? `
         <td class="gds-qty" style="color:${chargeOverPrep?"var(--red)":"var(--orange)"}">
           ${ch.chargeCarton > 0 ? ch.chargeCarton : "—"}
@@ -3021,9 +3021,8 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
         <td class="gds-qty" style="color:${chargeOverPrep?"var(--red)":"var(--orange)"}">
           ${ch.chargeUnite > 0 ? ch.chargeUnite : "—"}
         </td>
-        <td class="gds-qty" style="color:${chargeOverPrep?"var(--red)":"var(--orange)"};opacity:0.7;font-size:10px;">
-          ${ch.chargeTotal > 0 ? ch.chargeTotal : "—"}
-        </td>` : ""}
+        ${App.settings?.showPrepQty !== false ? `<td class="gds-qty" style="color:${chargeOverPrep?"var(--red)":"var(--orange)"};opacity:0.7;font-size:10px;">${ch.chargeTotal > 0 ? ch.chargeTotal : "—"}</td>` : ""}
+        ` : ""}
         ${hasCharge && _gdsPrepCols.reste ? `
         <td class="gds-qty" style="color:${resteTotal===0?"var(--green)":resteTotal<0?"var(--red)":"var(--accent)"}">
   ${resteCarton !== 0 ? resteCarton : (resteTotal===0 ? "0" : "—")}
@@ -3031,9 +3030,8 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
 <td class="gds-qty" style="color:${resteTotal===0?"var(--green)":resteTotal<0?"var(--red)":"var(--accent)"}">
   ${resteUnite !== 0 ? resteUnite : (resteTotal===0 ? "0" : "—")}
 </td>
-        <td class="gds-qty" style="color:${resteTotal===0?"var(--green)":resteTotal<0?"var(--red)":"var(--accent)"};opacity:0.7;font-size:10px;">
-          ${resteTotal !== 0 ? Math.round(resteTotal) : "0"}
-        </td>` : ""}
+        ${App.settings?.showPrepQty !== false ? `<td class="gds-qty" style="color:${resteTotal===0?"var(--green)":resteTotal<0?"var(--red)":"var(--accent)"};opacity:0.7;font-size:10px;">${resteTotal !== 0 ? Math.round(resteTotal) : "0"}</td>` : ""}
+        ` : ""}
         ${_gdsPrep.finished ? `
         <td style="text-align:center;padding:2px;">
           <button class="gds-check-btn" data-pid="${line.pid}"
@@ -3097,11 +3095,11 @@ function _gdsPrepApplyColWidths() {
     { key: "prod",   span: 1, always: true },
     { key: "stock",  span: 2, vis: _gdsPrepCols.stock },
     { key: "sugg",   span: 2, vis: hasSugg && _gdsPrepCols.sugg },
-    { key: "prep",   span: 3, vis: _gdsPrepCols.prep },
-    { key: "charge", span: 3, vis: hasCharge && _gdsPrepCols.charge },
-    { key: "reste",  span: 3, vis: hasCharge && _gdsPrepCols.reste },
+    { key: "prep",   span: App.settings?.showPrepQty !== false ? 3 : 2, vis: _gdsPrepCols.prep },
+{ key: "charge", span: App.settings?.showPrepQty !== false ? 3 : 2, vis: hasCharge && _gdsPrepCols.charge },
+{ key: "reste",  span: App.settings?.showPrepQty !== false ? 3 : 2, vis: hasCharge && _gdsPrepCols.reste },
     { key: "verif",  span: 2, vis: _gdsPrep.finished },
-    { key: "action", span: 1, vis: false },
+    { key: "action", span: 1, always: true },
   ].filter(g => g.always || g.vis);
 
   const totalCols = groups.reduce((s, g) => s + g.span, 0);
@@ -3783,6 +3781,7 @@ async function saveSettings() {
 
 s.vendors        = (s.vendors||[]).filter(v => v.name.trim());
   s.showTotalU     = document.getElementById("toggleTotalU")?.checked ?? true;
+  s.showPrepQty    = document.getElementById("togglePrepQty")?.checked ?? true;
   s.pdfColumns     = parseInt(document.getElementById("pdfColumns")?.value     || "2");
   s.pdfFontProduct = parseInt(document.getElementById("pdfFontProduct")?.value || "10");
   s.pdfFontQty     = parseInt(document.getElementById("pdfFontQty")?.value     || "13");
@@ -3810,6 +3809,7 @@ s.vendors        = (s.vendors||[]).filter(v => v.name.trim());
       body: JSON.stringify({
         categoryOrder:   s.categoryOrder  || [],
         showTotalU:      s.showTotalU,
+        showPrepQty:     s.showPrepQty,
         pdfColumns:      s.pdfColumns,
         pdfFontProduct:  s.pdfFontProduct,
         pdfFontQty:      s.pdfFontQty,
@@ -3864,12 +3864,15 @@ function bindEvents() {
   const fb = await fetch(`${_FB_DB_URL}/settings.json`).then(r=>r.json()).catch(()=>null);
   if (fb) {
     if (fb.showTotalU     !== undefined) App.settings.showTotalU     = fb.showTotalU;
+    if (fb.showPrepQty    !== undefined) App.settings.showPrepQty    = fb.showPrepQty;
     if (fb.pdfColumns     !== undefined) App.settings.pdfColumns     = fb.pdfColumns;
     if (fb.pdfFontProduct !== undefined) App.settings.pdfFontProduct = fb.pdfFontProduct;
     if (fb.pdfFontQty     !== undefined) App.settings.pdfFontQty     = fb.pdfFontQty;
     if (fb.pdfRowPadding  !== undefined) App.settings.pdfRowPadding  = fb.pdfRowPadding;
   }
   if (tog) tog.checked = App.settings?.showTotalU !== false;
+  const togPQ = document.getElementById("togglePrepQty");
+  if (togPQ) togPQ.checked = App.settings?.showPrepQty !== false;
   const s = App.settings || {};
   const elSet = (id, val) => { const e = document.getElementById(id); if(e) e.value = val; };
   elSet("pdfColumns",      s.pdfColumns      ?? 2);
@@ -3908,6 +3911,10 @@ if (isAdmin()) {
   document.getElementById("btnRefreshCats")?.addEventListener("click", renderCategoryOrderUI);
   document.getElementById("toggleTotalU")?.addEventListener("change", e => {
     App.settings.showTotalU = e.target.checked;
+    saveSettings();
+  });
+  document.getElementById("togglePrepQty")?.addEventListener("change", e => {
+    App.settings.showPrepQty = e.target.checked;
     saveSettings();
   });
 
