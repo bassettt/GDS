@@ -176,10 +176,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   text-transform:uppercase; letter-spacing:.05em;
   padding:6px 0; border-bottom:2px solid var(--gds-color);
   margin-bottom:8px;
+  background:var(--bg);
 }
 .gds-table {
   width:100%; border-collapse:collapse; font-size:11px;
-  background:var(--bg1); border-radius:6px; overflow:hidden;
+  background:var(--bg2); border-radius:6px; overflow:hidden;
   box-shadow:0 1px 3px rgba(0,0,0,.08);
 }
 .gds-prep-input {
@@ -456,13 +457,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 /* A.U */
 .gds-prep-modal-body table.gds-table th:nth-child(5),
 .gds-prep-modal-body table.gds-table td:nth-child(5) { width: 6%; }
-/* Δ C / Δ U */
-.gds-prep-modal-body table.gds-table th:nth-child(6),
-.gds-prep-modal-body table.gds-table td:nth-child(6),
-.gds-prep-modal-body table.gds-table th:nth-child(7),
-.gds-prep-modal-body table.gds-table td:nth-child(7) { width: 13%; }
+/* R.C / R.U (edit-mode cols 6 & 7) */
+.gds-prep-modal-body table.gds-table.edit-mode th:nth-child(6),
+.gds-prep-modal-body table.gds-table.edit-mode td:nth-child(6),
+.gds-prep-modal-body table.gds-table.edit-mode th:nth-child(7),
+.gds-prep-modal-body table.gds-table.edit-mode td:nth-child(7) { width: 6%; }
+/* Δ C / Δ U (edit-mode cols 8 & 9) */
+.gds-prep-modal-body table.gds-table.edit-mode th:nth-child(8),
+.gds-prep-modal-body table.gds-table.edit-mode td:nth-child(8),
+.gds-prep-modal-body table.gds-table.edit-mode th:nth-child(9),
+.gds-prep-modal-body table.gds-table.edit-mode td:nth-child(9) { width: 13%; }
 /* Colis / U (saisir mode — cols 4 & 5) */
 .gds-prep-modal-body table.gds-table:not(.edit-mode) th:nth-child(4),
 .gds-prep-modal-body table.gds-table:not(.edit-mode) td:nth-child(4),
 .gds-prep-modal-body table.gds-table:not(.edit-mode) th:nth-child(5),
 .gds-prep-modal-body table.gds-table:not(.edit-mode) td:nth-child(5) { width: 14%; }
+@media print { .no-print { display: none !important; } }

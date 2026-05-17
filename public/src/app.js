@@ -136,9 +136,27 @@ async function loadData() {
     const r = await fetch(`${_FB_DB_URL}/settings.json`);
     const fb = await r.json();
     if (fb) {
-      if (fb.categoryOrder?.length) App.settings.categoryOrder = fb.categoryOrder;
-     if (fb.showTotalU  !== undefined) App.settings.showTotalU  = fb.showTotalU;
-      if (fb.showPrepQty !== undefined) App.settings.showPrepQty = fb.showPrepQty;
+      if (fb.categoryOrder?.length)      App.settings.categoryOrder       = fb.categoryOrder;
+      if (fb.showTotalU          !== undefined) App.settings.showTotalU          = fb.showTotalU;
+      if (fb.showPrepQty         !== undefined) App.settings.showPrepQty         = fb.showPrepQty;
+      if (fb.rapportRequireCheck !== undefined) App.settings.rapportRequireCheck = fb.rapportRequireCheck;
+      if (fb.rptColumns          !== undefined) App.settings.rptColumns          = fb.rptColumns;
+      if (fb.rptFontProduct      !== undefined) App.settings.rptFontProduct      = fb.rptFontProduct;
+      if (fb.rptFontQty          !== undefined) App.settings.rptFontQty          = fb.rptFontQty;
+      if (fb.rptRowPadding       !== undefined) App.settings.rptRowPadding       = fb.rptRowPadding;
+      if (fb.rptColPrepCarton    !== undefined) App.settings.rptColPrepCarton    = fb.rptColPrepCarton;
+      if (fb.rptColPrepUnite     !== undefined) App.settings.rptColPrepUnite     = fb.rptColPrepUnite;
+      if (fb.rptColChargCarton   !== undefined) App.settings.rptColChargCarton   = fb.rptColChargCarton;
+      if (fb.rptColChargUnite    !== undefined) App.settings.rptColChargUnite    = fb.rptColChargUnite;
+      if (fb.rptColResteCarton   !== undefined) App.settings.rptColResteCarton   = fb.rptColResteCarton;
+      if (fb.rptColResteUnite    !== undefined) App.settings.rptColResteUnite    = fb.rptColResteUnite;
+      if (fb.rptColCheck         !== undefined) App.settings.rptColCheck         = fb.rptColCheck;
+      if (fb.rptColEcart         !== undefined) App.settings.rptColEcart         = fb.rptColEcart;
+      if (fb.rptColQty           !== undefined) App.settings.rptColQty           = fb.rptColQty;
+      if (fb.pdfColumns          !== undefined) App.settings.pdfColumns          = fb.pdfColumns;
+      if (fb.pdfFontProduct      !== undefined) App.settings.pdfFontProduct      = fb.pdfFontProduct;
+      if (fb.pdfFontQty          !== undefined) App.settings.pdfFontQty          = fb.pdfFontQty;
+      if (fb.pdfRowPadding       !== undefined) App.settings.pdfRowPadding       = fb.pdfRowPadding;
     }
   } catch(e) { console.warn("Firebase load failed:", e); }
 }
@@ -1886,6 +1904,7 @@ function _gdsPrepRenderModalBody() {
         <th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">S.U</th>
         ${isEdit
           ? `<th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Act.Colis</th><th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Act.U</th>
+             <th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">R.Colis</th><th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">R.U</th>
              <th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Δ Colis</th><th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Δ U</th>`
           : `<th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Prép. Colis</th><th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Prép. U</th>`}
       </tr></thead><tbody>`;
@@ -1915,12 +1934,22 @@ function _gdsPrepRenderModalBody() {
         </tr>`;
       } else {
         const hasErrRow = !!line._hasError;
+        const newC     = line.prepCarton + (line._deltaCarton || 0);
+        const newU     = line.prepUnite  + (line._deltaUnite  || 0);
+        const prepTotal = newC * u + newU;
+        const ch        = _gdsPrep.chargeData[line.pid] || { chargeTotal: 0 };
+        const restQty   = prepTotal - ch.chargeTotal;
+        const restC     = u > 0 ? Math.trunc(restQty / u) : 0;
+        const restU     = u > 0 ? Math.round(restQty - Math.trunc(restQty / u) * u) : Math.round(restQty);
+        const restColor = restQty <= 0 ? (restQty < 0 ? "color:#f5ac2f;" : "color:#5794f7;") : "color:#5794f7;";
         html += `<tr style="${hasErrRow?"background:rgba(239,68,68,.10);":""}">
           <td style="font-size:10px;">${escHtml(line.name)}</td>
           <td class="gds-qty">${stockC > 0 ? stockC : "—"}</td>
           <td class="gds-qty">${stockU > 0 ? stockU : (stockC === 0 ? Math.round(line.qty) : "—")}</td>
           <td class="gds-qty" style="color:var(--gds-color)">${line.prepCarton || "—"}</td>
           <td class="gds-qty" style="color:var(--gds-color)">${line.prepUnite  || "—"}</td>
+          <td class="gds-qty" style="text-align:right;white-space:nowrap;padding:4px 3px;width:36px;font-weight:700;${restColor}">${restC !== 0 ? restC : (restQty === 0 ? "—" : "—")}</td>
+          <td class="gds-qty" style="text-align:right;white-space:nowrap;padding:4px 3px;width:36px;font-weight:700;${restColor}">${restU !== 0 ? restU : "—"}</td>
           <td class="gds-qty">
             <input type="number" class="gds-prep-input" style="width:38px;text-align:center;padding:2px;" data-idx="${line.pid}" data-field="deltaCarton"
               value="${line._deltaCarton || 0}"
@@ -1931,7 +1960,7 @@ function _gdsPrepRenderModalBody() {
               value="${line._deltaUnite || 0}"
               onchange="_gdsPrepDeltaInput(${line.pid},'prepUnite',this)"/>
           </td>
-        </tr>`;
+          </tr>`;
       }
     });
     html += `</tbody></table></div></div>`;
@@ -2987,7 +3016,7 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
             ${_gdsPrepCols.prep ? `<th colspan="${App.settings?.showPrepQty !== false ? 3 : 2}" style="text-align:center;border-bottom:1px solid var(--border);color:var(--gds-color)">Préparation</th>` : ""}
             ${hasCharge && _gdsPrepCols.charge ? `<th colspan="${App.settings?.showPrepQty !== false ? 3 : 2}" style="text-align:center;border-bottom:1px solid var(--border);color:var(--orange)">Chargement</th>` : ""}
             ${hasCharge && _gdsPrepCols.reste ? `<th colspan="${App.settings?.showPrepQty !== false ? 3 : 2}" style="text-align:center;border-bottom:1px solid var(--border);color:var(--accent)">Reste</th>` : ""}
-            ${_gdsPrep.finished ? `<th colspan="2" style="text-align:center;border-bottom:1px solid var(--border);color:var(--text2)">Vérif.</th>` : ""}
+            ${_gdsPrep.finished ? `<th colspan="2" style="text-align:center;border-bottom:1px solid var(--border);color:var(--text2)">Vérif.</th><th class="no-print" style="width:40px;"></th>` : ""}
           </tr>
           <tr>
             <th></th>
@@ -3073,6 +3102,23 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
             value="${line.ecart != null ? line.ecart : 0}"
             placeholder="0"
             oninput="_gdsPrepEcartInput(${line.pid}, this.value)"/>
+        </td>
+        <td style="text-align:center;white-space:nowrap;min-width:40px;" class="no-print">
+          ${line.history?.length
+            ? `<button class="gds-prep-hist-btn" onclick="gdsPrepShowHist(${i})" title="Historique">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+               </button>`
+            : ""}
+          ${Object.values(_gdsPrep.byPicking).some(mv => mv.some(m => m.product_id?.[0] === line.pid))
+            ? `<button class="gds-prep-hist-btn" onclick="gdsPrepShowCharge(${line.pid})" title="Détail chargement" style="margin-left:2px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                  <circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+                </svg>
+               </button>`
+            : ""}
         </td>
         ` : `
         <td style="text-align:center;white-space:nowrap;min-width:40px;">
@@ -3355,11 +3401,33 @@ const parsed = val === "" ? null : parseFloat(val);
 function _gdsPrepCheckAllDone() {
   const activeLines = _gdsPrep.lines.filter(l => l.prepCarton > 0 || l.prepUnite > 0 || l._extraCharge);
   const allDone = activeLines.length > 0 && activeLines.every(l => 
-    l.check === true || (l.ecart !== null && l.ecart !== 0) ||
+    l.check === true || (l.ecart !== null && l.ecart !== undefined && l.ecart !== 0) ||
     (l._extraCharge && l.name.startsWith("pid:"))
   );
-  const bar = document.getElementById("gdsPrepNewBar");
-  if (bar) bar.style.display = allDone ? "flex" : "none";
+  fetch(`${_FB_DB_URL}/settings.json`)
+    .then(r => r.json())
+    .then(fb => {
+      if (fb?.rapportRequireCheck !== undefined) {
+        App.settings.rapportRequireCheck = fb.rapportRequireCheck;
+      } else {
+        App.settings.rapportRequireCheck = false;
+      }
+      const requireCheck = App.settings.rapportRequireCheck === true;
+      const rapportBtn   = document.querySelector("#gdsPrepNewBar button[onclick='gdsPrepExportCurrent()']");
+      const nouvelleBtn  = document.querySelector("#gdsPrepNewBar button[onclick='gdsPrepAskNew()']");
+      const bar          = document.getElementById("gdsPrepNewBar");
+      if (bar) bar.style.display = "flex";
+      if (rapportBtn) rapportBtn.style.display = (!requireCheck || allDone) ? "" : "none";
+      if (nouvelleBtn) nouvelleBtn.style.display = allDone ? "" : "none";
+    }).catch(() => {
+      const requireCheck = App.settings.rapportRequireCheck === true;
+      const rapportBtn   = document.querySelector("#gdsPrepNewBar button[onclick='gdsPrepExportCurrent()']");
+      const nouvelleBtn  = document.querySelector("#gdsPrepNewBar button[onclick='gdsPrepAskNew()']");
+      const bar          = document.getElementById("gdsPrepNewBar");
+      if (bar) bar.style.display = "flex";
+      if (rapportBtn) rapportBtn.style.display = (!requireCheck || allDone) ? "" : "none";
+      if (nouvelleBtn) nouvelleBtn.style.display = allDone ? "" : "none";
+    });
 }
 
 function gdsPrepReprendre() {
@@ -3817,7 +3885,29 @@ function _saveCatOrder(container) {
   fetch(`${_FB_DB_URL}/settings.json`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ categoryOrder: order, showTotalU: App.settings.showTotalU ?? true })
+    body: JSON.stringify({
+      categoryOrder:       order,
+      showTotalU:          App.settings.showTotalU          ?? true,
+      showPrepQty:         App.settings.showPrepQty         ?? true,
+      rapportRequireCheck: App.settings.rapportRequireCheck ?? false,
+      pdfColumns:          App.settings.pdfColumns          ?? 2,
+      pdfFontProduct:      App.settings.pdfFontProduct      ?? 10,
+      pdfFontQty:          App.settings.pdfFontQty          ?? 13,
+      pdfRowPadding:       App.settings.pdfRowPadding       ?? 1,
+      rptColumns:          App.settings.rptColumns          ?? 1,
+      rptFontProduct:      App.settings.rptFontProduct      ?? 10,
+      rptFontQty:          App.settings.rptFontQty          ?? 11,
+      rptRowPadding:       App.settings.rptRowPadding       ?? 3,
+      rptColPrepCarton:    App.settings.rptColPrepCarton    ?? true,
+      rptColPrepUnite:     App.settings.rptColPrepUnite     ?? true,
+      rptColChargCarton:   App.settings.rptColChargCarton   ?? true,
+      rptColChargUnite:    App.settings.rptColChargUnite    ?? true,
+      rptColResteCarton:   App.settings.rptColResteCarton   ?? true,
+      rptColResteUnite:    App.settings.rptColResteUnite    ?? true,
+      rptColCheck:         App.settings.rptColCheck         ?? true,
+      rptColEcart:         App.settings.rptColEcart         ?? true,
+      rptColQty:           App.settings.rptColQty           ?? true
+    })
   }).catch(e => console.warn("Firebase save failed:", e));
   // تحديث الأرقام
   container.querySelectorAll(".cat-order-item").forEach((el, i) => {
@@ -3833,7 +3923,8 @@ async function saveSettings() {
 
 s.vendors        = (s.vendors||[]).filter(v => v.name.trim());
   s.showTotalU     = document.getElementById("toggleTotalU")?.checked ?? true;
-  s.showPrepQty    = document.getElementById("togglePrepQty")?.checked ?? true;
+  s.showPrepQty        = document.getElementById("togglePrepQty")?.checked ?? true;
+  s.rapportRequireCheck = document.getElementById("toggleRapportCheck")?.checked ?? false;
   s.pdfColumns     = parseInt(document.getElementById("pdfColumns")?.value     || "2");
   s.pdfFontProduct = parseInt(document.getElementById("pdfFontProduct")?.value || "10");
   s.pdfFontQty     = parseInt(document.getElementById("pdfFontQty")?.value     || "13");
@@ -3878,7 +3969,8 @@ s.vendors        = (s.vendors||[]).filter(v => v.name.trim());
         rptColResteUnite: s.rptColResteUnite,
         rptColCheck:      s.rptColCheck,
         rptColEcart:      s.rptColEcart,
-        rptColQty:        s.rptColQty
+        rptColQty:           s.rptColQty,
+        rapportRequireCheck: s.rapportRequireCheck
       })
     });
   } catch(e) { console.warn("Firebase save failed:", e); }
@@ -3915,16 +4007,32 @@ function bindEvents() {
   const tog = document.getElementById("toggleTotalU");
   const fb = await fetch(`${_FB_DB_URL}/settings.json`).then(r=>r.json()).catch(()=>null);
   if (fb) {
-    if (fb.showTotalU     !== undefined) App.settings.showTotalU     = fb.showTotalU;
-    if (fb.showPrepQty    !== undefined) App.settings.showPrepQty    = fb.showPrepQty;
-    if (fb.pdfColumns     !== undefined) App.settings.pdfColumns     = fb.pdfColumns;
-    if (fb.pdfFontProduct !== undefined) App.settings.pdfFontProduct = fb.pdfFontProduct;
-    if (fb.pdfFontQty     !== undefined) App.settings.pdfFontQty     = fb.pdfFontQty;
-    if (fb.pdfRowPadding  !== undefined) App.settings.pdfRowPadding  = fb.pdfRowPadding;
+    if (fb.showTotalU          !== undefined) App.settings.showTotalU          = fb.showTotalU;
+    if (fb.showPrepQty         !== undefined) App.settings.showPrepQty         = fb.showPrepQty;
+    if (fb.rapportRequireCheck !== undefined) App.settings.rapportRequireCheck = fb.rapportRequireCheck;
+    if (fb.pdfColumns          !== undefined) App.settings.pdfColumns          = fb.pdfColumns;
+    if (fb.pdfFontProduct      !== undefined) App.settings.pdfFontProduct      = fb.pdfFontProduct;
+    if (fb.pdfFontQty          !== undefined) App.settings.pdfFontQty          = fb.pdfFontQty;
+    if (fb.pdfRowPadding       !== undefined) App.settings.pdfRowPadding       = fb.pdfRowPadding;
+    if (fb.rptColumns          !== undefined) App.settings.rptColumns          = fb.rptColumns;
+    if (fb.rptFontProduct      !== undefined) App.settings.rptFontProduct      = fb.rptFontProduct;
+    if (fb.rptFontQty          !== undefined) App.settings.rptFontQty          = fb.rptFontQty;
+    if (fb.rptRowPadding       !== undefined) App.settings.rptRowPadding       = fb.rptRowPadding;
+    if (fb.rptColPrepCarton    !== undefined) App.settings.rptColPrepCarton    = fb.rptColPrepCarton;
+    if (fb.rptColPrepUnite     !== undefined) App.settings.rptColPrepUnite     = fb.rptColPrepUnite;
+    if (fb.rptColChargCarton   !== undefined) App.settings.rptColChargCarton   = fb.rptColChargCarton;
+    if (fb.rptColChargUnite    !== undefined) App.settings.rptColChargUnite    = fb.rptColChargUnite;
+    if (fb.rptColResteCarton   !== undefined) App.settings.rptColResteCarton   = fb.rptColResteCarton;
+    if (fb.rptColResteUnite    !== undefined) App.settings.rptColResteUnite    = fb.rptColResteUnite;
+    if (fb.rptColCheck         !== undefined) App.settings.rptColCheck         = fb.rptColCheck;
+    if (fb.rptColEcart         !== undefined) App.settings.rptColEcart         = fb.rptColEcart;
+    if (fb.rptColQty           !== undefined) App.settings.rptColQty           = fb.rptColQty;
   }
   if (tog) tog.checked = App.settings?.showTotalU !== false;
   const togPQ = document.getElementById("togglePrepQty");
   if (togPQ) togPQ.checked = App.settings?.showPrepQty !== false;
+  const togRC = document.getElementById("toggleRapportCheck");
+  if (togRC) togRC.checked = App.settings?.rapportRequireCheck === true;
   const s = App.settings || {};
   const elSet = (id, val) => { const e = document.getElementById(id); if(e) e.value = val; };
   elSet("pdfColumns",      s.pdfColumns      ?? 2);
@@ -3967,6 +4075,10 @@ if (isAdmin()) {
   });
   document.getElementById("togglePrepQty")?.addEventListener("change", e => {
     App.settings.showPrepQty = e.target.checked;
+    saveSettings();
+  });
+  document.getElementById("toggleRapportCheck")?.addEventListener("change", e => {
+    App.settings.rapportRequireCheck = e.target.checked;
     saveSettings();
   });
 
