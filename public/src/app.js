@@ -1388,11 +1388,7 @@ const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
   <div id="gdsPrepTableWrap" style="padding:0 10px 20px;overflow-x:auto;-webkit-overflow-scrolling:touch;"></div>
 
   <!-- Barre Nouvelle préparation (visible après check complet) -->
-  <div id="gdsPrepNewBar" style="display:none;padding:10px;border-top:1px solid var(--border);background:var(--bg2);">
-    <button class="gds-refresh-btn" style="background:var(--gds-color);" onclick="gdsPrepAskNew()">
-      + Nouvelle préparation
-    </button>
-  </div>
+  
 
   <!-- Modal confirmation nouvelle préparation -->
   <div id="gdsPrepNewConfirmModal" class="gds-prep-modal" style="display:none;">
@@ -1423,6 +1419,7 @@ const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
         <button class="gds-refresh-btn" onclick="gdsPrepModalConfirm()">↵ Confirmer</button>
         <button id="gdsPrepAutoFillBtn" class="gds-refresh-btn" style="background:var(--accent);display:none;" onclick="gdsPrepAutoFill()" title="Remplir selon suggestions +20%">▢ Propos</button>
 		<button class="gds-refresh-btn" style="background:var(--text2);" onclick="gdsPrepDownloadPrepPdf()" title="Télécharger la préparation en PDF">🖨 Imprimer</button>
+        <button class="gds-refresh-btn" style="background:var(--red);margin-left:auto;" onclick="gdsPrepAskReset()">⊘ Réinitialiser</button>
         <button class="gds-refresh-btn" style="background:var(--text3);" onclick="gdsPrepCloseModal()">Annuler</button>
       </div>
     </div>
@@ -1454,6 +1451,20 @@ const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
       <div class="gds-prep-modal-footer" style="justify-content:center;">
         <button id="gdsPrepCancelBtn" class="gds-refresh-btn" disabled style="opacity:.4;background:var(--red);" onclick="gdsPrepDoCancel()">✕ Annuler la prépa</button>
         <button class="gds-refresh-btn" style="background:var(--text3);" onclick="gdsPrepCloseCancel()">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal réinitialisation -->
+  <div id="gdsPrepResetModal" class="gds-prep-modal" style="display:none;">
+    <div class="gds-prep-modal-box" style="max-width:320px;text-align:center;">
+      <div class="gds-prep-modal-header"><span>Réinitialiser</span></div>
+      <div style="padding:20px 16px;font-size:13px;color:var(--text);">
+        Toutes les quantités seront remises à zéro.<br>Confirmer ?
+      </div>
+      <div class="gds-prep-modal-footer" style="justify-content:center;gap:8px;">
+        <button class="gds-refresh-btn" style="background:var(--red);" onclick="gdsPrepDoReset()">⊘ Confirmer</button>
+        <button class="gds-refresh-btn" style="background:var(--text3);" onclick="gdsPrepCloseReset()">Annuler</button>
       </div>
     </div>
   </div>
@@ -1943,10 +1954,14 @@ const val  = parseFloat(inputEl.value) || 0;
   if (totalIfCarton > line.qty) {
     inputEl.style.borderColor = "var(--red)";
     inputEl.title = "القيمة تتجاوز المخزون";
+    line._hasError = true;
+    _gdsPrepUpdateConfirmBtn();
     return;
   }
+  line._hasError = false;
 inputEl.style.borderColor = "";
   inputEl.title = "";
+  line._hasError = false;
   if (field === "prepCarton") {
     line.prepCarton = val;
   } else {
@@ -1964,10 +1979,10 @@ inputEl.style.borderColor = "";
         inputEl.value = remUnite || "";
       }
     } else {
-    line.prepUnite = val;
+      line.prepUnite = val;
+    }
   }
   _gdsPrepUpdateConfirmBtn();
-}
 }
 
 function gdsPrepShowCharge(pid) {
@@ -3232,6 +3247,32 @@ function gdsPrepAskCancel() {
 function gdsPrepCloseCancel() {
   const m = document.getElementById("gdsPrepCancelModal");
   if (m) m.style.display = "none";
+}
+
+function gdsPrepAskReset() {
+  const m = document.getElementById("gdsPrepResetModal");
+  if (m) m.style.display = "flex";
+}
+function gdsPrepCloseReset() {
+  const m = document.getElementById("gdsPrepResetModal");
+  if (m) m.style.display = "none";
+}
+function gdsPrepDoReset() {
+  const isEdit = _gdsPrep.isEdit;
+  _gdsPrep.lines.forEach(l => {
+    if (isEdit) {
+      l._deltaCarton = 0;
+      l._deltaUnite  = 0;
+      l._hasError    = false;
+    } else {
+      l.prepCarton = 0;
+      l.prepUnite  = 0;
+      l._hasError  = false;
+    }
+  });
+  gdsPrepCloseReset();
+  _gdsPrepRenderModalBody();
+  _gdsPrepUpdateConfirmBtn();
 }
 
 function gdsPrepDoCancel() {
