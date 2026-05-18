@@ -1,7 +1,7 @@
 // ============================================================
 // src/auth.js — OwDoo App Authentication Layer
 // Layer 1: App login (Firebase) → Layer 2: Odoo session
-// Roles: admin | user | viewer
+// Roles: admin | user | group1 | group2 | group3
 // ============================================================
 
 const _FB_DB_URL = "https://owdoo-f265f-default-rtdb.europe-west1.firebasedatabase.app";
@@ -52,7 +52,6 @@ async function _ensureDefaultAdmin() {
       role: "admin",
       createdAt: Date.now(),
     });
-    console.log("Default admin created: admin / admin123");
   }
 }
 
@@ -68,26 +67,27 @@ async function appLogin(username, password) {
   if (hash !== user.password) throw new Error("Identifiant ou mot de passe incorrect");
 
   AppAuth.currentUser = { username: user.username, role: user.role, passwordHash: hash };
-sessionStorage.setItem("owdoo_app_user", JSON.stringify(AppAuth.currentUser));
+  localStorage.setItem("owdoo_app_user", JSON.stringify(AppAuth.currentUser));
   return AppAuth.currentUser;
 }
 
 // ── App Logout ────────────────────────────────────────────────
 function appLogout() {
   AppAuth.currentUser = null;
-  sessionStorage.removeItem("owdoo_app_user");
+  localStorage.removeItem("owdoo_app_user");
 }
 
 // ── Restore session ───────────────────────────────────────────
 async function _restoreAppSession() {
   try {
-    const saved = sessionStorage.getItem("owdoo_app_user");
+    const saved = localStorage.getItem("owdoo_app_user");
     if (saved) {
       const parsed = JSON.parse(saved);
-      // تحقق من الـ hash مقابل Firebase
+      // تحقق من الـ hash مقابل Firebase فقط للتأكد من أن الحساب لم يُحذف أو يُغيَّر
       const fbUser = await _fbGet(`app_users/${parsed.username}`);
       if (!fbUser || fbUser.password !== parsed.passwordHash) {
-        sessionStorage.removeItem("owdoo_app_user");
+        // كلمة المرور تغيرت أو الحساب حُذف — تسجيل خروج
+        localStorage.removeItem("owdoo_app_user");
         return false;
       }
       AppAuth.currentUser = { username: parsed.username, role: fbUser.role, passwordHash: parsed.passwordHash };
@@ -99,7 +99,7 @@ async function _restoreAppSession() {
 
 // ── Role checks ───────────────────────────────────────────────
 function isAdmin()   { return AppAuth.currentUser?.role === "admin"; }
-function isViewer()  { return AppAuth.currentUser?.role === "viewer"; }
+function isViewer()  { return ["group1","group2","group3"].includes(AppAuth.currentUser?.role); }
 function canEdit()   { return ["admin", "user"].includes(AppAuth.currentUser?.role); }
 
 // ── Permission map (matches data-perm attributes in app.js) ───
@@ -130,6 +130,19 @@ const ROLE_PERMISSIONS = {
     { perm: "prep_hors_date",         label: "Préparation — Hors date" },
     { perm: "prep_hors_date_add",     label: "Préparation — Hors date (+)" },
   ],
+  gds_stock_final: [
+    { perm: "sf_date_bar",    label: "Stock Final — Barre de date" },
+    { perm: "sf_btn_today",   label: "Stock Final — Aujourd'hui" },
+    { perm: "sf_btn_refresh", label: "Stock Final — Actualiser" },
+    { perm: "sf_btn_export",  label: "Stock Final — Tout exporter" },
+  ],
+  gds_tabs: [
+    { perm: "tab_stock",       label: "Onglet — Stock GDS" },
+    { perm: "tab_vans",        label: "Onglet — Vans" },
+    { perm: "tab_transferts",  label: "Onglet — Transferts" },
+    { perm: "tab_preparation", label: "Onglet — Préparation" },
+    { perm: "tab_stockfinal",  label: "Onglet — Stock Final" },
+  ],
 };
 
 const ROLE_SECTION_LABELS = {
@@ -137,6 +150,8 @@ const ROLE_SECTION_LABELS = {
   gds_vans:        "GDS — Vans",
   gds_transferts:  "GDS — Transferts",
   gds_preparation: "GDS — Préparation",
+  gds_stock_final: "GDS — Stock Final",
+  gds_tabs:        "GDS — Onglets (accès sections)",
 };
 
 // ── Firebase helpers for permissions ─────────────────────────
@@ -181,7 +196,11 @@ let _permObserver = null;
 let _permApplying = false;
 
 async function applyRolePermissions() {
-  if (isAdmin()) return;
+  if (isAdmin()) {
+    const guardStyle = document.getElementById("tabGuardStyle");
+    if (guardStyle) guardStyle.remove();
+    return;
+  }
   const role = AppAuth.currentUser?.role;
   if (!role) return;
 
@@ -218,6 +237,9 @@ document.querySelectorAll("[data-perm]").forEach(el => {
     });
   }
 
+  // Apply tab button visibility
+  await _applyTabVisibility();
+
   _permObserver = new MutationObserver((mutations) => {
     // Only re-apply if new [data-perm] elements were added
     const hasNewPermEl = mutations.some(m =>
@@ -233,6 +255,57 @@ document.querySelectorAll("[data-perm]").forEach(el => {
     document.getElementById("app") || document.body,
     { childList: true, subtree: true }
   );
+}
+
+// ── Hide tab buttons the user has no access to ────────────────
+async function _applyTabVisibility() {
+  if (isAdmin()) return;
+  const role = AppAuth.currentUser?.role;
+  if (!role) return;
+
+  const perms = _permCache || await _loadRolePermissions();
+  const tabMap = {
+    gdsTabStock:       "tab_stock",
+    gdsTabVans:        "tab_vans",
+    gdsTabTransferts:  "tab_transferts",
+    gdsTabPreparation: "tab_preparation",
+    gdsTabStockFinal:  "tab_stockfinal",
+  };
+
+  const section = "gds_tabs";
+  const raw     = perms[section]?.[role];
+  const allowed = _decodePerm(raw); // undefined = all allowed
+
+  let firstAllowedTab = null;
+
+  for (const [btnId, perm] of Object.entries(tabMap)) {
+    const btn = document.getElementById(btnId);
+    if (!btn) continue;
+
+    const hasAccess = allowed === undefined || allowed.includes(perm);
+    btn.style.display = hasAccess ? "" : "none";
+
+    if (hasAccess && !firstAllowedTab) {
+      const tabKey = perm.replace("tab_", "").replace("stock", "stock").replace("stockfinal", "stockfinal");
+      // Map perm to tab key used in gdsShowTab
+      const permToTab = {
+        tab_stock: "stock", tab_vans: "vans", tab_transferts: "transferts",
+        tab_preparation: "preparation", tab_stockfinal: "stockfinal"
+      };
+      firstAllowedTab = permToTab[perm];
+    }
+  }
+
+  // Remove the initial CSS guard that hid all tabs
+  const guardStyle = document.getElementById("tabGuardStyle");
+  if (guardStyle) guardStyle.remove();
+
+  // Always auto-open first allowed tab
+  if (firstAllowedTab) {
+    setTimeout(() => {
+      if (typeof gdsShowTab === "function") gdsShowTab(firstAllowedTab);
+    }, 0);
+  }
 }
 
 // Block click on hidden buttons forced visible via devtools
@@ -251,17 +324,18 @@ async function renderRolePermissionsUI() {
   container.innerHTML = `<div style="font-size:11px;color:var(--text2)">Chargement…</div>`;
 
   const perms      = await _loadRolePermissions();
-  const roles      = ["user", "viewer"];
-  const roleLabels = { user: "Utilisateur", viewer: "Lecteur" };
-  const roleColors = { user: "#22c55e",     viewer: "#f59e0b" };
+  const roles      = ["user", "group1", "group2", "group3"];
+  const roleLabels = { user: "Utilisateur", group1: "Group 1", group2: "Group 2", group3: "Group 3" };
+  const roleColors = { user: "#22c55e", group1: "#f59e0b", group2: "#a78bfa", group3: "#f87171" };
 
   let html = "";
   for (const [section, buttons] of Object.entries(ROLE_PERMISSIONS)) {
     html += `
       <div style="margin-bottom:10px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;">
         <div style="font-size:12px;font-weight:700;color:var(--text1);margin-bottom:8px">${ROLE_SECTION_LABELS[section]}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;">
         ${roles.map(role => `
-          <div style="margin-bottom:8px;">
+          <div style="flex:1;min-width:140px;margin-bottom:8px;">
             <div style="font-size:10px;font-weight:600;color:${roleColors[role]};margin-bottom:4px">${roleLabels[role]}</div>
             <div style="display:flex;flex-direction:column;gap:4px;">
               ${buttons.map(btn => {
@@ -280,6 +354,7 @@ async function renderRolePermissionsUI() {
               }).join("")}
             </div>
           </div>`).join("")}
+        </div>
       </div>`;
   }
   container.innerHTML = html;
@@ -423,8 +498,8 @@ function _addUserBadge() {
   const headerRight = document.querySelector(".header-right");
   if (!headerRight || !AppAuth.currentUser) return;
 
-  const roleColors = { admin: "#4f8ef7", user: "#22c55e", viewer: "#f59e0b" };
-  const roleLabels = { admin: "Admin", user: "Utilisateur", viewer: "Lecteur" };
+  const roleColors = { admin: "#4f8ef7", user: "#22c55e", group1: "#f59e0b", group2: "#a78bfa", group3: "#f87171" };
+  const roleLabels = { admin: "Admin", user: "Utilisateur", group1: "Group 1", group2: "Group 2", group3: "Group 3" };
 
   const badge = document.createElement("div");
   badge.id = "userBadge";
@@ -478,7 +553,7 @@ async function getAppUsers() {
 async function addAppUser(username, password, role) {
   if (!isAdmin()) throw new Error("Accès refusé");
   if (!username || !password || !role) throw new Error("Champs manquants");
-  if (!["admin", "user", "viewer"].includes(role)) throw new Error("Rôle invalide");
+  if (!["admin", "user", "group1", "group2", "group3"].includes(role)) throw new Error("Rôle invalide");
 
   const existing = await _fbGet(`app_users/${username.toLowerCase()}`);
   if (existing) throw new Error("Cet identifiant existe déjà");
@@ -596,8 +671,8 @@ async function renderUserManagementUI() {
   container.innerHTML = `<div style="font-size:11px;color:var(--text2)">Chargement…</div>`;
 
   const users = await getAppUsers();
-  const roleColors = { admin: "#4f8ef7", user: "#22c55e", viewer: "#f59e0b" };
-  const roleLabels = { admin: "Admin", user: "Utilisateur", viewer: "Lecteur" };
+  const roleColors = { admin: "#4f8ef7", user: "#22c55e", group1: "#f59e0b", group2: "#a78bfa", group3: "#f87171" };
+  const roleLabels = { admin: "Admin", user: "Utilisateur", group1: "Group 1", group2: "Group 2", group3: "Group 3" };
 
   container.innerHTML = `
     <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">
@@ -606,7 +681,7 @@ async function renderUserManagementUI() {
           <span style="flex:1;font-size:12px;color:var(--text1)">${u.username}</span>
           <select onchange="changeAppUserRole('${u.username}', this.value)"
             style="font-size:11px;background:var(--bg3,#252a3d);color:var(--text1);border:1px solid var(--border);border-radius:5px;padding:2px 5px;">
-            ${["admin","user","viewer"].map(r => `
+            ${["admin","user","group1","group2","group3"].map(r => `
               <option value="${r}" ${u.role===r?"selected":""}>${roleLabels[r]}</option>
             `).join("")}
           </select>
@@ -644,7 +719,9 @@ async function renderUserManagementUI() {
       <select id="newUserRole"
         style="padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3,#252a3d);color:var(--text1);font-size:12px;outline:none">
         <option value="user">Utilisateur</option>
-        <option value="viewer">Lecteur</option>
+        <option value="group1">Group 1</option>
+        <option value="group2">Group 2</option>
+        <option value="group3">Group 3</option>
         <option value="admin">Admin</option>
       </select>
       <div id="addUserErr" style="color:#f87171;font-size:11px;min-height:14px;"></div>
@@ -695,7 +772,7 @@ async function checkAndLoginTwoStep() {
   _addUserBadge();
   _guardSettings();
   // Apply role-based permissions for all non-admin roles
-  applyRolePermissions();
+  await applyRolePermissions();
 }
 
 // ── Odoo session check (extracted from old _checkAndLogin) ────

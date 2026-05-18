@@ -152,13 +152,32 @@ async function loadData() {
       if (fb.rptColResteUnite    !== undefined) App.settings.rptColResteUnite    = fb.rptColResteUnite;
       if (fb.rptColCheck         !== undefined) App.settings.rptColCheck         = fb.rptColCheck;
       if (fb.rptColEcart         !== undefined) App.settings.rptColEcart         = fb.rptColEcart;
-      if (fb.rptColQty           !== undefined) App.settings.rptColQty           = fb.rptColQty;
+      
+
       if (fb.pdfColumns          !== undefined) App.settings.pdfColumns          = fb.pdfColumns;
       if (fb.pdfFontProduct      !== undefined) App.settings.pdfFontProduct      = fb.pdfFontProduct;
       if (fb.pdfFontQty          !== undefined) App.settings.pdfFontQty          = fb.pdfFontQty;
       if (fb.pdfRowPadding       !== undefined) App.settings.pdfRowPadding       = fb.pdfRowPadding;
     }
-  } catch(e) { console.warn("Firebase load failed:", e); }
+  } catch(e) {}
+
+  // جلب قائمة الموزعين من Firebase
+  try {
+    const r2 = await fetch(`${_FB_DB_URL}/sf_distributeurs.json`);
+    const fbDist = await r2.json();
+    if (Array.isArray(fbDist) && fbDist.length) {
+      localStorage.setItem("sf_distributeurs", JSON.stringify(fbDist));
+    }
+  } catch(e) {}
+
+  // جلب إعدادات Stock Final من Firebase
+  try {
+    const r3 = await fetch(`${_FB_DB_URL}/sf_settings.json`);
+    const fbSf = await r3.json();
+    if (fbSf?.columnsPerRow) {
+      localStorage.setItem("sf_columns_per_row", String(fbSf.columnsPerRow));
+    }
+  } catch(e) {}
 }
 
 // ── GDS Stock View ────────────────────────────────────────────
@@ -238,6 +257,7 @@ const _gdsTransfertsFilters = {
 };
 
 async function renderGdsTransferts() {
+  if (!isAdmin() && !_hasTabPerm("transferts")) return;
   const el = document.getElementById("gdsTransfertsContent");
   if (!el) return;
   el.innerHTML = `<div class="gds-refresh-bar">
@@ -572,6 +592,7 @@ function _gdsTrSetLimit(val) {
   renderGdsTransferts();
 }
 async function renderGdsStock() {
+  if (!isAdmin() && !_hasTabPerm("stock")) return;
   const el = document.getElementById("gdsContent");
   if (!el) return;
   el.innerHTML = `<div class="gds-refresh-bar" style="position:sticky;top:0;z-index:11;background:var(--bg2,#1e2336);">
@@ -720,6 +741,7 @@ async function renderGdsStock() {
 
 }
 async function renderGdsVans() {
+  if (!isAdmin() && !_hasTabPerm("vans")) return;
   const el = document.getElementById("gdsVansContent");
   if (!el) return;
   el.innerHTML = `<div class="gds-refresh-bar">
@@ -916,18 +938,35 @@ async function renderGdsVans() {
   }
 }
 
-async function gdsShowTab(tab) {
-  const stockEl = document.getElementById("gdsContent");
-  const vansEl  = document.getElementById("gdsVansContent");
-  const trEl    = document.getElementById("gdsTransfertsContent");
-  const prepEl  = document.getElementById("gdsPreparationContent");
-  const btnStock = document.getElementById("gdsTabStock");
-  const btnVans  = document.getElementById("gdsTabVans");
-  const btnTr    = document.getElementById("gdsTabTransferts");
-  const btnPrep  = document.getElementById("gdsTabPreparation");
+function _hasTabPerm(tab) {
+  const permMap = {
+    stock: "tab_stock", vans: "tab_vans",
+    transferts: "tab_transferts", preparation: "tab_preparation", stockfinal: "tab_stockfinal"
+  };
+  const perm = permMap[tab];
+  if (!perm || !_permCache) return true;
+  const section = _permSectionMap()[perm];
+  const role = AppAuth.currentUser?.role;
+  if (!section || !role) return true;
+  const allowed = _decodePerm(_permCache[section]?.[role]);
+  return allowed === undefined || allowed.includes(perm);
+}
 
-  [stockEl, vansEl, trEl, prepEl].forEach(e => { if (e) e.style.display = "none"; });
-  [btnStock, btnVans, btnTr, btnPrep].forEach(b => b?.classList.remove("gds-tab--active"));
+async function gdsShowTab(tab) {
+  if (!isAdmin() && !_hasTabPerm(tab)) return;
+  const stockEl     = document.getElementById("gdsContent");
+  const vansEl      = document.getElementById("gdsVansContent");
+  const trEl        = document.getElementById("gdsTransfertsContent");
+  const prepEl      = document.getElementById("gdsPreparationContent");
+  const sfEl        = document.getElementById("gdsStockFinalContent");
+  const btnStock    = document.getElementById("gdsTabStock");
+  const btnVans     = document.getElementById("gdsTabVans");
+  const btnTr       = document.getElementById("gdsTabTransferts");
+  const btnPrep     = document.getElementById("gdsTabPreparation");
+  const btnSF       = document.getElementById("gdsTabStockFinal");
+
+  [stockEl, vansEl, trEl, prepEl, sfEl].forEach(e => { if (e) e.style.display = "none"; });
+  [btnStock, btnVans, btnTr, btnPrep, btnSF].forEach(b => b?.classList.remove("gds-tab--active"));
 
   if (tab === "stock") {
     if (stockEl) stockEl.style.display = "";
@@ -944,6 +983,45 @@ async function gdsShowTab(tab) {
     if (prepEl) prepEl.style.display = "";
     btnPrep?.classList.add("gds-tab--active");
     await renderGdsPreparation();
+  } else if (tab === "stockfinal") {
+    if (sfEl) sfEl.style.display = "";
+    btnSF?.classList.add("gds-tab--active");
+    if (typeof sfRenderFromCache === "function") sfRenderFromCache();
+  }
+}
+
+// ── Stock Final XLSX export ───────────────────────────────────
+function exportStockFinalXlsx(vendorLabel, lines) {
+  const title    = `STOCK FINAL: ${vendorLabel}`;
+  const today    = new Date().toLocaleDateString("fr-FR");
+  const filtered = lines.filter(l => l.qty > 0);
+
+  if (typeof XLSX !== "undefined") {
+    const wb  = XLSX.utils.book_new();
+    const aoa = [];
+    aoa.push([`${title} (${today})`, "", ""]);
+    aoa.push([]);
+    aoa.push(["Article", "CDN", "Quantité"]);
+    filtered.forEach(l => {
+      const cdn = l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "";
+      aoa.push([l.name, cdn, l.qty]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const maxLen = Math.max(7, ...filtered.map(l => l.name.length));
+    ws["!cols"] = [{ wch: Math.min(maxLen * 1.05, 80) }, { wch: 10 }, { wch: 12 }];
+    ws["!merges"] = [{ s:{r:0,c:0}, e:{r:0,c:2} }];
+    XLSX.utils.book_append_sheet(wb, ws, "Stock Final");
+    XLSX.writeFile(wb, `stock_final_${vendorLabel.replace(/\s+/g,"_")}.xlsx`);
+  } else {
+    let csv = `"${title} (${today})"\n\nArticle,CDN,Quantité\n`;
+    filtered.forEach(l => {
+      const cdn = l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "";
+      csv += `"${l.name}",${cdn},${l.qty}\n`;
+    });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"}));
+    a.download = `stock_final_${vendorLabel.replace(/\s+/g,"_")}.csv`;
+    a.click();
   }
 }
 const _gdsPrep = {
@@ -1001,7 +1079,7 @@ async function _gdsPrepSaveCloud() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(data),
     });
-  } catch(e) { console.error("[GdsPrep] saveCloud:", e); }
+  } catch(e) {}
 }
 
 async function _gdsPrepLoadFromCloud() {
@@ -1034,7 +1112,7 @@ async function _gdsPrepLoadFromCloud() {
     _gdsPrep.excludedPickings    = data.excludedPickings    || [];
     _gdsPrep.outOfDateTransferts = data.outOfDateTransferts || [];
     return true;
-  } catch(e) { console.error("[GdsPrep] loadCloud:", e); return false; }
+  } catch(e) { return false; }
 }
 
 // ── Datetime helpers dd/mm/yyyy ───────────────────────────────
@@ -1210,7 +1288,7 @@ function _gdsPrepSave() {
     };
     localStorage.setItem(GDS_PREP_STORAGE_KEY, JSON.stringify(data));
     _gdsPrepSaveCloud();
-  } catch(e) { console.error("[GdsPrep] save:", e); }
+  } catch(e) {}
 }
 
 function _gdsPrepLoadFromStorage() {
@@ -1251,7 +1329,7 @@ Object.entries(data.chargeData || {}).forEach(([pid, ch]) => {
     const _nowLocal = () => { const n=new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}T${String(n.getHours()).padStart(2,"0")}:${String(n.getMinutes()).padStart(2,"0")}`; };
 if (fromEl) fromEl.value = _gdsPrepFmtDt(_gdsPrep.chargeFrom || _nowLocal());
 if (toEl)   toEl.value   = _gdsPrepFmtDt(_gdsPrep.chargeTo   || _nowLocal());
-  } catch(e) { console.error("[GdsPrep] load:", e); }
+  } catch(e) {}
 }
 
 // ── helpers ──────────────────────────────────────────────────
@@ -1273,6 +1351,7 @@ function _gdsPrepTotalPrep(line) {
 
 // ── render conteneur principal ────────────────────────────────
 async function renderGdsPreparation() {
+  if (!isAdmin() && !_hasTabPerm("preparation")) return;
   const el = document.getElementById("gdsPreparationContent");
   if (!el) return;
 
@@ -2061,10 +2140,6 @@ function gdsPrepShowCharge(pid) {
     else merged[key].qty += r.qty;
   });
   const mergedRows = Object.values(merged);
-  console.log("mergedRows:", mergedRows.length, mergedRows.map(r=>({ref:r.pickRef, qty:r.qty})));
-  console.log("merged keys:", Object.keys(merged));
-  console.log("rows pickRefs:", rows.map(r => JSON.stringify(r.pickRef)));
-
   const vanCount     = {};
   const partnerCount = {};
   mergedRows.forEach(r => {
@@ -2388,7 +2463,7 @@ function _gdsPrepShowOutOfDateInput() {
 
   const popup = document.createElement("div");
   popup.id = "gdsPrepOutOfDatePopup";
-  popup.style.cssText = `position:fixed;top:${rect.bottom+6}px;left:${rect.left}px;
+  popup.style.cssText = `position:fixed;top:${rect.bottom+6}px;left:50%;transform:translateX(-50%);
     background:var(--bg2);border:1px solid var(--border);border-radius:10px;
     box-shadow:0 8px 24px #0005;padding:14px;z-index:9999;min-width:280px;`;
   popup.innerHTML = `
@@ -2711,9 +2786,7 @@ if (missingPids.length) {
               byPicking[p.id].push(...ms);
             }
           });
-        } catch(e) {
-          console.warn("[GdsPrep] outOfDate fetch error:", e);
-        }
+        } catch(e) {}
       }
     }
 
@@ -2860,7 +2933,6 @@ async function _gdsPrepFetchSuggested() {
     });
     return agg;
   } catch(e) {
-    console.error("[GdsPrep] fetchSuggested:", e);
     return {};
   }
 }
@@ -2889,7 +2961,7 @@ async function _gdsPrepFetchMissingNames() {
     });
     _gdsPrepSave();
     _gdsPrepRenderTable();
-  } catch(e) { console.error("[GdsPrep] fetchMissingNames:", e); }
+  } catch(e) {}
 }
 
 const _gdsPrepCols = (() => {
@@ -3524,7 +3596,7 @@ function _gdsPrepExportXlsx() {
     + (rC("rptColChargCarton")? 1:0) + (rC("rptColChargUnite") ? 1:0)
     + (rC("rptColResteCarton")? 1:0) + (rC("rptColResteUnite") ? 1:0)
     + (rC("rptColCheck")      ? 1:0) + (rC("rptColEcart")      ? 1:0)
-    + (rC("rptColQty")        ? 1:0);
+    ;
 
   const thead = `<thead><tr>
     <th>Produit</th>
@@ -3536,7 +3608,7 @@ function _gdsPrepExportXlsx() {
     ${rC("rptColResteUnite")  ? '<th class="num">Reste U</th>'  : ''}
     ${rC("rptColCheck")       ? '<th class="num">✓</th>'        : ''}
     ${rC("rptColEcart")       ? '<th class="num">Écart</th>'    : ''}
-    ${rC("rptColQty")         ? '<th class="num">Qty</th>'      : ''}
+    
   </tr></thead>`;
 
   let allRows = [];
@@ -3561,7 +3633,7 @@ function _gdsPrepExportXlsx() {
       ${rC("rptColResteUnite")  ? `<td class="num" style="font-size:${_rptFontQ}px;color:${resteColor};font-weight:700">${resteUnite !==0?resteUnite :(resteTotal===0?"0":"—")}</td>` : ''}
       ${rC("rptColCheck")       ? `<td class="num" style="font-size:${_rptFontQ}px">${line.check?"✓":""}</td>`    : ''}
       ${rC("rptColEcart")       ? `<td class="num" style="font-size:${_rptFontQ}px">${line.ecart!=null?line.ecart:""}</td>` : ''}
-      ${rC("rptColQty")         ? `<td class="num" style="font-size:${_rptFontQ}px">${line.qty!=null?line.qty:""}</td>`     : ''}
+      
     </tr>`;
   };
 
@@ -3819,9 +3891,18 @@ function setMode(mode) {
   App.currentMode = mode;
   const gv = document.getElementById("gdsView");
   if (gv) gv.style.display = "flex";
-  renderGdsStock();
-  renderGdsVans();
-  renderGdsTransferts();
+
+  // Open first allowed tab instead of blindly calling all render functions
+  if (typeof _applyTabVisibility === "function") {
+    _applyTabVisibility(); // will auto-open first allowed tab
+  }
+
+  // For admin, default to stock tab
+  if (typeof isAdmin === "function" && isAdmin()) {
+    renderGdsStock();
+    renderGdsVans();
+    renderGdsTransferts();
+  }
 }
 
 
@@ -3887,7 +3968,6 @@ function _saveCatOrder(container) {
   if (!App.settings) App.settings = {};
   App.settings.categoryOrder = order;
   Storage.saveSettings(App.settings);
-  console.log("Saved order:", order);
   // حفظ سحابي
   fetch(`${_FB_DB_URL}/settings.json`, {
     method: "PUT",
@@ -3913,9 +3993,9 @@ function _saveCatOrder(container) {
       rptColResteUnite:    App.settings.rptColResteUnite    ?? true,
       rptColCheck:         App.settings.rptColCheck         ?? true,
       rptColEcart:         App.settings.rptColEcart         ?? true,
-      rptColQty:           App.settings.rptColQty           ?? true
+      
     })
-  }).catch(e => console.warn("Firebase save failed:", e));
+  }).catch(() => {});
   // تحديث الأرقام
   container.querySelectorAll(".cat-order-item").forEach((el, i) => {
     const numEl = el.querySelector("span:last-child");
@@ -3948,7 +4028,7 @@ s.vendors        = (s.vendors||[]).filter(v => v.name.trim());
   s.rptColResteUnite = document.getElementById("rptColResteUnite")?.checked ?? true;
   s.rptColCheck      = document.getElementById("rptColCheck")?.checked      ?? true;
   s.rptColEcart      = document.getElementById("rptColEcart")?.checked      ?? true;
-  s.rptColQty        = document.getElementById("rptColQty")?.checked        ?? true;
+  
 
   await Storage.saveSettings(s);
   // حفظ سحابي على Firebase
@@ -3976,11 +4056,11 @@ s.vendors        = (s.vendors||[]).filter(v => v.name.trim());
         rptColResteUnite: s.rptColResteUnite,
         rptColCheck:      s.rptColCheck,
         rptColEcart:      s.rptColEcart,
-        rptColQty:           s.rptColQty,
+        
         rapportRequireCheck: s.rapportRequireCheck
       })
     });
-  } catch(e) { console.warn("Firebase save failed:", e); }
+  } catch(e) {}
   if (saveMsg) { saveMsg.textContent="Sauvegardé ✓"; saveMsg.className="save-msg ok"; setTimeout(()=>{ saveMsg.textContent=""; }, 2000); }
   addNotif("Paramètres sauvegardés ✓", "success");
 }
@@ -4033,7 +4113,7 @@ function bindEvents() {
     if (fb.rptColResteUnite    !== undefined) App.settings.rptColResteUnite    = fb.rptColResteUnite;
     if (fb.rptColCheck         !== undefined) App.settings.rptColCheck         = fb.rptColCheck;
     if (fb.rptColEcart         !== undefined) App.settings.rptColEcart         = fb.rptColEcart;
-    if (fb.rptColQty           !== undefined) App.settings.rptColQty           = fb.rptColQty;
+    
   }
   if (tog) tog.checked = App.settings?.showTotalU !== false;
   const togPQ = document.getElementById("togglePrepQty");
@@ -4059,7 +4139,7 @@ function bindEvents() {
   chk("rptColResteUnite",  s.rptColResteUnite  ?? true);
   chk("rptColCheck",       s.rptColCheck       ?? true);
   chk("rptColEcart",       s.rptColEcart       ?? true);
-  chk("rptColQty",         s.rptColQty         ?? true);
+  
 });
 if (isAdmin()) {
   const container = document.getElementById("userManagementContainer");
@@ -4092,9 +4172,538 @@ if (isAdmin()) {
   ["pdfColumns","pdfFontProduct","pdfFontQty","pdfRowPadding",
    "rptColumns","rptFontProduct","rptFontQty","rptRowPadding",
    "rptColPrepCarton","rptColPrepUnite","rptColChargCarton","rptColChargUnite",
-   "rptColResteCarton","rptColResteUnite","rptColCheck","rptColEcart","rptColQty"
+   "rptColResteCarton","rptColResteUnite","rptColCheck","rptColEcart"
   ].forEach(id => {
     document.getElementById(id)?.addEventListener("change", () => saveSettings());
   });
+// ── RPC helper (used by Stock Final) ─────────────────────────
+async function _rpc_call(baseUrl, payload) {
+  const base = (baseUrl || "").replace(/\/$/, "");
+  const resp = await fetch("/api/web/dataset/call_kw", {
+    method:      "POST",
+    credentials: "include",
+    headers:     { "Content-Type": "application/json" },
+    body:        JSON.stringify({ jsonrpc:"2.0", method:"call", id:Date.now(), params:payload }),
+  });
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+  const json = await resp.json().catch(() => ({}));
+  if (json?.error) throw new Error(json.error?.data?.message || "Odoo error");
+  return json.result;
+}
 
+// ── Stock Final — Gestion distributeurs ──────────────────────
+window.sfGetDistributeurs = function sfGetDistributeurs() {
+  try { return JSON.parse(localStorage.getItem("sf_distributeurs") || "[]"); } catch { return []; }
+}
+window.sfSaveDistributeurs = function sfSaveDistributeurs(list) {
+  localStorage.setItem("sf_distributeurs", JSON.stringify(list));
+  fetch(`${_FB_DB_URL}/sf_distributeurs.json`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(list),
+  }).catch(() => {});
+}
+window.sfClearDistributeurs = function sfClearDistributeurs() {
+  sfSaveDistributeurs([]);
+  document.getElementById("sfImportStatus").textContent = "Liste effacée.";
+  sfRenderDistributeursList([]);
+}
+
+window.sfImportDistributeurs = function sfImportDistributeurs(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById("sfImportStatus");
+  statusEl.textContent = "Lecture en cours…";
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const wb   = XLSX.read(e.target.result, { type: "array" });
+      const ws   = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+      const imported = rows
+        .map(r => ({
+          nom: String(r["NOM"] || r["nom"] || r["Nom"] || "").trim(),
+          id:  String(r["ID"]  || r["id"]  || r["Id"]  || "").trim(),
+        }))
+        .filter(r => r.nom && r.id);
+
+      if (!imported.length) { statusEl.textContent = "❌ Aucune ligne valide (vérifiez les colonnes NOM et ID)."; return; }
+
+      // دمج مع القائمة الموجودة (تجنب التكرار)
+      const existing = sfGetDistributeurs();
+      const merged = [...existing];
+      imported.forEach(imp => {
+        if (!merged.find(e => e.id === imp.id)) merged.push(imp);
+      });
+
+      sfSaveDistributeurs(merged);
+      statusEl.textContent = `✓ ${imported.length} importé(s) — total: ${merged.length}`;
+      sfRenderDistributeursList(merged);
+    } catch(err) {
+      statusEl.textContent = "❌ Erreur: " + err.message;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+  input.value = "";
+}
+
+window.sfAddDistributeurRow = function sfAddDistributeurRow() {
+  const list = sfGetDistributeurs();
+  list.push({ nom: "", id: "" });
+  sfSaveDistributeurs(list);
+  sfRenderDistributeursList(list);
+  // focus sur le dernier input NOM
+  setTimeout(() => {
+    const inputs = document.querySelectorAll(".sf-row-nom");
+    inputs[inputs.length - 1]?.focus();
+  }, 50);
+}
+
+window.sfDeleteDistributeur = function sfDeleteDistributeur(idx) {
+  const list = sfGetDistributeurs();
+  list.splice(idx, 1);
+  sfSaveDistributeurs(list);
+  sfRenderDistributeursList(list);
+}
+
+window.sfUpdateDistributeur = function sfUpdateDistributeur(idx, field, value) {
+  const list = sfGetDistributeurs();
+  if (!list[idx]) return;
+  list[idx][field] = value.trim();
+  sfSaveDistributeurs(list);
+}
+
+window.sfRenderDistributeursList = function sfRenderDistributeursList(list) {
+  const container = document.getElementById("sfDistributeursList");
+  if (!container) return;
+  if (!list.length) {
+    container.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:8px 0;">Aucun distributeur.</div>`;
+    return;
+  }
+  container.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:11px;">
+      <thead><tr style="background:var(--bg3);">
+        <th style="padding:5px 8px;text-align:left;color:var(--text2);">NOM</th>
+        <th style="padding:5px 8px;text-align:left;color:var(--text2);">ID</th>
+        <th style="padding:5px 8px;width:28px;"></th>
+      </tr></thead>
+      <tbody>
+        ${list.map((r, i) => `
+        <tr style="background:${i%2===0?"var(--bg1)":"var(--bg2)"};">
+          <td style="padding:3px 6px;">
+            <input class="sf-row-nom" value="${r.nom.replace(/"/g,'&quot;')}"
+              onchange="sfUpdateDistributeur(${i},'nom',this.value)"
+              style="width:100%;background:transparent;border:none;border-bottom:1px solid var(--border);color:var(--text1);font-size:11px;padding:2px 2px;outline:none;"/>
+          </td>
+          <td style="padding:3px 6px;">
+            <input value="${r.id.replace(/"/g,'&quot;')}"
+              onchange="sfUpdateDistributeur(${i},'id',this.value)"
+              style="width:100%;background:transparent;border:none;border-bottom:1px solid var(--border);color:var(--text2);font-size:11px;padding:2px 2px;outline:none;"/>
+          </td>
+          <td style="padding:3px 4px;text-align:center;">
+            <button onclick="sfDeleteDistributeur(${i})"
+              style="background:none;border:none;cursor:pointer;color:#f87171;font-size:13px;line-height:1;padding:0;">✕</button>
+          </td>
+        </tr>`).join("")}
+      </tbody>
+    </table>`;
+}
+
+// ── Stock Final — toggle distributor panel ────────────────────
+window.sfToggleDist = function(id) {
+  const body  = document.getElementById(id);
+  const arrow = document.getElementById("arrow_" + id);
+  if (!body) return;
+  const isOpen = body.style.display === "block";
+  body.style.display  = isOpen ? "none" : "block";
+  if (arrow) arrow.style.transform = isOpen ? "" : "rotate(90deg)";
+};
+
+window.sfRefreshDist = async function(distId, distNom, distSafeId) {
+  const body = document.getElementById(distSafeId);
+  if (!body) return;
+  body.style.display = "block";
+  const arrow = document.getElementById("arrow_" + distSafeId);
+  if (arrow) arrow.style.transform = "rotate(90deg)";
+  body.innerHTML = `<div style="color:var(--text3);font-size:11px;padding:6px;">Chargement…</div>`;
+
+  const baseUrl = ODOO_BASE;
+  const targetDate = window._sfSelectedDate || new Date().toISOString().slice(0, 10);
+  try {
+    const plannings = await _rpc_call(baseUrl, {
+      model: "planning.planning", method: "search_read",
+      args: [[["user_id.id", "=", parseInt(distId)], ["date_start", "=", targetDate]]],
+      kwargs: { fields: ["id", "name", "date_start"] },
+    });
+    if (!plannings?.length) { body.innerHTML = `<div style="padding:6px;font-size:11px;color:var(--text3);">Aucune tournée trouvée.</div>`; return; }
+
+    let bodyHtml = "";
+    for (const round of plannings) {
+      const lines = await _rpc_fetchStockFinal(baseUrl, round.id);
+      if (!lines.length) {
+        bodyHtml += `<div style="margin-bottom:10px;">
+          <div style="margin-bottom:4px;color:var(--text2);font-size:10px;font-weight:600;">🔄 Tournée: ${round.name || round.id}</div>
+          <div style="color:var(--text3);font-size:11px;">Stock final vide.</div>
+        </div>`;
+        continue;
+      }
+      let tableHtml = `
+        <div style="margin-bottom:10px;">
+          <div style="margin-bottom:4px;color:var(--text2);font-size:10px;font-weight:600;">🔄 Tournée: ${round.name || round.id}</div>
+          <table style="width:100%;border-collapse:collapse;font-size:11px;">
+            <thead><tr style="background:var(--bg3);">
+              <th style="padding:4px 6px;text-align:left;color:var(--text2);">Article</th>
+              <th style="padding:4px 6px;text-align:center;color:var(--text2);">CDN</th>
+              <th style="padding:4px 6px;text-align:center;color:var(--text2);">Qté</th>
+            </tr></thead><tbody>`;
+      lines.forEach((l, i) => {
+        const cdn = l._cdn_override !== undefined && l._cdn_override !== null
+          ? l._cdn_override
+          : (l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "—");
+        tableHtml += `<tr style="background:${i%2===0?"var(--bg1)":"var(--bg2)"};">
+          <td style="padding:3px 6px;color:var(--text1);">${l.name}</td>
+          <td style="padding:3px 6px;text-align:center;color:var(--text2);">${cdn}</td>
+          <td style="padding:3px 6px;text-align:center;font-weight:600;color:var(--text1);">${l.qty}</td>
+        </tr>`;
+      });
+      const roundLabel = `${distNom} - ${round.name || round.id}`;
+      tableHtml += `</tbody></table>
+        <button class="gds-refresh-btn" style="margin-top:6px;" onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})'>⬇ Export ${round.name || round.id}</button>
+      </div>`;
+      bodyHtml += tableHtml;
+    }
+    body.innerHTML = bodyHtml;
+    body.style.padding = "8px";
+  } catch(err) {
+    body.innerHTML = `<span style="color:#f87171;">Erreur: ${err.message}</span>`;
+  }
+};
+
+// ── Stock Final — render tab ──────────────────────────────────
+window.sfRenderFromCache = function sfRenderFromCache() {
+  const el = document.getElementById("gdsStockFinalContent");
+  if (!el) return;
+  // إذا المحتوى موجود بالفعل، لا تعيد الرسم
+  if (el.querySelector("#sfResultsContainer")) return;
+  // عرض واجهة فارغة مع زر تحديث فقط
+  const today = new Date().toISOString().slice(0, 10);
+  const savedDate = window._sfSelectedDate || today;
+  const isToday = savedDate === today;
+  el.innerHTML = `
+    <div class="date-switcher-bar" style="flex-shrink:0;">
+      <button class="ds-arrow" onclick="window._sfSelectedDate=new Date(new Date(window._sfSelectedDate||new Date().toISOString().slice(0,10)).getTime()-86400000).toISOString().slice(0,10); sfRenderFromCache();">&#8249;</button>
+      <div class="ds-label ${isToday ? 'ds-label--today' : ''}" style="position:relative;" onclick="document.getElementById('sfHiddenDate').showPicker()">
+        <span class="ds-date-text">${savedDate}</span>
+        ${isToday ? '<span class="ds-today-pill">Auj</span>' : ''}
+        <input type="date" id="sfHiddenDate" value="${savedDate}"
+          style="position:absolute;opacity:0;width:0;height:0;pointer-events:none;"
+          onchange="window._sfSelectedDate=this.value; sfRenderFromCache();" />
+      </div>
+      <button class="ds-arrow" ${isToday ? 'disabled' : ''} onclick="window._sfSelectedDate=new Date(new Date(window._sfSelectedDate||new Date().toISOString().slice(0,10)).getTime()+86400000).toISOString().slice(0,10); sfRenderFromCache();">&#8250;</button>
+    </div>
+    <div style="display:flex;gap:6px;padding:6px 10px;flex-shrink:0;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center;">
+      <button class="gds-refresh-btn" data-perm="sf_btn_refresh" onclick="renderGdsStockFinal()">↻ Actualiser</button>
+      <button class="gds-refresh-btn" data-perm="sf_btn_export" onclick="sfExportAll()">⬇ Tout exporter</button>
+    </div>
+    <div id="sfResultsContainer" style="padding:8px;display:grid;align-items:start;gap:10px;"></div>`;
+
+  // عرض البيانات المحفوظة
+  const cachedDate = window._sfSelectedDate || localStorage.getItem("sf_cache_last_date") || new Date().toISOString().slice(0,10);
+  const distributeurs = sfGetDistributeurs();
+  const container = document.getElementById("sfResultsContainer");
+  if (!container) return;
+  const sfMaxCols = parseInt(localStorage.getItem("sf_columns_per_row") || "1");
+  const screenW = window.innerWidth;
+  const actualCols = screenW < 480 ? 1 : screenW < 768 ? Math.min(sfMaxCols, 2) : sfMaxCols;
+  container.style.gridTemplateColumns = `repeat(${actualCols},1fr)`;
+
+  let hasCache = false;
+  distributeurs.forEach(dist => {
+    const cached = localStorage.getItem(`sf_cache_${cachedDate}_${dist.id}`);
+    if (!cached) return;
+    hasCache = true;
+    const section = document.createElement("div");
+    section.style.cssText = "border:1px solid var(--border);border-radius:8px;overflow:hidden;";
+    const distSafeId = "sf_dist_" + dist.id;
+    section.innerHTML = `
+      <div style="padding:7px 12px;background:var(--bg2);font-size:12px;font-weight:600;color:var(--text1);display:flex;justify-content:space-between;align-items:center;cursor:pointer;"
+        onclick="sfToggleDist('${distSafeId}')">
+        <span>📦 ${dist.nom}</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="gds-refresh-btn" style="font-size:10px;padding:2px 7px;" onclick="event.stopPropagation(); sfRefreshDist('${dist.id}','${dist.nom}','${distSafeId}')">↻</button>
+          <span id="arrow_${distSafeId}" style="font-size:11px;color:var(--text3);transition:transform 0.2s;">▶</span>
+        </div>
+      </div>
+      <div id="${distSafeId}" class="sf-dist-body" style="display:none;padding:8px;">${cached}</div>`;
+    container.appendChild(section);
+  });
+
+  if (!hasCache) {
+    container.innerHTML = `<div style="padding:20px;color:var(--text3);font-size:12px;text-align:center;">Appuyez sur <b>↻ Actualiser</b> pour charger le stock final.</div>`;
+  }
+
+};
+
+window.renderGdsStockFinal = async function renderGdsStockFinal() {
+  if (!isAdmin() && !_hasTabPerm("stockfinal")) return;
+  const el = document.getElementById("gdsStockFinalContent");
+  if (!el) return;
+
+  const distributeurs = sfGetDistributeurs();
+  if (!distributeurs.length) {
+    el.innerHTML = `<div style="padding:20px;color:var(--text3);font-size:13px;text-align:center;">
+      ⚠ Aucun distributeur configuré.<br>
+      <span style="font-size:11px;">Allez dans Paramètres → Stock Final pour importer la liste.</span>
+    </div>`;
+    return;
+  }
+
+  const baseUrl = ODOO_BASE;
+  if (!baseUrl) { el.innerHTML = `<div style="padding:16px;color:var(--text3)">URL non configurée</div>`; return; }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const savedDate = window._sfSelectedDate || today;
+
+  // رسالة تحميل
+  const isToday = savedDate === today;
+  el.innerHTML = `
+    <div class="date-switcher-bar" style="flex-shrink:0;">
+      <button class="ds-arrow" onclick="window._sfSelectedDate=new Date(new Date(window._sfSelectedDate||new Date().toISOString().slice(0,10)).getTime()-86400000).toISOString().slice(0,10); renderGdsStockFinal();">&#8249;</button>
+      <div class="ds-label ${isToday ? 'ds-label--today' : ''}" style="position:relative;" onclick="document.getElementById('sfHiddenDate').showPicker()">
+        <span class="ds-date-text">${savedDate}</span>
+        ${isToday ? '<span class="ds-today-pill">Auj</span>' : ''}
+        <input type="date" id="sfHiddenDate" value="${savedDate}"
+          style="position:absolute;opacity:0;width:0;height:0;pointer-events:none;"
+          onchange="window._sfSelectedDate=this.value; renderGdsStockFinal();" />
+      </div>
+      <button class="ds-arrow" ${isToday ? 'disabled' : ''} onclick="window._sfSelectedDate=new Date(new Date(window._sfSelectedDate||new Date().toISOString().slice(0,10)).getTime()+86400000).toISOString().slice(0,10); renderGdsStockFinal();">&#8250;</button>
+    </div>
+    <div style="display:flex;gap:6px;padding:6px 10px;flex-shrink:0;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center;">
+      <button class="gds-refresh-btn" data-perm="sf_btn_refresh" onclick="renderGdsStockFinal()">↻ Actualiser</button>
+      <button class="gds-refresh-btn" data-perm="sf_btn_export" onclick="sfExportAll()">⬇ Tout exporter</button>
+    </div>
+    <div id="sfResultsContainer" style="overflow-y:auto;flex:1;padding:8px;display:flex;flex-direction:column;gap:10px;">
+      <div class="gds-loading">Chargement des rounds…</div>
+    </div>`;
+
+  const container = document.getElementById("sfResultsContainer");
+  container.innerHTML = "";
+
+  const sfMaxCols = parseInt(localStorage.getItem("sf_columns_per_row") || "1");
+  const screenW = window.innerWidth;
+  const actualCols = screenW < 480 ? 1 : screenW < 768 ? Math.min(sfMaxCols, 2) : sfMaxCols;
+  container.style.cssText = `overflow-y:auto;flex:1;padding:8px;gap:10px;display:grid;grid-template-columns:repeat(${actualCols},1fr);align-items:start;`;
+
+  for (const dist of distributeurs) {
+    const distSafeId = "sf_dist_" + dist.id;
+    const section = document.createElement("div");
+    section.style.cssText = "border:1px solid var(--border);border-radius:8px;overflow:hidden;";
+    section.innerHTML = `
+      <div style="padding:7px 12px;background:var(--bg2);font-size:12px;font-weight:600;color:var(--text1);display:flex;justify-content:space-between;align-items:center;cursor:pointer;"
+        onclick="sfToggleDist('${distSafeId}')">
+        <span>📦 ${dist.nom}</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="gds-refresh-btn" style="font-size:10px;padding:2px 7px;" onclick="event.stopPropagation(); sfRefreshDist('${dist.id}', '${dist.nom}', '${distSafeId}')">↻</button>
+          <span id="arrow_${distSafeId}" style="font-size:11px;color:var(--text3);transition:transform 0.2s;">▶</span>
+        </div>
+      </div>
+      <div id="${distSafeId}" class="sf-dist-body" style="display:none;padding:8px;font-size:11px;color:var(--text3);">Chargement…</div>`;
+    container.appendChild(section);
+
+    const body = section.querySelector(".sf-dist-body");
+    try {
+      // جلب كل الجولات لهذا الموزع في اليوم المختار
+      const targetDate = window._sfSelectedDate || new Date().toISOString().slice(0, 10);
+      const plannings = await _rpc_call(baseUrl, {
+        model: "planning.planning", method: "search_read",
+        args: [[["user_id.id", "=", parseInt(dist.id)], ["date_start", "=", targetDate]]],
+        kwargs: { fields: ["id", "name", "date_start"] },
+      });
+
+      if (!plannings?.length) { body.textContent = "Aucune tournée trouvée."; continue; }
+
+      let allDistLines = [];
+      let bodyHtml = "";
+
+      for (const round of plannings) {
+        const lines = await _rpc_fetchStockFinal(baseUrl, round.id);
+
+        if (!lines.length) {
+          bodyHtml += `<div style="margin-bottom:10px;">
+            <div style="margin-bottom:4px;color:var(--text2);font-size:10px;font-weight:600;">🔄 Tournée: ${round.name || round.id}</div>
+            <div style="color:var(--text3);font-size:11px;">Stock final vide.</div>
+          </div>`;
+          continue;
+        }
+
+        let tableHtml = `
+          <div style="margin-bottom:10px;">
+            <div style="margin-bottom:4px;color:var(--text2);font-size:10px;font-weight:600;">🔄 Tournée: ${round.name || round.id}</div>
+            <table style="width:100%;border-collapse:collapse;font-size:11px;">
+              <thead><tr style="background:var(--bg3);">
+                <th style="padding:4px 6px;text-align:left;color:var(--text2);">Article</th>
+                <th style="padding:4px 6px;text-align:center;color:var(--text2);">CDN</th>
+                <th style="padding:4px 6px;text-align:center;color:var(--text2);">Qté</th>
+              </tr></thead><tbody>`;
+        lines.forEach((l, i) => {
+          const cdn = l._cdn_override !== undefined && l._cdn_override !== null
+          ? l._cdn_override
+          : (l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "—");
+          tableHtml += `<tr style="background:${i%2===0?"var(--bg1)":"var(--bg2)"};">
+            <td style="padding:3px 6px;color:var(--text1);">${l.name}</td>
+            <td style="padding:3px 6px;text-align:center;color:var(--text2);">${cdn}</td>
+            <td style="padding:3px 6px;text-align:center;font-weight:600;color:var(--text1);">${l.qty}</td>
+          </tr>`;
+        });
+        const roundLabel = `${dist.nom} - ${round.name || round.id}`;
+        tableHtml += `</tbody></table>
+          <button class="gds-refresh-btn" style="margin-top:6px;" onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})'>⬇ Export ${round.name || round.id}</button>
+        </div>`;
+        bodyHtml += tableHtml;
+        lines.forEach(l => allDistLines.push({ ...l, _roundLabel: round.name || round.id }));
+      }
+
+      body.innerHTML = bodyHtml;
+      body.style.padding = "8px";
+      // حفظ في localStorage
+      try {
+        localStorage.setItem(`sf_cache_${targetDate}_${dist.id}`, bodyHtml);
+      } catch(_) {}
+
+    } catch(err) {
+      body.innerHTML = `<span style="color:#f87171;">Erreur: ${err.message}</span>`;
+    }
+  }
+
+ // حفظ التاريخ الأخير المحدَّث
+  try { localStorage.setItem("sf_cache_last_date", targetDate); } catch(_) {}
+  // حفظ كل الـ lines للـ export الجماعي
+  window._sfAllDist = distributeurs;
+}
+
+async function sfExportAll() {
+  const distributeurs = sfGetDistributeurs();
+  const baseUrl = ODOO_BASE;
+  if (!baseUrl || !distributeurs.length) return;
+
+  addNotif(`Stock final: export groupé (${distributeurs.length} distributeurs)…`, "info");
+  const allLines = [];
+  for (const dist of distributeurs) {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const plannings = await _rpc_call(baseUrl, {
+        model: "planning.planning", method: "search_read",
+        args: [[["user_id.id", "=", parseInt(dist.id)], ["date_start", "=", today]]],
+        kwargs: { fields: ["id", "name"], limit: 1 },
+      });
+      if (!plannings?.length) continue;
+      const lines = await _rpc_fetchStockFinal(baseUrl, plannings[0].id);
+      lines.forEach(l => allLines.push({ ...l, _vendorLabel: dist.nom }));
+    } catch(err) {
+      addNotif(`Erreur ${dist.nom}: ${err.message}`, "error");
+    }
+  }
+  if (!allLines.length) { addNotif("Stock final: vide", "info"); return; }
+
+  // export CSV/XLSX مجمع
+  exportStockFinalXlsx("Groupe", allLines);
+  addNotif(`✓ Export groupé téléchargé`, "success");
+}
+function sfSaveColumnsPerRow(val) {
+  localStorage.setItem("sf_columns_per_row", val);
+  fetch(`${_FB_DB_URL}/sf_settings.json`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ columnsPerRow: parseInt(val) }),
+  }).catch(() => {});
+}
+window.sfSaveColumnsPerRow = sfSaveColumnsPerRow;
+// ── Stock final ───────────────────────────────────────────────
+async function _rpc_fetchStockFinal(baseUrl, roundId) {
+  const plannings = await _rpc_call(baseUrl, {
+    model: "planning.planning", method: "read",
+    args:  [[roundId], ["final_stock_line_ids", "stock_global_ledger"]], kwargs: {},
+  });
+  if (!plannings?.length) throw new Error("Planning introuvable");
+  const lineIds = plannings[0].final_stock_line_ids || [];
+
+  // جولة مفتوحة: نستخرج من stock_global_ledger HTML
+  if (!lineIds.length) {
+    const html = plannings[0].stock_global_ledger || "";
+    if (!html) return [];
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+    const rows = doc.querySelectorAll("tbody tr");
+    const results = [];
+    rows.forEach(row => {
+      const cells = row.querySelectorAll("td");
+      if (cells.length < 7) return;
+      const nameRaw = cells[0].textContent.trim();
+      const sfRaw   = cells[6].textContent.trim();
+      if (!nameRaw || !sfRaw || nameRaw.toLowerCase() === "total") return;
+      // استخراج CARTON/FARDEAU كـ CDN و Units كـ qty
+      let cdn = 0, units = 0;
+      const cartonMatch = sfRaw.match(/(\d+)\s*(CARTON|FARDEAU)/i);
+      const unitMatch   = sfRaw.match(/(\d+)\s*Unit/i);
+      if (cartonMatch) cdn   = parseInt(cartonMatch[1]);
+      if (unitMatch)   units = parseInt(unitMatch[1]);
+      // إذا لا يوجد units وفيه carton فقط → qty=0, cdn=carton
+      // إذا لا يوجد carton وفيه units فقط → cdn=—, qty=units
+      results.push({
+        name: nameRaw,
+        qty: units,
+        packaging_qty: cdn > 0 ? 1 : 0,  // trick: نجعل cdn يظهر مباشرة
+        packaging_name: cartonMatch?.[2] || "",
+        _cdn_override: cdn > 0 ? cdn : null,
+      });
+    });
+    return results;
+  }
+
+  const lines = await _rpc_call(baseUrl, {
+    model: "planning.initial_final_stock_line", method: "read",
+    args:  [lineIds, ["product_id", "product_uom_qty", "uom_id"]],
+    kwargs: {},
+  });
+
+  const productIds = (lines || []).map(l =>
+    Array.isArray(l.product_id) ? l.product_id[0] : l.product_id
+  ).filter(Boolean);
+
+  // جلب بيانات المنتج الكاملة للحصول على display name صحيح
+  const prodRecords = productIds.length ? await _rpc_call(baseUrl, {
+    model: "product.product", method: "search_read",
+    args: [[["id", "in", productIds]]],
+    kwargs: { fields: ["id", "name", "default_code"], limit: 500 },
+  }).catch(() => []) : [];
+  const prodMap = {};
+  (prodRecords || []).forEach(p => { prodMap[p.id] = p; });
+
+  const pkgs = productIds.length ? await _rpc_call(baseUrl, {
+    model: "product.packaging", method: "search_read",
+    args:  [[["product_id", "in", productIds]]],
+    kwargs: { fields: ["product_id", "name", "qty"], limit: 200 },
+  }).catch(() => []) : [];
+
+  const packagingMap = {};
+  (pkgs || []).forEach(p => {
+    const pid = Array.isArray(p.product_id) ? p.product_id[0] : p.product_id;
+    if (!packagingMap[pid]) packagingMap[pid] = { qty: p.qty || 1, name: p.name || "" };
+  });
+
+  return (lines || [])
+    .filter(l => (l.product_uom_qty || 0) !== 0)
+    .map(l => {
+      const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
+      const pkg = packagingMap[pid];
+      return {
+        name:           _productDisplayName(prodMap[pid]) || (Array.isArray(l.product_id) ? l.product_id[1] : String(l.product_id)),
+        qty:            l.product_uom_qty || 0,
+        packaging_qty:  pkg?.qty || 0,
+        packaging_name: pkg?.name || "",
+      };
+    });
+}
 }
