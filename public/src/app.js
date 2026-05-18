@@ -3547,7 +3547,7 @@ function _gdsPrepExportXlsx() {
 
   const buildRow = (item, idx) => {
     if (item.type === "cat") {
-      return `<tr class="cat-row"><td colspan="${colCount}">${item.cat}</td></tr>`;
+      return `<tr class="cat-row"><td colspan="${colCount}" style="background:#1a6b3a!important;color:#fff!important;font-weight:bold;">${item.cat}</td></tr>`;
     }
     const { line, ch, resteCarton, resteUnite, resteTotal } = item;
     const resteColor = resteTotal === 0 ? "#16a34a" : resteTotal < 0 ? "#dc2626" : "#0ea5e9";
@@ -3568,8 +3568,14 @@ function _gdsPrepExportXlsx() {
   let bodyHtml;
   if (_rptCols === 2) {
     const half = Math.ceil(allRows.length / 2);
-    const left  = allRows.slice(0, half).map(buildRow).join("");
-    const right = allRows.slice(half).map(buildRow).join("");
+let splitIdx = half;
+while (splitIdx < allRows.length && allRows[splitIdx].type !== "cat") splitIdx++;
+if (splitIdx >= allRows.length) {
+  splitIdx = half;
+  while (splitIdx > 0 && allRows[splitIdx].type !== "cat") splitIdx--;
+}
+const left  = allRows.slice(0, splitIdx).map(buildRow).join("");
+const right = allRows.slice(splitIdx).map(buildRow).join("");
     bodyHtml = `
       <div style="display:flex;gap:4mm;align-items:flex-start;">
         <div style="width:calc(50% - 2mm);border-right:1px dashed #aaa;padding-right:4mm;">
@@ -3596,7 +3602,7 @@ function _gdsPrepExportXlsx() {
     td { border: 1px solid #ccc; padding: ${_rptPad}px 4px; word-break: break-word; white-space: normal; }
     .num { text-align: center; width: 36px; }
     tr:nth-child(even) td { background: #f0f7f3; }
-    .cat-row td { background: #1a6b3a; color: #fff; font-weight: bold; font-size: ${_rptFontP}px; }
+    .cat-row td { background: #1a6b3a !important; color: #fff !important; font-weight: bold; font-size: ${_rptFontP}px; }
     tr { page-break-inside: avoid; }
     thead { display: table-header-group; }
   </style></head><body>
@@ -3743,7 +3749,7 @@ function _gdsPrepDownloadPickingPdf(pickId) {
     thead { display: table-header-group; }
     th { background: #1a6b3a; color: #fff; padding: 4px 4px; text-align: left; font-size: 9px; font-weight: 700; border: 1px solid #1a6b3a; }
     td { padding: ${_rowPad}px 4px; border: 1px solid #d0d0d0; font-size: 9px; white-space: normal; word-break: normal; overflow-wrap: break-word; line-height: 1.2; }
-    tr:nth-child(even) td { background: #f0f7f3; }
+    tr:nth-child(even) td:not(.cat-row td) { background: #f0f7f3; }
     tr:nth-child(odd)  td { background: #fff; }
   </style></head><body>
   ${wrapperHtml}
@@ -3770,6 +3776,7 @@ function _downloadAsPdf(htmlContent, fileName) {
     _loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js")
   ]).then(() => {
     const A4_W = 794, A4_H = 1123; // A4 portrait px at 96dpi
+const A4_MM_W = 210, A4_MM_H = 297; // A4 in mm
 
     const iframe = document.createElement("iframe");
     iframe.style.cssText = `position:fixed;top:-9999px;left:-9999px;width:${A4_W}px;height:1px;border:none;`;
@@ -3787,15 +3794,15 @@ function _downloadAsPdf(htmlContent, fileName) {
 
       html2canvas(body, { scale: 2, useCORS: true, width: A4_W, windowWidth: A4_W }).then(canvas => {
         const { jsPDF } = window.jspdf;
-        const pdf = new jsPDF({ orientation: "portrait", unit: "px", format: [A4_W, A4_H] });
-        const imgData = canvas.toDataURL("image/jpeg", 0.95);
-        const imgH = (canvas.height * A4_W) / canvas.width;
-        let y = 0;
-        while (y < imgH) {
-          if (y > 0) pdf.addPage([A4_W, A4_H]);
-          pdf.addImage(imgData, "JPEG", 0, -y, A4_W, imgH);
-          y += A4_H;
-        }
+        const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+const imgData = canvas.toDataURL("image/jpeg", 0.95);
+const imgH_mm = (canvas.height * A4_MM_W) / canvas.width;
+let y = 0;
+while (y < imgH_mm) {
+  if (y > 0) pdf.addPage("a4", "portrait");
+  pdf.addImage(imgData, "JPEG", 0, -y, A4_MM_W, imgH_mm);
+  y += A4_MM_H;
+}
         pdf.save(fileName.endsWith(".pdf") ? fileName : fileName + ".pdf");
         document.body.removeChild(iframe);
         addNotif("✓ PDF téléchargé", "success");
