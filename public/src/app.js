@@ -3222,7 +3222,7 @@ function gdsPrepShowHist(idx) {
   } else {
     let html = `<table class="gds-table">
       <thead><tr>
-        <th>Heure</th><th>Type</th><th style="text-align:right">Colis</th><th style="text-align:right">U</th>
+        <th style="width:25%">Heure</th><th style="width:25%">Type</th><th style="width:25%;text-align:right">Colis</th><th style="width:25%;text-align:right">U</th>
       </tr></thead><tbody>`;
     line.history.forEach(h => {
       const color = h.type === "Augmentation" || h.type === "Ajout" ? "var(--green)" : h.type === "Réduction" ? "var(--red)" : "var(--gds-color)";
