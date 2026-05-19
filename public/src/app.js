@@ -4400,7 +4400,7 @@ window.sfRenderFromCache = async function sfRenderFromCache() {
 
   // ── رسم الهيكل دائماً (date bar + أزرار)
   el.innerHTML = `
-    <div class="date-switcher-bar" style="flex-shrink:0;">
+    <div class="date-switcher-bar" data-perm="sf_date_bar" style="flex-shrink:0;">
       <button class="ds-arrow" onclick="window._sfSelectedDate=new Date(new Date(window._sfSelectedDate||new Date().toISOString().slice(0,10)).getTime()-86400000).toISOString().slice(0,10); sfRenderFromCache();">&#8249;</button>
       <div class="ds-label ${isToday ? 'ds-label--today' : ''}" style="position:relative;" onclick="document.getElementById('sfHiddenDate').showPicker()">
         <span class="ds-date-text">${savedDate}</span>
@@ -4413,6 +4413,7 @@ window.sfRenderFromCache = async function sfRenderFromCache() {
     </div>
     <div style="display:flex;gap:6px;padding:6px 10px;flex-shrink:0;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center;">
       <button class="gds-refresh-btn" data-perm="sf_btn_refresh" onclick="renderGdsStockFinal()">↻ Actualiser</button>
+      <button class="gds-refresh-btn" data-perm="sf_btn_today" onclick="window._sfSelectedDate=new Date().toISOString().slice(0,10); sfRenderFromCache();">📅 Aujourd'hui</button>
       <button class="gds-refresh-btn" data-perm="sf_btn_export" onclick="sfExportAll()">⬇ Tout exporter</button>
     </div>
     <div id="sfResultsContainer" style="padding:8px;display:grid;align-items:start;gap:10px;"></div>`;
