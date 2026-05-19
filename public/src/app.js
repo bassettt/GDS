@@ -971,6 +971,7 @@ async function gdsShowTab(tab) {
   if (tab === "stock") {
     if (stockEl) stockEl.style.display = "";
     btnStock?.classList.add("gds-tab--active");
+    if (!stockEl?.innerHTML || stockEl.innerHTML.trim() === "" || stockEl.innerHTML.includes("Chargement")) renderGdsStock();
   } else if (tab === "vans") {
     if (vansEl) vansEl.style.display = "";
     btnVans?.classList.add("gds-tab--active");
