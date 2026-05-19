@@ -159,7 +159,7 @@ async function loadData() {
       if (fb.pdfFontQty          !== undefined) App.settings.pdfFontQty          = fb.pdfFontQty;
       if (fb.pdfRowPadding       !== undefined) App.settings.pdfRowPadding       = fb.pdfRowPadding;
     }
-  } catch(e) {}
+  } catch(e) { console.warn("Firebase load failed:", e); }
 
   // جلب قائمة الموزعين من Firebase
   try {
@@ -168,7 +168,7 @@ async function loadData() {
     if (Array.isArray(fbDist) && fbDist.length) {
       localStorage.setItem("sf_distributeurs", JSON.stringify(fbDist));
     }
-  } catch(e) {}
+  } catch(e) { console.warn("SF distributeurs load failed:", e); }
 
   // جلب إعدادات Stock Final من Firebase
   try {
@@ -177,7 +177,7 @@ async function loadData() {
     if (fbSf?.columnsPerRow) {
       localStorage.setItem("sf_columns_per_row", String(fbSf.columnsPerRow));
     }
-  } catch(e) {}
+  } catch(e) { console.warn("SF settings load failed:", e); }
 }
 
 // ── GDS Stock View ────────────────────────────────────────────
@@ -1079,7 +1079,7 @@ async function _gdsPrepSaveCloud() {
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(data),
     });
-  } catch(e) {}
+  } catch(e) { console.error("[GdsPrep] saveCloud:", e); }
 }
 
 async function _gdsPrepLoadFromCloud() {
@@ -1112,7 +1112,7 @@ async function _gdsPrepLoadFromCloud() {
     _gdsPrep.excludedPickings    = data.excludedPickings    || [];
     _gdsPrep.outOfDateTransferts = data.outOfDateTransferts || [];
     return true;
-  } catch(e) { return false; }
+  } catch(e) { console.error("[GdsPrep] loadCloud:", e); return false; }
 }
 
 // ── Datetime helpers dd/mm/yyyy ───────────────────────────────
@@ -1288,7 +1288,7 @@ function _gdsPrepSave() {
     };
     localStorage.setItem(GDS_PREP_STORAGE_KEY, JSON.stringify(data));
     _gdsPrepSaveCloud();
-  } catch(e) {}
+  } catch(e) { console.error("[GdsPrep] save:", e); }
 }
 
 function _gdsPrepLoadFromStorage() {
@@ -1329,7 +1329,7 @@ Object.entries(data.chargeData || {}).forEach(([pid, ch]) => {
     const _nowLocal = () => { const n=new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}T${String(n.getHours()).padStart(2,"0")}:${String(n.getMinutes()).padStart(2,"0")}`; };
 if (fromEl) fromEl.value = _gdsPrepFmtDt(_gdsPrep.chargeFrom || _nowLocal());
 if (toEl)   toEl.value   = _gdsPrepFmtDt(_gdsPrep.chargeTo   || _nowLocal());
-  } catch(e) {}
+  } catch(e) { console.error("[GdsPrep] load:", e); }
 }
 
 // ── helpers ──────────────────────────────────────────────────
@@ -2140,6 +2140,8 @@ function gdsPrepShowCharge(pid) {
     else merged[key].qty += r.qty;
   });
   const mergedRows = Object.values(merged);
+  
+
   const vanCount     = {};
   const partnerCount = {};
   mergedRows.forEach(r => {
@@ -2786,7 +2788,9 @@ if (missingPids.length) {
               byPicking[p.id].push(...ms);
             }
           });
-        } catch(e) {}
+        } catch(e) {
+          console.warn("[GdsPrep] outOfDate fetch error:", e);
+        }
       }
     }
 
@@ -2933,6 +2937,7 @@ async function _gdsPrepFetchSuggested() {
     });
     return agg;
   } catch(e) {
+    console.error("[GdsPrep] fetchSuggested:", e);
     return {};
   }
 }
@@ -2961,7 +2966,7 @@ async function _gdsPrepFetchMissingNames() {
     });
     _gdsPrepSave();
     _gdsPrepRenderTable();
-  } catch(e) {}
+  } catch(e) { console.error("[GdsPrep] fetchMissingNames:", e); }
 }
 
 const _gdsPrepCols = (() => {
@@ -3968,6 +3973,7 @@ function _saveCatOrder(container) {
   if (!App.settings) App.settings = {};
   App.settings.categoryOrder = order;
   Storage.saveSettings(App.settings);
+  
   // حفظ سحابي
   fetch(`${_FB_DB_URL}/settings.json`, {
     method: "PUT",
@@ -3995,7 +4001,7 @@ function _saveCatOrder(container) {
       rptColEcart:         App.settings.rptColEcart         ?? true,
       
     })
-  }).catch(() => {});
+  }).catch(e => console.warn("Firebase save failed:", e));
   // تحديث الأرقام
   container.querySelectorAll(".cat-order-item").forEach((el, i) => {
     const numEl = el.querySelector("span:last-child");
@@ -4060,7 +4066,7 @@ s.vendors        = (s.vendors||[]).filter(v => v.name.trim());
         rapportRequireCheck: s.rapportRequireCheck
       })
     });
-  } catch(e) {}
+  } catch(e) { console.warn("Firebase save failed:", e); }
   if (saveMsg) { saveMsg.textContent="Sauvegardé ✓"; saveMsg.className="save-msg ok"; setTimeout(()=>{ saveMsg.textContent=""; }, 2000); }
   addNotif("Paramètres sauvegardés ✓", "success");
 }
@@ -4201,7 +4207,7 @@ window.sfSaveDistributeurs = function sfSaveDistributeurs(list) {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(list),
-  }).catch(() => {});
+  }).catch(e => console.warn("SF distributeurs sync failed:", e));
 }
 window.sfClearDistributeurs = function sfClearDistributeurs() {
   sfSaveDistributeurs([]);
@@ -4382,15 +4388,16 @@ window.sfRefreshDist = async function(distId, distNom, distSafeId) {
 };
 
 // ── Stock Final — render tab ──────────────────────────────────
-window.sfRenderFromCache = function sfRenderFromCache() {
+// الدالة الموحدة: تتحقق من cache أولاً، وتجلب من الشبكة إذا لم يوجد
+window.sfRenderFromCache = async function sfRenderFromCache() {
   const el = document.getElementById("gdsStockFinalContent");
   if (!el) return;
-  // إذا المحتوى موجود بالفعل، لا تعيد الرسم
-  if (el.querySelector("#sfResultsContainer")) return;
-  // عرض واجهة فارغة مع زر تحديث فقط
-  const today = new Date().toISOString().slice(0, 10);
+
+  const today     = new Date().toISOString().slice(0, 10);
   const savedDate = window._sfSelectedDate || today;
-  const isToday = savedDate === today;
+  const isToday   = savedDate === today;
+
+  // ── رسم الهيكل دائماً (date bar + أزرار)
   el.innerHTML = `
     <div class="date-switcher-bar" style="flex-shrink:0;">
       <button class="ds-arrow" onclick="window._sfSelectedDate=new Date(new Date(window._sfSelectedDate||new Date().toISOString().slice(0,10)).getTime()-86400000).toISOString().slice(0,10); sfRenderFromCache();">&#8249;</button>
@@ -4409,24 +4416,22 @@ window.sfRenderFromCache = function sfRenderFromCache() {
     </div>
     <div id="sfResultsContainer" style="padding:8px;display:grid;align-items:start;gap:10px;"></div>`;
 
-  // عرض البيانات المحفوظة
-  const cachedDate = window._sfSelectedDate || localStorage.getItem("sf_cache_last_date") || new Date().toISOString().slice(0,10);
   const distributeurs = sfGetDistributeurs();
-  const container = document.getElementById("sfResultsContainer");
+  const container     = document.getElementById("sfResultsContainer");
   if (!container) return;
-  const sfMaxCols = parseInt(localStorage.getItem("sf_columns_per_row") || "1");
-  const screenW = window.innerWidth;
+
+  const sfMaxCols  = parseInt(localStorage.getItem("sf_columns_per_row") || "1");
+  const screenW    = window.innerWidth;
   const actualCols = screenW < 480 ? 1 : screenW < 768 ? Math.min(sfMaxCols, 2) : sfMaxCols;
   container.style.gridTemplateColumns = `repeat(${actualCols},1fr)`;
 
-  let hasCache = false;
+  // ── تحقق من cache لكل موزع
+  const missing = []; // موزعين ليس لهم cache في هذا التاريخ
   distributeurs.forEach(dist => {
-    const cached = localStorage.getItem(`sf_cache_${cachedDate}_${dist.id}`);
-    if (!cached) return;
-    hasCache = true;
-    const section = document.createElement("div");
-    section.style.cssText = "border:1px solid var(--border);border-radius:8px;overflow:hidden;";
+    const cached     = localStorage.getItem(`sf_cache_${savedDate}_${dist.id}`);
     const distSafeId = "sf_dist_" + dist.id;
+    const section    = document.createElement("div");
+    section.style.cssText = "border:1px solid var(--border);border-radius:8px;overflow:hidden;";
     section.innerHTML = `
       <div style="padding:7px 12px;background:var(--bg2);font-size:12px;font-weight:600;color:var(--text1);display:flex;justify-content:space-between;align-items:center;cursor:pointer;"
         onclick="sfToggleDist('${distSafeId}')">
@@ -4436,152 +4441,103 @@ window.sfRenderFromCache = function sfRenderFromCache() {
           <span id="arrow_${distSafeId}" style="font-size:11px;color:var(--text3);transition:transform 0.2s;">▶</span>
         </div>
       </div>
-      <div id="${distSafeId}" class="sf-dist-body" style="display:none;padding:8px;">${cached}</div>`;
+      <div id="${distSafeId}" class="sf-dist-body" style="display:none;padding:8px;">
+        ${cached || '<span style="color:var(--text3);font-size:11px;">Chargement…</span>'}
+      </div>`;
     container.appendChild(section);
+    if (!cached) missing.push(dist);
   });
 
-  if (!hasCache) {
+  if (!distributeurs.length) {
     container.innerHTML = `<div style="padding:20px;color:var(--text3);font-size:12px;text-align:center;">Appuyez sur <b>↻ Actualiser</b> pour charger le stock final.</div>`;
+    return;
   }
 
+  // ── جلب من الشبكة فقط للموزعين الغائبين عن cache
+  if (missing.length) {
+    const baseUrl = ODOO_BASE;
+    if (!baseUrl) return;
+    for (const dist of missing) {
+      const distSafeId = "sf_dist_" + dist.id;
+      const body = document.getElementById(distSafeId);
+      try {
+        const plannings = await _rpc_call(baseUrl, {
+          model: "planning.planning", method: "search_read",
+          args: [[["user_id.id", "=", parseInt(dist.id)], ["date_start", "=", savedDate]]],
+          kwargs: { fields: ["id", "name", "date_start"] },
+        });
+        if (!plannings?.length) { if (body) body.textContent = "Aucune tournée trouvée."; continue; }
+
+        let allDistLines = [];
+        let bodyHtml = "";
+        for (const round of plannings) {
+          const lines = await _rpc_fetchStockFinal(baseUrl, round.id);
+          if (!lines.length) {
+            bodyHtml += `<div style="margin-bottom:10px;">
+              <div style="margin-bottom:4px;color:var(--text2);font-size:10px;font-weight:600;">🔄 Tournée: ${round.name || round.id}</div>
+              <div style="color:var(--text3);font-size:11px;">Stock final vide.</div>
+            </div>`;
+            continue;
+          }
+          let tableHtml = `
+            <div style="margin-bottom:10px;">
+              <div style="margin-bottom:4px;color:var(--text2);font-size:10px;font-weight:600;">🔄 Tournée: ${round.name || round.id}</div>
+              <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                <thead><tr style="background:var(--bg3);">
+                  <th style="padding:4px 6px;text-align:left;color:var(--text2);">Article</th>
+                  <th style="padding:4px 6px;text-align:center;color:var(--text2);">CDN</th>
+                  <th style="padding:4px 6px;text-align:center;color:var(--text2);">Qté</th>
+                </tr></thead><tbody>`;
+          lines.forEach((l, i) => {
+            const cdn = l._cdn_override !== undefined && l._cdn_override !== null
+              ? l._cdn_override
+              : (l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "—");
+            tableHtml += `<tr style="background:${i%2===0?"var(--bg1)":"var(--bg2)"};">
+              <td style="padding:3px 6px;color:var(--text1);">${l.name}</td>
+              <td style="padding:3px 6px;text-align:center;color:var(--text2);">${cdn}</td>
+              <td style="padding:3px 6px;text-align:center;font-weight:600;color:var(--text1);">${l.qty}</td>
+            </tr>`;
+          });
+          const roundLabel = `${dist.nom} - ${round.name || round.id}`;
+          tableHtml += `</tbody></table>
+            <button class="gds-refresh-btn" data-perm="sf_round_export" style="margin-top:6px;" onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})'>⬇ Export ${round.name || round.id}</button>
+          </div>`;
+          bodyHtml += tableHtml;
+          lines.forEach(l => allDistLines.push({ ...l, _roundLabel: round.name || round.id }));
+        }
+        if (body) { body.innerHTML = bodyHtml; body.style.padding = "8px"; }
+        try { localStorage.setItem(`sf_cache_${savedDate}_${dist.id}`, bodyHtml); } catch(_) {}
+      } catch(err) {
+        if (body) body.innerHTML = `<span style="color:#f87171;">Erreur: ${err.message}</span>`;
+      }
+    }
+    try { localStorage.setItem("sf_cache_last_date", savedDate); } catch(_) {}
+  }
 };
 
+// ── Force refresh: يمسح cache اليوم الحالي ويعيد الجلب من الشبكة
 window.renderGdsStockFinal = async function renderGdsStockFinal() {
   if (!isAdmin() && !_hasTabPerm("stockfinal")) return;
-  const el = document.getElementById("gdsStockFinalContent");
-  if (!el) return;
-
   const distributeurs = sfGetDistributeurs();
   if (!distributeurs.length) {
-    el.innerHTML = `<div style="padding:20px;color:var(--text3);font-size:13px;text-align:center;">
+    const el = document.getElementById("gdsStockFinalContent");
+    if (el) el.innerHTML = `<div style="padding:20px;color:var(--text3);font-size:13px;text-align:center;">
       ⚠ Aucun distributeur configuré.<br>
       <span style="font-size:11px;">Allez dans Paramètres → Stock Final pour importer la liste.</span>
     </div>`;
     return;
   }
-
   const baseUrl = ODOO_BASE;
-  if (!baseUrl) { el.innerHTML = `<div style="padding:16px;color:var(--text3)">URL non configurée</div>`; return; }
-
-  const today = new Date().toISOString().slice(0, 10);
-  const savedDate = window._sfSelectedDate || today;
-
-  // رسالة تحميل
-  const isToday = savedDate === today;
-  el.innerHTML = `
-    <div class="date-switcher-bar" style="flex-shrink:0;">
-      <button class="ds-arrow" onclick="window._sfSelectedDate=new Date(new Date(window._sfSelectedDate||new Date().toISOString().slice(0,10)).getTime()-86400000).toISOString().slice(0,10); renderGdsStockFinal();">&#8249;</button>
-      <div class="ds-label ${isToday ? 'ds-label--today' : ''}" style="position:relative;" onclick="document.getElementById('sfHiddenDate').showPicker()">
-        <span class="ds-date-text">${savedDate}</span>
-        ${isToday ? '<span class="ds-today-pill">Auj</span>' : ''}
-        <input type="date" id="sfHiddenDate" value="${savedDate}"
-          style="position:absolute;opacity:0;width:0;height:0;pointer-events:none;"
-          onchange="window._sfSelectedDate=this.value; renderGdsStockFinal();" />
-      </div>
-      <button class="ds-arrow" ${isToday ? 'disabled' : ''} onclick="window._sfSelectedDate=new Date(new Date(window._sfSelectedDate||new Date().toISOString().slice(0,10)).getTime()+86400000).toISOString().slice(0,10); renderGdsStockFinal();">&#8250;</button>
-    </div>
-    <div style="display:flex;gap:6px;padding:6px 10px;flex-shrink:0;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center;">
-      <button class="gds-refresh-btn" data-perm="sf_btn_refresh" onclick="renderGdsStockFinal()">↻ Actualiser</button>
-      <button class="gds-refresh-btn" data-perm="sf_btn_export" onclick="sfExportAll()">⬇ Tout exporter</button>
-    </div>
-    <div id="sfResultsContainer" style="overflow-y:auto;flex:1;padding:8px;display:flex;flex-direction:column;gap:10px;">
-      <div class="gds-loading">Chargement des rounds…</div>
-    </div>`;
-
-  const container = document.getElementById("sfResultsContainer");
-  container.innerHTML = "";
-
-  const sfMaxCols = parseInt(localStorage.getItem("sf_columns_per_row") || "1");
-  const screenW = window.innerWidth;
-  const actualCols = screenW < 480 ? 1 : screenW < 768 ? Math.min(sfMaxCols, 2) : sfMaxCols;
-  container.style.cssText = `overflow-y:auto;flex:1;padding:8px;gap:10px;display:grid;grid-template-columns:repeat(${actualCols},1fr);align-items:start;`;
-
-  for (const dist of distributeurs) {
-    const distSafeId = "sf_dist_" + dist.id;
-    const section = document.createElement("div");
-    section.style.cssText = "border:1px solid var(--border);border-radius:8px;overflow:hidden;";
-    section.innerHTML = `
-      <div style="padding:7px 12px;background:var(--bg2);font-size:12px;font-weight:600;color:var(--text1);display:flex;justify-content:space-between;align-items:center;cursor:pointer;"
-        onclick="sfToggleDist('${distSafeId}')">
-        <span>📦 ${dist.nom}</span>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <button class="gds-refresh-btn" style="font-size:10px;padding:2px 7px;" onclick="event.stopPropagation(); sfRefreshDist('${dist.id}', '${dist.nom}', '${distSafeId}')">↻</button>
-          <span id="arrow_${distSafeId}" style="font-size:11px;color:var(--text3);transition:transform 0.2s;">▶</span>
-        </div>
-      </div>
-      <div id="${distSafeId}" class="sf-dist-body" style="display:none;padding:8px;font-size:11px;color:var(--text3);">Chargement…</div>`;
-    container.appendChild(section);
-
-    const body = section.querySelector(".sf-dist-body");
-    try {
-      // جلب كل الجولات لهذا الموزع في اليوم المختار
-      const targetDate = window._sfSelectedDate || new Date().toISOString().slice(0, 10);
-      const plannings = await _rpc_call(baseUrl, {
-        model: "planning.planning", method: "search_read",
-        args: [[["user_id.id", "=", parseInt(dist.id)], ["date_start", "=", targetDate]]],
-        kwargs: { fields: ["id", "name", "date_start"] },
-      });
-
-      if (!plannings?.length) { body.textContent = "Aucune tournée trouvée."; continue; }
-
-      let allDistLines = [];
-      let bodyHtml = "";
-
-      for (const round of plannings) {
-        const lines = await _rpc_fetchStockFinal(baseUrl, round.id);
-
-        if (!lines.length) {
-          bodyHtml += `<div style="margin-bottom:10px;">
-            <div style="margin-bottom:4px;color:var(--text2);font-size:10px;font-weight:600;">🔄 Tournée: ${round.name || round.id}</div>
-            <div style="color:var(--text3);font-size:11px;">Stock final vide.</div>
-          </div>`;
-          continue;
-        }
-
-        let tableHtml = `
-          <div style="margin-bottom:10px;">
-            <div style="margin-bottom:4px;color:var(--text2);font-size:10px;font-weight:600;">🔄 Tournée: ${round.name || round.id}</div>
-            <table style="width:100%;border-collapse:collapse;font-size:11px;">
-              <thead><tr style="background:var(--bg3);">
-                <th style="padding:4px 6px;text-align:left;color:var(--text2);">Article</th>
-                <th style="padding:4px 6px;text-align:center;color:var(--text2);">CDN</th>
-                <th style="padding:4px 6px;text-align:center;color:var(--text2);">Qté</th>
-              </tr></thead><tbody>`;
-        lines.forEach((l, i) => {
-          const cdn = l._cdn_override !== undefined && l._cdn_override !== null
-          ? l._cdn_override
-          : (l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "—");
-          tableHtml += `<tr style="background:${i%2===0?"var(--bg1)":"var(--bg2)"};">
-            <td style="padding:3px 6px;color:var(--text1);">${l.name}</td>
-            <td style="padding:3px 6px;text-align:center;color:var(--text2);">${cdn}</td>
-            <td style="padding:3px 6px;text-align:center;font-weight:600;color:var(--text1);">${l.qty}</td>
-          </tr>`;
-        });
-        const roundLabel = `${dist.nom} - ${round.name || round.id}`;
-        tableHtml += `</tbody></table>
-          <button class="gds-refresh-btn" style="margin-top:6px;" onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})'>⬇ Export ${round.name || round.id}</button>
-        </div>`;
-        bodyHtml += tableHtml;
-        lines.forEach(l => allDistLines.push({ ...l, _roundLabel: round.name || round.id }));
-      }
-
-      body.innerHTML = bodyHtml;
-      body.style.padding = "8px";
-      // حفظ في localStorage
-      try {
-        localStorage.setItem(`sf_cache_${targetDate}_${dist.id}`, bodyHtml);
-      } catch(_) {}
-
-    } catch(err) {
-      body.innerHTML = `<span style="color:#f87171;">Erreur: ${err.message}</span>`;
-    }
-  }
-
- // حفظ التاريخ الأخير المحدَّث
-  try { localStorage.setItem("sf_cache_last_date", targetDate); } catch(_) {}
-  // حفظ كل الـ lines للـ export الجماعي
-  window._sfAllDist = distributeurs;
+  if (!baseUrl) return;
+  // مسح cache التاريخ الحالي لإجبار إعادة الجلب
+  const targetDate = window._sfSelectedDate || new Date().toISOString().slice(0, 10);
+  distributeurs.forEach(dist => {
+    try { localStorage.removeItem(`sf_cache_${targetDate}_${dist.id}`); } catch(_) {}
+  });
+  // تفويض لـ sfRenderFromCache التي ستجلب من الشبكة لأن الـ cache فارغ
+  await sfRenderFromCache();
 }
+
 
 async function sfExportAll() {
   const distributeurs = sfGetDistributeurs();
@@ -4617,7 +4573,7 @@ function sfSaveColumnsPerRow(val) {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ columnsPerRow: parseInt(val) }),
-  }).catch(() => {});
+  }).catch(e => console.warn("SF settings sync failed:", e));
 }
 window.sfSaveColumnsPerRow = sfSaveColumnsPerRow;
 // ── Stock final ───────────────────────────────────────────────
