@@ -52,6 +52,7 @@ async function _ensureDefaultAdmin() {
       role: "admin",
       createdAt: Date.now(),
     });
+    console.log("Default admin created: admin / admin123");
   }
 }
 
@@ -430,25 +431,23 @@ function _guardSettings() {
 function _buildAppLoginScreen() {
   const div = document.createElement("div");
   div.id = "appLoginScreen";
-  div.style.cssText = "display:flex;position:fixed;inset:0;z-index:10000;background:#0f1117;flex-direction:column;align-items:center;justify-content:center;gap:14px";
+  div.style.cssText = "display:flex;position:fixed;inset:0;z-index:10000;background:#0f1117;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px";
   div.innerHTML = `
-    <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
-      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="#4f8ef7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
-    <div style="color:#e2e8f0;font-size:15px;font-weight:700">OwDoo</div>
-    <div style="color:#64748b;font-size:11px;margin-bottom:4px">Connexion à l'application</div>
+    <img src="icons/icon512.png" style="width:72px;height:72px;border-radius:18px;margin-bottom:4px;"/>
+    <div style="color:#e2e8f0;font-size:17px;font-weight:700">OwDoo</div>
+    <div style="color:#64748b;font-size:12px;margin-bottom:4px">Connexion à l'application</div>
     <form onsubmit="event.preventDefault(); document.getElementById('appLoginBtn').click();" style="display:contents">
     <input id="appLoginUser" type="text" placeholder="Identifiant" autocomplete="username"
-      style="width:220px;padding:10px 12px;border-radius:8px;border:1px solid #2a2f45;background:#1e2336;color:#e2e8f0;font-size:13px;outline:none"/>
+      style="width:min(320px,90vw);padding:14px 16px;border-radius:10px;border:1px solid #2a2f45;background:#1e2336;color:#e2e8f0;font-size:16px;outline:none"/>
     <input id="appLoginPass" type="password" placeholder="Mot de passe" autocomplete="current-password"
-      style="width:220px;padding:10px 12px;border-radius:8px;border:1px solid #2a2f45;background:#1e2336;color:#e2e8f0;font-size:13px;outline:none"/>
+      style="width:min(320px,90vw);padding:14px 16px;border-radius:10px;border:1px solid #2a2f45;background:#1e2336;color:#e2e8f0;font-size:16px;outline:none"/>
     <button id="appLoginBtn" type="submit"
-      style="width:220px;padding:10px;border-radius:8px;background:#4f8ef7;color:#fff;font-size:13px;font-weight:700;border:none;cursor:pointer">
+      style="width:min(320px,90vw);padding:14px;border-radius:10px;background:#4f8ef7;color:#fff;font-size:16px;font-weight:700;border:none;cursor:pointer">
       Se connecter
     </button>
     </form>
-    <div id="appLoginErr" style="color:#f87171;font-size:11px;min-height:16px"></div>
-    <div style="color:#334155;font-size:10px;margin-top:8px">Étape 1/2 — Accès application</div>
+    <div id="appLoginErr" style="color:#f87171;font-size:12px;min-height:16px"></div>
+    <div style="color:#334155;font-size:11px;margin-top:4px">Étape 1/2 — Accès application</div>
   `;
   document.body.appendChild(div);
   return div;
@@ -712,11 +711,11 @@ async function renderUserManagementUI() {
     </div>
 
     <!-- Add user form -->
-    <form onsubmit="event.preventDefault(); _addUserUI();" style="display:flex;flex-direction:column;gap:7px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;">
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:7px;">
       <div style="font-size:11px;font-weight:600;color:var(--text2)">Ajouter un utilisateur</div>
-      <input id="newUserName" type="text" placeholder="Identifiant" autocomplete="username"
+      <input id="newUserName" type="text" placeholder="Identifiant"
         style="padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3,#252a3d);color:var(--text1);font-size:12px;outline:none"/>
-      <input id="newUserPass" type="password" placeholder="Mot de passe" autocomplete="new-password"
+      <input id="newUserPass" type="password" placeholder="Mot de passe"
         style="padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3,#252a3d);color:var(--text1);font-size:12px;outline:none"/>
       <select id="newUserRole"
         style="padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3,#252a3d);color:var(--text1);font-size:12px;outline:none">
@@ -727,11 +726,11 @@ async function renderUserManagementUI() {
         <option value="admin">Admin</option>
       </select>
       <div id="addUserErr" style="color:#f87171;font-size:11px;min-height:14px;"></div>
-      <button type="submit"
+      <button onclick="_addUserUI()"
         style="padding:8px;border-radius:6px;background:#4f8ef7;color:#fff;font-size:12px;font-weight:700;border:none;cursor:pointer">
         Ajouter
       </button>
-    </form>
+    </div>
   `;
 }
 
