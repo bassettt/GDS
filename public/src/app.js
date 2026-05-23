@@ -1074,6 +1074,7 @@ async function _gdsPrepSaveCloud() {
       excludedPickings:    _gdsPrep.excludedPickings,
       outOfDateTransferts: _gdsPrep.outOfDateTransferts,
       date:                new Date().toISOString().slice(0, 10),
+      savedBy:             AppAuth.currentUser?.username || "inconnu",
     };
     await fetch(`${_FB_DB_URL}/${_FB_KEY}.json`, {
       method: "PUT",
@@ -1089,7 +1090,9 @@ async function _gdsPrepLoadFromCloud() {
     const data = await res.json();
     if (!data) return false;
     const today = new Date().toISOString().slice(0, 10);
-    if (data.date !== today) return false;
+    const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+    if (data.date !== today && data.date !== yesterdayStr) return false;
     _gdsPrep.lines = (data.lines || []).map(line => {
       if (!line.unitSize && line.carton > 0) line.unitSize = line.qty / line.carton;
       return line;
@@ -1112,6 +1115,7 @@ async function _gdsPrepLoadFromCloud() {
     _gdsPrep.byPicking           = data.byPicking           || {};
     _gdsPrep.excludedPickings    = data.excludedPickings    || [];
     _gdsPrep.outOfDateTransferts = data.outOfDateTransferts || [];
+    _gdsPrep.savedBy = data.savedBy || "";
     return true;
   } catch(e) { console.error("[GdsPrep] loadCloud:", e); return false; }
 }
@@ -1298,7 +1302,9 @@ function _gdsPrepLoadFromStorage() {
     if (!raw) return;
     const data = JSON.parse(raw);
     const today = new Date().toISOString().slice(0, 10);
-    if (data.date !== today) return; // données d'un autre jour, on ignore
+    const yesterday2 = new Date(); yesterday2.setDate(yesterday2.getDate() - 1);
+    const yesterdayStr2 = yesterday2.toISOString().slice(0, 10);
+    if (data.date !== today && data.date !== yesterdayStr2) return; // données d'un autre jour, on ignore
     _gdsPrep.lines = (data.lines || []).map(line => {
       if (!line.unitSize && line.carton > 0) line.unitSize = line.qty / line.carton;
       return line;
@@ -1426,7 +1432,19 @@ const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
         + Nouvelle préparation
       </button>
     </div>
-    ${hasData ? `<div style="margin-left:auto;position:relative;">
+    ${hasData && App.settings?.showPrepSearch !== false ? `
+    <div id="gdsPrepSearchWrap" style="display:flex;align-items:center;gap:4px;margin-left:auto;">
+      <button id="gdsPrepSearchBtn" onclick="_gdsPrepToggleSearch()" title="Rechercher"
+        style="font-size:9px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;display:flex;align-items:center;gap:4px;">
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </button>
+      <input id="gdsPrepSearchInput" type="text" placeholder="Rechercher…"
+        oninput="_gdsPrepApplySearch(this.value)"
+        style="display:none;width:140px;max-width:40vw;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);font-size:11px;outline:none;transition:width .2s;"/>
+      <button id="gdsPrepSearchClear" onclick="_gdsPrepClearSearch()" title="Effacer"
+        style="display:none;font-size:11px;padding:2px 6px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;">✕</button>
+    </div>` : ""}
+    ${hasData ? `<div style="position:relative;">
       <button onclick="_gdsPrepToggleColPanel('__global__')" style="font-size:9px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;display:flex;align-items:center;gap:4px;">
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Col
       </button>
@@ -2071,7 +2089,7 @@ const val  = parseFloat(inputEl.value) || 0;
     return;
   }
   const totalIfCarton = field === "prepCarton" ? val * u + line.prepUnite : line.prepCarton * u + val;
-  if (totalIfCarton > line.qty) {
+  if (totalIfCarton > line.qty && !App.settings?.allowOverstock) {
     inputEl.style.borderColor = "var(--red)";
     inputEl.title = "القيمة تتجاوز المخزون";
     line._hasError = true;
@@ -2239,9 +2257,177 @@ function _gdsPrepDeltaInput(pid, field, inputEl) {
 function _gdsPrepUpdateConfirmBtn() {
   const btn = document.querySelector("#gdsPrepModal .gds-prep-modal-footer .gds-refresh-btn");
   if (!btn) return;
-  const hasErr = _gdsPrep.lines.some(l => l._hasError);
+  const hasErr = !App.settings?.allowOverstock && _gdsPrep.lines.some(l => l._hasError);
   btn.disabled = hasErr;
   btn.style.opacity = hasErr ? ".4" : "1";
+}
+
+// ── Quick Add mini-modal ──────────────────────────────────────
+function _gdsPrepQuickAdd(pid, anchorEl) {
+  // أغلق أي mini-modal مفتوح مسبقاً
+  document.getElementById("gdsPrepQuickAddPopup")?.remove();
+
+  const line = _gdsPrep.lines.find(l => l.pid === pid);
+  if (!line) return;
+
+  const u         = _gdsPrepUnitSize(line);
+  const stockC    = u > 0 ? Math.floor(line.qty / u) : 0;
+  const stockU    = u > 0 ? Math.round(line.qty % u) : Math.round(line.qty);
+  const allowOver = App.settings?.allowOverstock;
+
+  const popup = document.createElement("div");
+  popup.id = "gdsPrepQuickAddPopup";
+  popup.style.cssText = `
+    position:fixed;z-index:99999;
+    background:var(--bg2);border:1px solid var(--border);
+    border-radius:10px;padding:10px 12px;min-width:200px;
+    box-shadow:0 8px 24px rgba(0,0,0,.5);
+  `;
+
+  // تحديد الموضع بجانب الزر
+  const rect = anchorEl.getBoundingClientRect();
+  const top  = Math.min(rect.bottom + 4, window.innerHeight - 160);
+  const left = Math.max(4, Math.min(rect.left, window.innerWidth - 220));
+  popup.style.top  = top  + "px";
+  popup.style.left = left + "px";
+
+  // آخر قيم مُدخلة في الجلسة
+  const last = (window._gdsPrepQuickLast = window._gdsPrepQuickLast || {});
+  const lastC = "";
+  const lastU = "";
+
+  popup.innerHTML = `
+    <div style="font-size:10px;font-weight:600;color:var(--text1);margin-bottom:6px;max-width:180px;word-break:break-word;">${escHtml(line.name)}</div>
+    <div style="font-size:9px;color:var(--text3);margin-bottom:8px;">
+      Stock: ${stockC > 0 ? stockC+"C" : ""} ${stockU > 0 ? stockU+"U" : ""} ${line.qty === 0 ? "0" : ""}
+      ${line.prepCarton > 0 || line.prepUnite > 0 ? `· Prép: ${line.prepCarton||0}C ${line.prepUnite||0}U` : ""}
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:8px;">
+      <div style="flex:1;">
+        <div style="font-size:9px;color:var(--text3);margin-bottom:2px;">Colis</div>
+        <input id="gdsPrepQACarton" type="number" min="0" placeholder="0"
+          value="${lastC}"
+          style="width:100%;padding:4px 6px;border-radius:6px;border:1px solid var(--border);
+                 background:var(--bg3);color:var(--text1);font-size:13px;text-align:center;"/>
+      </div>
+      <div style="flex:1;">
+        <div style="font-size:9px;color:var(--text3);margin-bottom:2px;">Unité</div>
+        <input id="gdsPrepQAUnite" type="number" min="0" placeholder="0"
+          value="${lastU}"
+          style="width:100%;padding:4px 6px;border-radius:6px;border:1px solid var(--border);
+                 background:var(--bg3);color:var(--text1);font-size:13px;text-align:center;"/>
+      </div>
+    </div>
+    <div id="gdsPrepQAErr" style="font-size:9px;color:var(--red);margin-bottom:4px;display:none;"></div>
+    <button id="gdsPrepQAConfirm"
+      style="width:100%;padding:6px;border-radius:7px;border:none;cursor:pointer;
+             background:var(--gds-color);color:#fff;font-size:11px;font-weight:600;">
+      ＋ Ajouter
+    </button>
+  `;
+
+  document.body.appendChild(popup);
+
+  const inpC   = popup.querySelector("#gdsPrepQACarton");
+  const inpU   = popup.querySelector("#gdsPrepQAUnite");
+  const errEl  = popup.querySelector("#gdsPrepQAErr");
+  const btnOk  = popup.querySelector("#gdsPrepQAConfirm");
+
+  inpC.focus();
+  inpC.select();
+
+  function _validate() {
+    let c = parseFloat(inpC.value) || 0;
+    let uv = parseFloat(inpU.value) || 0;
+
+    // auto-convert U → C si ≥ unitSize
+    if (u > 0 && uv >= u) {
+      const addC = Math.floor(uv / u);
+      uv = Math.round(uv % u);
+      c += addC;
+      inpC.value = c;
+      inpU.value = uv;
+    }
+
+    const addTotal  = c * u + uv;
+    const newTotal  = line.prepCarton * u + line.prepUnite + addTotal;
+
+    if (c < 0 || uv < 0) {
+      errEl.textContent = "Valeur négative non autorisée";
+      errEl.style.display = "";
+      inpC.style.borderColor = inpU.style.borderColor = "var(--red)";
+      return null;
+    }
+    if (!allowOver && newTotal > line.qty) {
+      errEl.textContent = `Dépasse le stock (max +${line.qty - (line.prepCarton * u + line.prepUnite)})`;
+      errEl.style.display = "";
+      inpC.style.borderColor = inpU.style.borderColor = "var(--red)";
+      return null;
+    }
+    errEl.style.display = "";
+    inpC.style.borderColor = inpU.style.borderColor = "";
+    return { c, uv, addTotal };
+  }
+
+  function _confirm() {
+    const res = _validate();
+    if (!res) return;
+    const { c, uv, addTotal } = res;
+    if (addTotal === 0) { popup.remove(); return; }
+
+    // حفظ آخر قيمة
+    last[pid] = { c, u: uv };
+
+    // تطبيق الإضافة
+    line.prepCarton += c;
+    line.prepUnite  += uv;
+    if (line._hasError && !App.settings?.allowOverstock) {
+      line._hasError = false;
+    }
+    const now = new Date().toLocaleTimeString("fr-FR");
+    if (!line.history) line.history = [];
+    line.history.push({ ts: now, type: "Ajout rapide", carton: c, unite: uv, by: AppAuth.currentUser?.username || "" });
+
+    _gdsPrepSave();
+    _gdsPrepRenderTable();
+    _gdsPrepUpdateConfirmBtn();
+
+    // flash vert sur la ligne
+    setTimeout(() => {
+      const rows = document.querySelectorAll(`[data-pid="${pid}"]`);
+      rows.forEach(el => {
+        const tr = el.closest("tr");
+        if (tr) {
+          tr.style.transition = "background .1s";
+          tr.style.background = "rgba(34,197,94,.25)";
+          setTimeout(() => { tr.style.background = ""; tr.style.transition = ""; }, 700);
+        }
+      });
+    }, 50);
+
+    popup.remove();
+  }
+
+  btnOk.addEventListener("click", _confirm);
+
+  [inpC, inpU].forEach(inp => {
+    inp.addEventListener("input", _validate);
+    inp.addEventListener("keydown", e => {
+      if (e.key === "Enter") _confirm();
+      if (e.key === "Escape") popup.remove();
+    });
+  });
+
+  // إغلاق عند الضغط خارج الـ popup
+  setTimeout(() => {
+    function _outside(e) {
+      if (!popup.contains(e.target) && e.target !== anchorEl) {
+        popup.remove();
+        document.removeEventListener("click", _outside);
+      }
+    }
+    document.addEventListener("click", _outside);
+  }, 0);
 }
 
 // ── تأكيد النافذة ─────────────────────────────────────────────
@@ -2262,7 +2448,7 @@ function gdsPrepModalConfirm() {
     Object.entries(vals).forEach(([pid, v]) => {
       const line = _gdsPrep.lines.find(l => l.pid === Number(pid)); if (!line) return;
       const unitSize = _gdsPrepUnitSize(line);
-      if (v.c * unitSize + (v.u || 0) > line.qty) {
+      if (v.c * unitSize + (v.u || 0) > line.qty && !App.settings?.allowOverstock) {
         errors.push(line.name);
       } else {
         const wasEmpty = line.prepCarton === 0 && line.prepUnite === 0;
@@ -2270,7 +2456,7 @@ function gdsPrepModalConfirm() {
         line.prepUnite  = v.u || 0;
         if (line.prepCarton > 0 || line.prepUnite > 0)
           if (!line.history) line.history = [];
-line.history.push({ ts: now, type: "Ajout", carton: line.prepCarton, unite: line.prepUnite });
+line.history.push({ ts: now, type: "Ajout", carton: line.prepCarton, unite: line.prepUnite, by: AppAuth.currentUser?.username || "" });
       }
     });
   } else {
@@ -2281,7 +2467,7 @@ line.history.push({ ts: now, type: "Ajout", carton: line.prepCarton, unite: line
       const u    = _gdsPrepUnitSize(line);
       const newC = line.prepCarton + dc;
       const newU = line.prepUnite  + du;
-      if (newC < 0 || newU < 0 || newC * u + newU > line.qty) {
+      if (newC < 0 || newU < 0 || (newC * u + newU > line.qty && !App.settings?.allowOverstock)) {
         errors.push(line.name);
         line._hasError = true;
         return;
@@ -2291,7 +2477,7 @@ line.history.push({ ts: now, type: "Ajout", carton: line.prepCarton, unite: line
       line.prepUnite    = newU;
       const type = dc > 0 || du > 0 ? "Augmentation" : "Réduction";
       if (!line.history) line.history = [];
-line.history.push({ ts: now, type, carton: dc, unite: du });
+line.history.push({ ts: now, type, carton: dc, unite: du, by: AppAuth.currentUser?.username || "" });
       line._deltaCarton = 0;
       line._deltaUnite  = 0;
     });
@@ -3181,7 +3367,13 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
             placeholder="0"
             oninput="_gdsPrepEcartInput(${line.pid}, this.value)"/>
         </td>
-        <td style="text-align:center;white-space:nowrap;min-width:40px;" class="no-print">
+       <td style="text-align:center;white-space:nowrap;min-width:40px;" class="no-print">
+          <span data-perm="prep_quick_add">
+          <button class="gds-prep-hist-btn" onclick="_gdsPrepQuickAdd(${line.pid}, this)" title="Ajout rapide"
+            style="background:var(--gds-color);color:#fff;font-weight:700;font-size:13px;padding:0 5px;margin-right:2px;${!App.settings?.allowOverstock && line.qty === 0 ? 'opacity:.35;cursor:not-allowed;' : ''}">
+            ＋
+          </button>
+          </span>
           ${line.history?.length
             ? `<button class="gds-prep-hist-btn" onclick="gdsPrepShowHist(${i})" title="Historique">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3189,17 +3381,24 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
                 </svg>
                </button>`
             : ""}
-          ${Object.values(_gdsPrep.byPicking).some(mv => mv.some(m => m.product_id?.[0] === line.pid))
-            ? `<button class="gds-prep-hist-btn" onclick="gdsPrepShowCharge(${line.pid})" title="Détail chargement" style="margin-left:2px;">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
-                  <circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
-                </svg>
-               </button>`
-            : ""}
+          ${(() => {
+            const hasChg = Object.values(_gdsPrep.byPicking).some(mv => mv.some(m => m.product_id?.[0] === line.pid));
+            return `<button class="gds-prep-hist-btn" onclick="${hasChg ? `gdsPrepShowCharge(${line.pid})` : ''}" title="Détail chargement" style="margin-left:2px;${!hasChg ? 'opacity:.3;cursor:not-allowed;' : ''}" ${!hasChg ? 'disabled' : ''}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                <circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+              </svg>
+            </button>`;
+          })()}
         </td>
         ` : `
         <td style="text-align:center;white-space:nowrap;min-width:40px;">
+          <span data-perm="prep_quick_add">
+          <button class="gds-prep-hist-btn" onclick="_gdsPrepQuickAdd(${line.pid}, this)" title="Ajout rapide"
+            style="padding:0 5px;margin-right:2px;${!App.settings?.allowOverstock && line.qty === 0 ? 'opacity:.35;cursor:not-allowed;' : ''}">
+            ＋
+          </button>
+          </span>
           ${line.history?.length
             ? `<button class="gds-prep-hist-btn" onclick="gdsPrepShowHist(${i})" title="Historique">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3207,14 +3406,15 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
                 </svg>
                </button>`
             : ""}
-          ${Object.values(_gdsPrep.byPicking).some(mv => mv.some(m => m.product_id?.[0] === line.pid))
-            ? `<button class="gds-prep-hist-btn" onclick="gdsPrepShowCharge(${line.pid})" title="Détail chargement" style="margin-left:2px;">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
-                  <circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
-                </svg>
-               </button>`
-            : ""}
+          ${(() => {
+            const hasChg = Object.values(_gdsPrep.byPicking).some(mv => mv.some(m => m.product_id?.[0] === line.pid));
+            return `<button class="gds-prep-hist-btn" onclick="${hasChg ? `gdsPrepShowCharge(${line.pid})` : ''}" title="Détail chargement" style="margin-left:2px;${!hasChg ? 'opacity:.3;cursor:not-allowed;' : ''}" ${!hasChg ? 'disabled' : ''}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
+                <circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+              </svg>
+            </button>`;
+          })()}
         </td>`}
       </tr>`;
     });
@@ -3300,7 +3500,7 @@ function gdsPrepShowHist(idx) {
   } else {
     let html = `<table class="gds-table">
       <thead><tr>
-        <th style="width:25%">Heure</th><th style="width:25%">Type</th><th style="width:25%;text-align:right">Colis</th><th style="width:25%;text-align:right">U</th>
+        <th style="width:20%">Heure</th><th style="width:20%">Type</th><th style="width:20%;text-align:right">Colis</th><th style="width:20%;text-align:right">U</th><th style="width:20%">Par</th>
       </tr></thead><tbody>`;
     line.history.forEach(h => {
       const color = h.type === "Augmentation" || h.type === "Ajout" ? "var(--green)" : h.type === "Réduction" ? "var(--red)" : "var(--gds-color)";
@@ -3309,6 +3509,7 @@ function gdsPrepShowHist(idx) {
         <td style="font-weight:600;color:${color}">${h.type}</td>
         <td class="gds-qty">${h.carton > 0 ? "+"+h.carton : h.carton < 0 ? h.carton : "—"}</td>
         <td class="gds-qty">${h.unite > 0 ? "+"+h.unite : h.unite < 0 ? h.unite : "—"}</td>
+        <td style="font-size:10px;color:var(--text3)">${h.by || "—"}</td>
       </tr>`;
     });
     html += `</tbody></table>`;
@@ -3320,6 +3521,47 @@ function gdsPrepShowHist(idx) {
 function gdsPrepCloseHist() {
   const m = document.getElementById("gdsPrepHistModal");
   if (m) m.style.display = "none";
+}
+
+// ── بحث في جدول التحضير ──────────────────────────────────────
+function _gdsPrepToggleSearch() {
+  const inp  = document.getElementById("gdsPrepSearchInput");
+  const clr  = document.getElementById("gdsPrepSearchClear");
+  const btn  = document.getElementById("gdsPrepSearchBtn");
+  if (!inp) return;
+  const visible = inp.style.display !== "none";
+  inp.style.display  = visible ? "none" : "inline-block";
+  clr.style.display  = visible ? "none" : "inline-block";
+  btn.style.background = visible ? "var(--bg3)" : "var(--gds-color)";
+  btn.style.color      = visible ? "var(--text3)" : "#fff";
+  btn.style.borderColor = visible ? "var(--border)" : "var(--gds-color)";
+  if (!visible) { inp.focus(); inp.select(); }
+  else { _gdsPrepClearSearch(); }
+}
+
+function _gdsPrepClearSearch() {
+  const inp = document.getElementById("gdsPrepSearchInput");
+  if (inp) inp.value = "";
+  _gdsPrepApplySearch("");
+}
+
+function _gdsPrepApplySearch(q) {
+  const raw  = (q || "").trim().toLowerCase();
+  const term = raw.replace(/%/g, ".*");
+  const useRegex = raw.includes("%");
+  const regex = useRegex ? new RegExp(term) : null;
+  document.querySelectorAll("#gdsPrepTableWrap tbody tr").forEach(tr => {
+    const name = tr.querySelector("td:first-child")?.textContent?.toLowerCase() || "";
+    const match = !raw || (useRegex ? regex.test(name) : name.includes(raw));
+    tr.style.display = match ? "" : "none";
+  });
+  // إخفاء/إظهار headers الفئات إذا كل منتجاتها مخفية
+  document.querySelectorAll("#gdsPrepTableWrap table").forEach(tbl => {
+    const rows = tbl.querySelectorAll("tbody tr");
+    const allHidden = [...rows].every(r => r.style.display === "none");
+    const section = tbl.closest("div[style*='margin-bottom']") || tbl.parentElement;
+    if (section) section.style.display = allHidden ? "none" : "";
+  });
 }
 
 // ── تأكيد الإنهاء ─────────────────────────────────────────────
@@ -4019,6 +4261,8 @@ s.vendors        = (s.vendors||[]).filter(v => v.name.trim());
   s.showTotalU     = document.getElementById("toggleTotalU")?.checked ?? true;
   s.showPrepQty        = document.getElementById("togglePrepQty")?.checked ?? true;
   s.rapportRequireCheck = document.getElementById("toggleRapportCheck")?.checked ?? false;
+  s.allowOverstock = document.getElementById("toggleAllowOverstock")?.checked ?? false;
+  s.showPrepSearch = document.getElementById("togglePrepSearch")?.checked ?? true;
   s.pdfColumns     = parseInt(document.getElementById("pdfColumns")?.value     || "2");
   s.pdfFontProduct = parseInt(document.getElementById("pdfFontProduct")?.value || "10");
   s.pdfFontQty     = parseInt(document.getElementById("pdfFontQty")?.value     || "13");
@@ -4063,8 +4307,8 @@ s.vendors        = (s.vendors||[]).filter(v => v.name.trim());
         rptColResteUnite: s.rptColResteUnite,
         rptColCheck:      s.rptColCheck,
         rptColEcart:      s.rptColEcart,
-        
         rapportRequireCheck: s.rapportRequireCheck
+        , showPrepSearch: s.showPrepSearch
       })
     });
   } catch(e) { console.warn("Firebase save failed:", e); }
@@ -4104,6 +4348,7 @@ function bindEvents() {
     if (fb.showTotalU          !== undefined) App.settings.showTotalU          = fb.showTotalU;
     if (fb.showPrepQty         !== undefined) App.settings.showPrepQty         = fb.showPrepQty;
     if (fb.rapportRequireCheck !== undefined) App.settings.rapportRequireCheck = fb.rapportRequireCheck;
+	if (fb.showPrepSearch !== undefined) App.settings.showPrepSearch = fb.showPrepSearch;
     if (fb.pdfColumns          !== undefined) App.settings.pdfColumns          = fb.pdfColumns;
     if (fb.pdfFontProduct      !== undefined) App.settings.pdfFontProduct      = fb.pdfFontProduct;
     if (fb.pdfFontQty          !== undefined) App.settings.pdfFontQty          = fb.pdfFontQty;
@@ -4127,6 +4372,10 @@ function bindEvents() {
   if (togPQ) togPQ.checked = App.settings?.showPrepQty !== false;
   const togRC = document.getElementById("toggleRapportCheck");
   if (togRC) togRC.checked = App.settings?.rapportRequireCheck === true;
+  const togOV = document.getElementById("toggleAllowOverstock");
+  if (togOV) togOV.checked = App.settings?.allowOverstock === true;
+  const togPS = document.getElementById("togglePrepSearch");
+  if (togPS) togPS.checked = App.settings?.showPrepSearch !== false;
   const s = App.settings || {};
   const elSet = (id, val) => { const e = document.getElementById(id); if(e) e.value = val; };
   elSet("pdfColumns",      s.pdfColumns      ?? 2);
@@ -4174,6 +4423,15 @@ if (isAdmin()) {
   document.getElementById("toggleRapportCheck")?.addEventListener("change", e => {
     App.settings.rapportRequireCheck = e.target.checked;
     saveSettings();
+  });
+  document.getElementById("toggleAllowOverstock")?.addEventListener("change", e => {
+    App.settings.allowOverstock = e.target.checked;
+    saveSettings();
+  });
+  document.getElementById("togglePrepSearch")?.addEventListener("change", e => {
+    App.settings.showPrepSearch = e.target.checked;
+    saveSettings();
+    renderGdsPreparation();
   });
 
   ["pdfColumns","pdfFontProduct","pdfFontQty","pdfRowPadding",

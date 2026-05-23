@@ -265,6 +265,16 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;color:var(--text3)"><polyline points="9 18 15 12 9 6"/></svg>
           </div>
 
+          <!-- Card: Comportement & Validation -->
+          <div class="settings-card" onclick="_openSettingsModal('modalComportement')">
+            <div class="settings-card-icon">⚙️</div>
+            <div class="settings-card-text">
+              <div class="settings-card-title">Comportement & Validation</div>
+              <div class="settings-card-desc">Rapport, débogage, règles de saisie</div>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;color:var(--text3)"><polyline points="9 18 15 12 9 6"/></svg>
+          </div>
+
           <!-- Card: Impression Rapport PDF -->
           <div class="settings-card" onclick="_openSettingsModal('modalRapport')">
             <div class="settings-card-icon">📄</div>
@@ -396,11 +406,7 @@
                 <label class="toggle-label">Afficher colonne "qty" (Préparation / Chargement / Reste)</label>
                 <label class="toggle-switch"><input type="checkbox" id="togglePrepQty"><span class="toggle-slider"></span></label>
               </div>
-              <div class="toggle-row">
-                <label class="toggle-label">Rapport : exiger vérification complète avant affichage</label>
-                <label class="toggle-switch"><input type="checkbox" id="toggleRapportCheck"><span class="toggle-slider"></span></label>
               </div>
-            </div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
               <label style="font-size:11px;color:var(--text2)">Mise en page</label>
               <select id="pdfColumns" style="font-size:11px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);cursor:pointer;">
@@ -425,6 +431,35 @@
           </div>
           <div class="smodal-footer">
             <button class="gds-refresh-btn" style="background:var(--accent);" onclick="_closeSettingsModal('modalChargement')">Fermer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: Comportement & Validation -->
+      <div class="smodal-overlay" id="modalComportement">
+        <div class="smodal-box">
+          <div class="smodal-header">
+            <span class="smodal-title">⚙️ Comportement & Validation</span>
+            <button class="smodal-close" onclick="_closeSettingsModal('modalComportement')">✕</button>
+          </div>
+          <div class="smodal-body">
+            <div style="margin-top:6px;">
+              <div class="toggle-row">
+                <label class="toggle-label">Afficher le bouton de recherche dans la préparation</label>
+                <label class="toggle-switch"><input type="checkbox" id="togglePrepSearch" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <label class="toggle-label">Rapport : exiger vérification complète avant affichage</label>
+                <label class="toggle-switch"><input type="checkbox" id="toggleRapportCheck"><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <label class="toggle-label">Mode débogage : autoriser une quantité supérieure au stock</label>
+                <label class="toggle-switch"><input type="checkbox" id="toggleAllowOverstock"><span class="toggle-slider"></span></label>
+              </div>
+            </div>
+          </div>
+          <div class="smodal-footer">
+            <button class="gds-refresh-btn" style="background:var(--accent);" onclick="_closeSettingsModal('modalComportement')">Fermer</button>
           </div>
         </div>
       </div>

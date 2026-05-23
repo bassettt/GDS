@@ -130,6 +130,7 @@ const ROLE_PERMISSIONS = {
     { perm: "prep_exclu",             label: "Préparation — Exclu" },
     { perm: "prep_hors_date",         label: "Préparation — Hors date" },
     { perm: "prep_hors_date_add",     label: "Préparation — Hors date (+)" },
+    { perm: "prep_quick_add",         label: "Préparation — Ajout rapide (+)" },
   ],
   gds_stock_final: [
     { perm: "sf_date_bar",    label: "Stock Final — Barre de date" },
