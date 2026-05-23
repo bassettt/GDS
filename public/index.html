@@ -307,6 +307,18 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;color:var(--text3)"><polyline points="9 18 15 12 9 6"/></svg>
           </div>
 
+          <!-- Card: Entrepôts -->
+          <div id="warehouseSettingsContainer" style="display:none">
+            <div class="settings-card" onclick="_openSettingsModal('modalWarehouse'); renderWarehouseSettingsUI();">
+              <div class="settings-card-icon">🏭</div>
+              <div class="settings-card-text">
+                <div class="settings-card-title">Entrepôts</div>
+                <div class="settings-card-desc">Stock GDS et source préparation par entrepôt</div>
+              </div>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;color:var(--text3)"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
+          </div>
+
           <!-- Card: Ordre des catégories -->
           <div class="settings-card" onclick="_openSettingsModal('modalCategories')">
             <div class="settings-card-icon">📋</div>
@@ -370,6 +382,22 @@
           display:flex;justify-content:flex-end;gap:8px;flex-shrink:0;
         }
       </style>
+
+      <!-- Modal: Entrepôts -->
+      <div class="smodal-overlay" id="modalWarehouse">
+        <div class="smodal-box">
+          <div class="smodal-header">
+            <span class="smodal-title">🏭 Entrepôts</span>
+            <button class="smodal-close" onclick="_closeSettingsModal('modalWarehouse')">✕</button>
+          </div>
+          <div class="smodal-body">
+            <div id="warehouseSettingsSection">Chargement…</div>
+          </div>
+          <div class="smodal-footer">
+            <button class="gds-refresh-btn" style="background:var(--accent);" onclick="_closeSettingsModal('modalWarehouse')">Fermer</button>
+          </div>
+        </div>
+      </div>
 
       <!-- Modal: Permissions par rôle -->
       <div class="smodal-overlay" id="modalPermissions">
@@ -449,7 +477,8 @@
                 <label class="toggle-switch"><input type="checkbox" id="togglePrepSearch" checked><span class="toggle-slider"></span></label>
               </div>
               <div class="toggle-row">
-                <label class="toggle-label">Rapport : exiger vérification complète avant affichage</label>
+                <label class="toggle-label">Rapport : exiger vérification complète avant affichage</label><!-- Card: Ordre des catégories -->
+          
                 <label class="toggle-switch"><input type="checkbox" id="toggleRapportCheck"><span class="toggle-slider"></span></label>
               </div>
               <div class="toggle-row">
@@ -617,11 +646,11 @@
         function _closeSettingsModal(id) {
           document.getElementById(id)?.classList.remove('open');
         }
-        // Close on overlay click
-        document.querySelectorAll('.smodal-overlay').forEach(el => {
-          el.addEventListener('mousedown', e => {
-            if (e.target === el) _closeSettingsModal(el.id);
-          });
+        // Close on overlay click — delegation sur document pour couvrir tous les modals
+        document.addEventListener('mousedown', e => {
+          if (e.target.classList.contains('smodal-overlay')) {
+            _closeSettingsModal(e.target.id);
+          }
         });
       </script>
     </div><!-- /viewSettings -->

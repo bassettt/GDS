@@ -67,7 +67,7 @@ async function appLogin(username, password) {
   const hash = await _hashPassword(password);
   if (hash !== user.password) throw new Error("Identifiant ou mot de passe incorrect");
 
-  AppAuth.currentUser = { username: user.username, role: user.role, passwordHash: hash };
+  AppAuth.currentUser = { username: user.username, role: user.role, passwordHash: hash, warehouses: user.warehouses || [] };
   localStorage.setItem("owdoo_app_user", JSON.stringify(AppAuth.currentUser));
   return AppAuth.currentUser;
 }
@@ -91,7 +91,7 @@ async function _restoreAppSession() {
         localStorage.removeItem("owdoo_app_user");
         return false;
       }
-      AppAuth.currentUser = { username: parsed.username, role: fbUser.role, passwordHash: parsed.passwordHash };
+      AppAuth.currentUser = { username: parsed.username, role: fbUser.role, passwordHash: parsed.passwordHash, warehouses: fbUser.warehouses || [] };
       return true;
     }
   } catch (_) {}
@@ -399,6 +399,12 @@ function _applyViewerRestrictions() {}
 function _guardSettings() {
   const btn = document.getElementById("btnSettings");
   if (!btn) return;
+  // إظهار الـ containers الخاصة بالأدمن فقط
+  if (isAdmin()) {
+    document.getElementById("warehouseSettingsContainer")?.style.setProperty("display", "");
+    document.getElementById("rolePermissionsContainer")?.style.setProperty("display", "");
+    document.getElementById("userManagementContainer")?.style.setProperty("display", "");
+  }
   if (!isAdmin()) {
     btn.style.display = "none";
     // منع الوصول لصفحة الإعدادات بأي طريقة
@@ -521,7 +527,25 @@ function _addUserBadge() {
     const menu = document.createElement("div");
     menu.id = "badgeMenu";
     menu.style.cssText = "position:absolute;top:36px;right:8px;z-index:15000;background:#1e2336;border:1px solid #2a2f45;border-radius:8px;overflow:hidden;min-width:160px;box-shadow:0 4px 16px #0006;";
+    const allowed = AppAuth.allowedWarehouseIds || [];
+    const whs = (AppAuth.warehouseDetails || []).filter(w => allowed.includes(w.id));
+    const whSwitcher = whs.length > 1 ? `
+      <div style="padding:7px 14px;border-bottom:1px solid #2a2f45;">
+        <div style="font-size:9px;color:#64748b;font-weight:600;margin-bottom:4px;">ENTREPÔT</div>
+        ${whs.map(w => {
+          const active = (AppAuth.activeWarehouseId || whs[0].id) === w.id;
+          return `<div class="bm-wh-item" data-whid="${w.id}"
+            style="padding:4px 6px;font-size:11px;border-radius:5px;cursor:pointer;
+                   color:${active ? "#4f8ef7" : "#94a3b8"};
+                   background:${active ? "#4f8ef722" : "transparent"};
+                   font-weight:${active ? "700" : "400"}">
+            ${active ? "● " : "○ "}${w.name}
+          </div>`;
+        }).join("")}
+      </div>` : "";
+
     menu.innerHTML = `
+      ${whSwitcher}
       <div id="bmChangePwd" style="padding:9px 14px;font-size:12px;color:#e2e8f0;cursor:pointer;display:flex;align-items:center;gap:8px;">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         Changer le mot de passe
@@ -533,6 +557,18 @@ function _addUserBadge() {
     `;
     document.querySelector(".header-right").style.position = "relative";
     document.querySelector(".header-right").appendChild(menu);
+    menu.querySelectorAll(".bm-wh-item").forEach(el => {
+      el.onclick = () => {
+        const whId = parseInt(el.dataset.whid);
+        if (!(AppAuth.allowedWarehouseIds || []).includes(whId)) return;
+        AppAuth.activeWarehouseId = whId;
+        menu.remove();
+        // إعادة تحميل البيانات بالـ warehouse الجديد
+        if (typeof loadData === "function") loadData().then(() => {
+          if (typeof setMode === "function") setMode(App.currentMode);
+        });
+      };
+    });
     document.getElementById("bmChangePwd").onclick = () => { menu.remove(); _showChangePasswordModal(); };
     document.getElementById("bmLogout").onclick = () => {
       if (confirm(`Se déconnecter (${AppAuth.currentUser.username}) ?`)) { appLogout(); location.reload(); }
@@ -609,11 +645,46 @@ async function adminEditUser(oldUsername, newUsername, newPassword) {
   }
 }
 
-function _showAdminEditModal(username, role) {
+async function _showAdminEditModal(username, role) {
   const existing = document.getElementById("adminEditModal");
   if (existing) existing.remove();
 
   const isSelf = username === AppAuth.currentUser.username;
+
+  // جلب warehouses من Firebase (يحتوي على كل الـ warehouses المعروفة)
+  let allWarehouses = [];
+  try {
+    const r = await fetch(`${_FB_DB_URL}/warehouse_details.json`);
+    const saved = (await r.json()) || {};
+    allWarehouses = Object.values(saved).map(w => ({ id: w.id, name: w.name }));
+  } catch(_) {}
+
+  // fallback: Odoo إذا Firebase فارغ
+  if (!allWarehouses.length) {
+    try {
+      const r = await fetch("/api/web/dataset/call_kw", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:0, params:{
+          model:"stock.warehouse", method:"search_read",
+          args:[[]], kwargs:{ fields:["id","name"], limit:100 }
+        }})
+      });
+      allWarehouses = (await r.json())?.result || [];
+    } catch(_) {}
+  }
+
+  // جلب warehouses المعينة للمستخدم من Firebase
+  const fbUser = await _fbGet(`app_users/${username}`);
+  const userWarehouses = fbUser?.warehouses || [];
+
+  const whCheckboxes = allWarehouses.map(w => `
+    <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#94a3b8;cursor:pointer;">
+      <input type="checkbox" data-whid="${w.id}" ${userWarehouses.includes(w.id) ? "checked" : ""}
+        style="width:13px;height:13px;accent-color:#4f8ef7;cursor:pointer;"/>
+      ${w.name}
+    </label>
+  `).join("");
 
   const modal = document.createElement("div");
   modal.id = "adminEditModal";
@@ -622,6 +693,10 @@ function _showAdminEditModal(username, role) {
     <div style="background:#1e2336;border:1px solid #2a2f45;border-radius:12px;padding:20px;width:270px;display:flex;flex-direction:column;gap:10px;">
       <div style="font-size:13px;font-weight:700;color:#e2e8f0">Modifier — ${username}</div>
       <div style="font-size:11px;color:#94a3b8">Laisser vide pour ne pas modifier</div>
+      <div style="border:1px solid #2a2f45;border-radius:7px;padding:8px;display:flex;flex-direction:column;gap:5px;">
+        <div style="font-size:10px;font-weight:600;color:#4f8ef7;margin-bottom:2px;">Entrepôts autorisés</div>
+        ${whCheckboxes || '<div style="font-size:11px;color:#f87171;">Aucun entrepôt trouvé</div>'}
+      </div>
       <input id="aeNewName" type="text" placeholder="Nouvel identifiant" value="${username}"
         style="padding:9px 12px;border-radius:7px;border:1px solid #2a2f45;background:#0f1117;color:#e2e8f0;font-size:12px;outline:none"/>
       <input id="aeNewPass" type="password" placeholder="Nouveau mot de passe"
@@ -654,6 +729,10 @@ function _showAdminEditModal(username, role) {
     btn.textContent = "…"; btn.disabled = true;
     try {
       await adminEditUser(username, newName, newPass || null);
+      // حفظ warehouses
+      const selectedWh = [...modal.querySelectorAll("input[data-whid]:checked")]
+        .map(cb => parseInt(cb.dataset.whid));
+      await _fbPatch(`app_users/${newName || username}`, { warehouses: selectedWh });
       err.style.color = "#22c55e";
       err.textContent = "Modifié ✓";
       setTimeout(() => { modal.remove(); renderUserManagementUI(); }, 900);
@@ -770,11 +849,123 @@ async function checkAndLoginTwoStep() {
   // Step 2: Odoo session (existing logic)
   await _checkOdooSession();
 
+  // Step 3: Load warehouse details from Odoo
+  await _loadUserWarehouses();
+
   // Post-login setup
   _addUserBadge();
   _guardSettings();
   // Apply role-based permissions for all non-admin roles
   await applyRolePermissions();
+}
+
+// ── Load warehouse details from Odoo ──────────────────────────
+async function _loadUserWarehouses() {
+  try {
+    const ids = AppAuth.currentUser?.warehouses || [];
+    // الأدمن → كل الـ warehouses، غيره → فقط المعينة له
+    const domain = isAdmin() ? [] : [["id", "in", ids]];
+    if (!isAdmin() && !ids.length) {
+      AppAuth.warehouseDetails = [];
+      return;
+    }
+
+    const r = await fetch("/api/web/dataset/call_kw", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", method: "call", id: 0,
+        params: {
+          model: "stock.warehouse", method: "search_read",
+          args: [domain],
+          kwargs: { fields: ["id", "name", "lot_stock_id", "view_location_id"], limit: 100 }
+        }
+      })
+    });
+    const j = await r.json();
+    const fetched = j?.result || [];
+
+    // فلترة حسب الـ ids المعينة للمستخدم (غير الأدمن)
+    if (!isAdmin() && ids.length) {
+      AppAuth.warehouseDetails = fetched.filter(w => ids.includes(w.id));
+      // قائمة مقفلة نهائية للصلاحيات — لا يمكن تجاوزها
+            AppAuth.allowedWarehouseIds = ids;
+    } else {
+      AppAuth.warehouseDetails = fetched;
+      AppAuth.allowedWarehouseIds = fetched.map(w => w.id);
+    }
+
+    // إذا الفلترة أفرغت القائمة → جلب من Firebase كـ fallback (فقط الـ ids المسموح بها)
+    if (!AppAuth.warehouseDetails.length && ids.length) {
+      try {
+        const rFb = await fetch(`${_FB_DB_URL}/warehouse_details.json`);
+        const saved = (await rFb.json()) || {};
+        AppAuth.warehouseDetails = ids
+          .map(id => saved[id])
+          .filter(Boolean);
+        // تحديث allowedWarehouseIds بناءً على ما وُجد فعلاً
+        AppAuth.allowedWarehouseIds = AppAuth.warehouseDetails.map(w => w.id);
+      } catch(_) {}
+    } else if (AppAuth.warehouseDetails.length) {
+      // دمج مع Firebase للحصول على بيانات كاملة للـ ids غير الموجودة في Odoo
+      try {
+        const rFb = await fetch(`${_FB_DB_URL}/warehouse_details.json`);
+        const saved = (await rFb.json()) || {};
+        const currentIds = AppAuth.warehouseDetails.map(w => w.id);
+        ids.forEach(id => {
+          if (!currentIds.includes(id) && saved[id]) {
+            AppAuth.warehouseDetails.push(saved[id]);
+          }
+        });
+      } catch(_) {}
+    }
+
+    // حفظ warehouse details سحابياً للرجوع إليها لاحقاً
+    if (AppAuth.warehouseDetails.length) {
+      // جلب ما هو محفوظ أولاً ثم دمج بدل استبدال
+      try {
+        const rExisting = await fetch(`${_FB_DB_URL}/warehouse_details.json`);
+        const existing = (await rExisting.json()) || {};
+        const merged = { ...existing };
+        AppAuth.warehouseDetails.forEach(w => { merged[w.id] = w; });
+        await fetch(`${_FB_DB_URL}/warehouse_details.json`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(merged),
+        });
+      } catch(e) {
+        console.warn("warehouse_details save failed:", e);
+      }
+    }
+
+    // جلب كل إعدادات warehouses من Firebase (بغض النظر عن الصلاحيات)
+    try {
+      const r2 = await fetch(`${_FB_DB_URL}/warehouse_settings.json`);
+      AppAuth.warehouseSettings = (await r2.json()) || {};
+    } catch(_) { AppAuth.warehouseSettings = {}; }
+
+    // دمج warehouses من Firebase مع تلك التي عند المستخدم
+    // لضمان أن الإعدادات المحفوظة تبقى حتى بعد تغيير الصلاحيات
+    try {
+      const r3 = await fetch(`${_FB_DB_URL}/warehouse_details.json`);
+      const savedDetails = await r3.json();
+      if (savedDetails && typeof savedDetails === "object") {
+        // نضيف أي warehouse محفوظ غير موجود في القائمة الحالية
+        const currentIds = (AppAuth.warehouseDetails || []).map(w => w.id);
+        Object.values(savedDetails).forEach(w => {
+          if (w?.id && !currentIds.includes(w.id)) {
+            AppAuth.warehouseDetails.push(w);
+          }
+        });
+      }
+    } catch(_) {}
+
+  } catch(e) {
+    console.warn("_loadUserWarehouses failed:", e);
+    AppAuth.warehouseDetails = [];
+    AppAuth.warehouseSettings = {};
+  }
 }
 
 // ── Odoo session check (extracted from old _checkAndLogin) ────

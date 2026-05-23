@@ -163,10 +163,14 @@ async function loadData() {
 
   // جلب قائمة الموزعين من Firebase
   try {
-    const r2 = await fetch(`${_FB_DB_URL}/sf_distributeurs.json`);
-    const fbDist = await r2.json();
-    if (Array.isArray(fbDist) && fbDist.length) {
-      localStorage.setItem("sf_distributeurs", JSON.stringify(fbDist));
+    // جلب distributeurs لكل warehouse عند المستخدم
+    const whIds = (AppAuth.warehouseDetails || []).map(w => w.id);
+    for (const whId of whIds) {
+      const rDist = await fetch(`${_FB_DB_URL}/sf_distributeurs_${whId}.json`);
+      const fbDist = await rDist.json();
+      if (Array.isArray(fbDist) && fbDist.length) {
+        localStorage.setItem(`sf_distributeurs_${whId}`, JSON.stringify(fbDist));
+      }
     }
   } catch(e) { console.warn("SF distributeurs load failed:", e); }
 
@@ -181,10 +185,70 @@ async function loadData() {
 }
 
 // ── GDS Stock View ────────────────────────────────────────────
-const GDS_WAREHOUSE_ID = 213;
 const GDS_COLLAPSED_KEY = "wafa_gds_collapsed";
 const GDS_VANS_COLLAPSED_KEY = "wafa_gds_vans_collapsed";
-const GDS_VAN_LOCATION_PARENT = 212; // غيّر هذا إلى ID المجلد الأب لمواقع الفانات في Odoo
+
+function _getActiveWarehouse() {
+  const details = AppAuth.warehouseDetails || [];
+  if (!details.length) return null;
+  const allowed = AppAuth.allowedWarehouseIds || details.map(w => w.id);
+  // التحقق أن الـ activeWarehouseId مسموح به
+  const activeId = allowed.includes(AppAuth.activeWarehouseId)
+    ? AppAuth.activeWarehouseId
+    : allowed[0];
+  AppAuth.activeWarehouseId = activeId;
+  return details.find(w => w.id === activeId) || null;
+}
+
+function _getWarehouseId() {
+  return _getActiveWarehouse()?.id || null;
+}
+
+// موقع الـ stock الرئيسي (كان GDS_WAREHOUSE_ID = 213)
+function _getStockLocationId() {
+  const wh = _getActiveWarehouse();
+  if (!wh) return null;
+  const saved = AppAuth.warehouseSettings?.[wh.id];
+  return saved?.stockLocationId || wh.lot_stock_id?.[0] || null;
+}
+function _cleanName(name, useVanStrip = false) {
+  const wh = _getActiveWarehouse();
+  const saved = wh ? (AppAuth.warehouseSettings?.[wh.id] || {}) : {};
+
+  let result = name || "";
+
+  // أخذ آخر جزء بعد / أولاً
+  if (saved.splitSlash && result.includes("/")) {
+    result = result.split("/").pop().trim();
+  }
+
+  // حذف الكلمات المحددة (تطبّق على partner و van معاً)
+  const stripSource = useVanStrip ? saved.stripVanWords : saved.stripWords;
+  if (stripSource) {
+    stripSource.split(/[\n,]/).forEach(word => {
+      const w = word.trim();
+      if (w) result = result.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), "").trim();
+    });
+  }
+
+  return result.trim() || name;
+}
+
+// للتوافق مع الاستخدامات السابقة
+function _cleanPartnerName(name) { return _cleanName(name, false); }
+function _cleanVanName(name)     { return _cleanName(name, true);  }
+// المجلد الأب لمواقع الفانات (كان GDS_VAN_LOCATION_PARENT = 212)
+function _getVanLocationParent() {
+  return _getActiveWarehouse()?.view_location_id?.[0] || null;
+}
+
+// موقع مصدر الـ préparation (مختار في الإعدادات، وإلا lot_stock_id)
+function _getPrepSourceLocationId() {
+  const wh = _getActiveWarehouse();
+  if (!wh) return null;
+  const saved = AppAuth.warehouseSettings?.[wh.id];
+  return saved?.prepSourceId || wh.lot_stock_id?.[0] || null;
+}
 
 function _gdsGetCollapsed() {
   try { return JSON.parse(localStorage.getItem(GDS_COLLAPSED_KEY) || "{}"); } catch(_) { return {}; }
@@ -321,14 +385,14 @@ async function renderGdsTransferts() {
         params: {
           model: "stock.location",
           method: "search_read",
-          args: [[["location_id","=",GDS_VAN_LOCATION_PARENT],["usage","=","internal"]]],
+          args: [[["location_id","=",_getVanLocationParent()],["usage","=","internal"]]],
           kwargs: { fields: ["id","name"], limit: 100 }
         }
       })
     });
     const locData = await resLoc.json();
     const vanIds = (locData?.result || []).map(l => l.id);
-    const allIds = [...vanIds, GDS_WAREHOUSE_ID];
+    const allIds = [...vanIds, _getStockLocationId()];
 
     // جلب التحويلات
     const resPick = await fetch("/api/web/dataset/call_kw", {
@@ -377,8 +441,8 @@ async function renderGdsTransferts() {
     transfers.forEach(t => {
       const st    = stateLabel[t.state] || { label: t.state, color: "#94a3b8" };
       const date  = t.scheduled_date ? t.scheduled_date.slice(0,16).replace("T"," ") : "—";
-      const from  = t.location_id      ? t.location_id[1].split("/").pop().trim()      : "—";
-      const to    = t.location_dest_id ? t.location_dest_id[1].split("/").pop().trim() : "—";
+      const from  = t.location_id      ? _cleanVanName(t.location_id[1])      : "—";
+      const to    = t.location_dest_id ? _cleanVanName(t.location_dest_id[1]) : "—";
       const partner = t.partner_id     ? t.partner_id[1]                               : "—";
       rows += `<tr>
         <td><span class="gds-tr-ref">${escHtml(t.name)}</span></td>
@@ -615,7 +679,7 @@ async function renderGdsStock() {
         params: {
           model: "stock.quant",
           method: "search_read",
-          args: [[["location_id","=",GDS_WAREHOUSE_ID],["quantity",">",0]]],
+          args: [[["location_id","=",_getStockLocationId()],["quantity",">",0]]],
           kwargs: {
             fields: ["product_id","quantity","reserved_quantity","packaging_quantity_1","packaging_quantity_2"],
             limit: 2000,
@@ -765,7 +829,7 @@ async function renderGdsVans() {
         params: {
           model: "stock.location",
           method: "search_read",
-          args: [[["location_id","=",GDS_VAN_LOCATION_PARENT],["usage","=","internal"]]],
+          args: [[["location_id","=",_getVanLocationParent()],["usage","=","internal"]]],
           kwargs: { fields: ["id","name","complete_name"], limit: 100 }
         }
       })
@@ -779,7 +843,7 @@ async function renderGdsVans() {
     }
 
     // 2) جلب المخزون لكل المواقع دفعة واحدة
-    const locIds = vanLocations.map(l => l.id).filter(id => id !== GDS_WAREHOUSE_ID);
+    const locIds = vanLocations.map(l => l.id).filter(id => id !== _getStockLocationId());
     const resQuant = await fetch("/api/web/dataset/call_kw", {
       method: "POST", credentials: "include",
       headers: {"Content-Type": "application/json"},
@@ -1041,7 +1105,10 @@ const _gdsPrep = {
   outOfDateTransferts: [], // transferts hors date ajoutés manuellement
 };
 
-const GDS_PREP_STORAGE_KEY = "wafa_gds_preparation";
+function _getPrepStorageKey() {
+  const whId = _getWarehouseId() || "default";
+  return `wafa_gds_preparation_${whId}`;
+}
 
 function _productDisplayName(p) {
   if (!p) return "—";
@@ -1058,7 +1125,10 @@ function _productDisplayName(p) {
 
 // ── Firebase Realtime Database ────────────────────────────────
 // const _FB_DB_URL = "https://owdoo-f265f-default-rtdb.europe-west1.firebasedatabase.app";
-const _FB_KEY    = "wafa_gds_preparation";
+function _getFbPrepKey() {
+  const whId = _getWarehouseId() || "default";
+  return `wafa_gds_preparation_${whId}`;
+}
 
 async function _gdsPrepSaveCloud() {
   try {
@@ -1076,7 +1146,7 @@ async function _gdsPrepSaveCloud() {
       date:                new Date().toISOString().slice(0, 10),
       savedBy:             AppAuth.currentUser?.username || "inconnu",
     };
-    await fetch(`${_FB_DB_URL}/${_FB_KEY}.json`, {
+    await fetch(`${_FB_DB_URL}/${_getFbPrepKey()}.json`, {
       method: "PUT",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(data),
@@ -1086,7 +1156,7 @@ async function _gdsPrepSaveCloud() {
 
 async function _gdsPrepLoadFromCloud() {
   try {
-    const res  = await fetch(`${_FB_DB_URL}/${_FB_KEY}.json`);
+    const res  = await fetch(`${_FB_DB_URL}/${_getFbPrepKey()}.json`);
     const data = await res.json();
     if (!data) return false;
     const today = new Date().toISOString().slice(0, 10);
@@ -1291,14 +1361,14 @@ function _gdsPrepSave() {
       outOfDateTransferts: _gdsPrep.outOfDateTransferts,
       date:                new Date().toISOString().slice(0, 10),
     };
-    localStorage.setItem(GDS_PREP_STORAGE_KEY, JSON.stringify(data));
+    localStorage.setItem(_getPrepStorageKey(), JSON.stringify(data));
     _gdsPrepSaveCloud();
   } catch(e) { console.error("[GdsPrep] save:", e); }
 }
 
 function _gdsPrepLoadFromStorage() {
   try {
-    const raw = localStorage.getItem(GDS_PREP_STORAGE_KEY);
+    const raw = localStorage.getItem(_getPrepStorageKey());
     if (!raw) return;
     const data = JSON.parse(raw);
     const today = new Date().toISOString().slice(0, 10);
@@ -1367,7 +1437,7 @@ async function renderGdsPreparation() {
   if (!_cloudLoaded) {
     _gdsPrepLoadFromStorage();
   } else {
-    try { localStorage.setItem(GDS_PREP_STORAGE_KEY, JSON.stringify({
+    try { localStorage.setItem(_getPrepStorageKey(), JSON.stringify({
       lines: _gdsPrep.lines, loaded: _gdsPrep.loaded, finished: _gdsPrep.finished,
       chargeFrom: _gdsPrep.chargeFrom, chargeTo: _gdsPrep.chargeTo,
       chargeData: _gdsPrep.chargeData, pickingsMap: _gdsPrep.pickingsMap,
@@ -1877,7 +1947,7 @@ async function _gdsPrepLoadStock() {
       method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:1, params:{
         model:"stock.quant", method:"search_read",
-        args:[[["location_id","=",GDS_WAREHOUSE_ID],["quantity",">",0]]],
+        args:[[["location_id","=",_getStockLocationId()],["quantity",">",0]]],
         kwargs:{ fields:["product_id","quantity","packaging_quantity_1"], limit:2000 }
       }})
     });
@@ -2507,7 +2577,7 @@ async function _gdsPrepIsVanLocation(locId) {
       method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:74, params:{
         model:"stock.location", method:"search_read",
-        args:[[["id","=",locId],["location_id","=",GDS_VAN_LOCATION_PARENT],["usage","=","internal"]]],
+        args:[[["id","=",locId],["location_id","=",_getVanLocationParent()],["usage","=","internal"]]],
         kwargs:{ fields:["id"], limit:1 }
       }})
     });
@@ -2546,7 +2616,7 @@ function _gdsPrepShowExcludeList() {
     ? `<div style="color:var(--text3);font-size:12px;">Aucun transfert calculé</div>`
     : allPickings.map(p => {
         const isExcluded = _gdsPrep.excludedPickings.includes(p.name);
-        const partner = (p.partner_id?.[1] || "—").replace(/^LIVREUR\s*/i, "").trim();
+        const partner = _cleanPartnerName(p.partner_id?.[1] || "—");
         const safeId  = p.name.replace(/\W/g,"_");
         return `
           <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);">
@@ -2822,7 +2892,7 @@ async function gdsPrepFetchCharge() {
       method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:50, params:{
         model:"stock.location", method:"search_read",
-        args:[[["location_id","=",GDS_VAN_LOCATION_PARENT],["usage","=","internal"]]],
+        args:[[["location_id","=",_getVanLocationParent()],["usage","=","internal"]]],
         kwargs:{ fields:["id"], limit:200 }
       }})
     });
@@ -2839,7 +2909,7 @@ async function gdsPrepFetchCharge() {
       body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:51, params:{
         model:"stock.move.line", method:"search_read",
         args:[[
-          ["location_id",    "=",  GDS_WAREHOUSE_ID],
+          ["location_id",    "=",  _getPrepSourceLocationId()],
           ["location_dest_id","in", vanLocIds],
           ["state",          "=",  "done"],
           ["date",           ">=", odooFrom],
@@ -2872,19 +2942,17 @@ async function gdsPrepFetchCharge() {
       const pickId = m.picking_id?.[0];
       if (pickId && pickingsMap[pickId]) {
         const fullPath = m.location_dest_id?.[1] || "";
-        const parts    = fullPath.split("/");
-        const vanName  = parts[parts.length - 1].trim();
-        // نحدّث فقط إذا وجدنا اسماً أفضل من السابق
-        if (vanName && vanName !== "—" && (!pickingsMap[pickId].van || pickingsMap[pickId].van === "—")) {
-          pickingsMap[pickId].van = vanName;
+        // نحفظ الاسم الكامل ونطبّق التنظيف لاحقاً عند الـ render
+        if (fullPath && fullPath !== "—" && (!pickingsMap[pickId].vanRaw || pickingsMap[pickId].vanRaw === "—")) {
+          pickingsMap[pickId].vanRaw = fullPath;
+          pickingsMap[pickId].van = _cleanVanName(fullPath);
         }
       }
     });
     // fallback: استخدام اسم الـ picking نفسه إذا لم يُعثر على van
     Object.values(pickingsMap).forEach(p => {
       if (!p.van || p.van === "—") {
-        const parts = (p.name || "").split("/");
-        p.van = parts[parts.length - 1].trim() || "—";
+        p.van = _cleanVanName(p.name || "—");
       }
     });
     }
@@ -3265,7 +3333,7 @@ const activeLines = [
   let html = "";
   _sortCats(Object.keys(byCateg)).forEach(cat => {
 const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
-    html += `<div class="gds-category" style="margin:0 0 14px;">
+    html += `<div class="gds-catery" style="margin:0 0 14px;">
       <div class="gds-category-title gds-category-toggle" onclick="_gdsPrepToggleTblCat('${escHtml(cat)}')">
         <svg id="gdsPrepArrow_${escHtml(cat)}" class="gds-collapse-arrow" style="transform:${collapsed?"rotate(-90deg)":""}" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
         ${escHtml(cat)}
@@ -3664,7 +3732,7 @@ function gdsPrepDoCancel() {
   _gdsPrep.byPicking           = {};
   _gdsPrep.excludedPickings    = [];
   _gdsPrep.outOfDateTransferts = [];
-  localStorage.removeItem(GDS_PREP_STORAGE_KEY);
+  localStorage.removeItem(_getPrepStorageKey());
   _gdsPrepSaveCloud();
   _gdsPrep._skipCloudReload = true;
   renderGdsPreparation();
@@ -3797,7 +3865,7 @@ function gdsPrepDoNew() {
   _gdsPrep.chargeData          = {};
   _gdsPrep.excludedPickings    = [];
   _gdsPrep.outOfDateTransferts = [];
-  localStorage.removeItem(GDS_PREP_STORAGE_KEY);
+  localStorage.removeItem(_getPrepStorageKey());
   _gdsPrepSaveCloud();
   _gdsPrep._skipCloudReload = true;
   renderGdsPreparation();
@@ -3950,7 +4018,7 @@ function _gdsPrepRenderPickingBtns() {
   let html = "";
   Object.entries(byPartner).forEach(([partner, entries]) => {
     entries.forEach((entry, idx) => {
-      const partnerClean = (entry.pick.partner_id?.[1] || "").replace(/^LIVREUR\s*/i, "").trim();
+      const partnerClean = _cleanPartnerName(entry.pick.partner_id?.[1] || "");
       const label = idx === 0 ? partnerClean : `${partnerClean} (${idx + 1})`;
       html += `<button class="gds-refresh-btn" style="font-size:10px;"
         onclick="_gdsPrepDownloadPickingPdf(${entry.pickId})">
@@ -4136,6 +4204,17 @@ while (y < imgH_mm) {
 
 //////////// fin prep
 function setMode(mode) {
+  // guard: لا render بدون warehouse
+  if (!_getStockLocationId()) {
+    const gv = document.getElementById("gdsView");
+    if (gv) gv.innerHTML = `
+      <div style="padding:40px;text-align:center;color:var(--text3);font-size:13px;">
+        ⚠⚠<br>
+        <span style="font-size:11px;"></span>
+      </div>`;
+    if (gv) gv.style.display = "flex";
+    return;
+  }
   App.currentMode = mode;
   const gv = document.getElementById("gdsView");
   if (gv) gv.style.display = "flex";
@@ -4253,6 +4332,166 @@ function _saveCatOrder(container) {
 }
 
 // ── Save settings ─────────────────────────────────────────────
+async function renderWarehouseSettingsUI() {
+  const container = document.getElementById("warehouseSettingsSection");
+  if (!container) return;
+  container.innerHTML = `<div style="font-size:11px;color:var(--text2)">Chargement…</div>`;
+
+  const whs = AppAuth.warehouseDetails || [];
+  if (!whs.length) {
+    container.innerHTML = `<div style="color:#f87171;font-size:12px;">Aucun entrepôt disponible.</div>`;
+    return;
+  }
+
+  // جلب إعدادات محفوظة من Firebase
+  let saved = {};
+  try {
+    const r = await fetch(`${_FB_DB_URL}/warehouse_settings.json`);
+    saved = (await r.json()) || {};
+  } catch(_) {}
+
+  // جلب كل المواقع الداخلية من Odoo لكل warehouse
+  let html = "";
+  for (const wh of whs) {
+    const whSaved = saved[wh.id] || {};
+    let locations = [];
+    try {
+      const viewLocId = wh.view_location_id?.[0];
+      const r = await fetch("/api/web/dataset/call_kw", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:0, params:{
+          model: "stock.location", method: "search_read",
+          args: [[["location_id", "=", viewLocId],["usage","=","internal"]]],
+          kwargs: { fields: ["id","name","complete_name"], limit: 100 }
+        }})
+      });
+      const j = await r.json();
+      locations = j?.result || [];
+
+      // حفظ المواقع سحابياً إذا نجح الجلب
+      if (locations.length) {
+        fetch(`${_FB_DB_URL}/warehouse_locations/${wh.id}.json`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(locations),
+        }).catch(() => {});
+      }
+
+      // إذا فشل Odoo → جلب من Firebase
+      if (!locations.length) {
+        try {
+          const rFb = await fetch(`${_FB_DB_URL}/warehouse_locations/${wh.id}.json`);
+          locations = (await rFb.json()) || [];
+        } catch(_) {}
+      }
+    } catch(e) {
+      // Odoo فشل → جلب من Firebase
+      try {
+        const rFb = await fetch(`${_FB_DB_URL}/warehouse_locations/${wh.id}.json`);
+        locations = (await rFb.json()) || [];
+      } catch(_) {}
+    }
+
+    const opts = locations.map(l =>
+      `<option value="${l.id}">${l.complete_name}</option>`
+    ).join("");
+
+    html += `
+      <div style="margin-bottom:14px;padding:12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;">
+        <div style="font-size:12px;font-weight:700;color:var(--text1);margin-bottom:10px;">🏭 ${wh.name}</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div>
+            <div style="font-size:10px;font-weight:600;color:var(--text2);margin-bottom:4px;">Stock GDS (emplacement affiché)</div>
+            <select id="whStock_${wh.id}"
+              style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);font-size:11px;">
+              <option value="">-- Défaut (lot_stock_id) --</option>
+              ${opts}
+            </select>
+          </div>
+          <div>
+            <div style="font-size:10px;font-weight:600;color:var(--text2);margin-bottom:4px;">Source Préparation (origine des transferts)</div>
+            <select id="whPrep_${wh.id}"
+              style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);font-size:11px;">
+              <option value="">-- Défaut (lot_stock_id) --</option>
+              ${opts}
+            </select>
+          </div>
+        </div>
+        <div>
+            <div style="font-size:10px;font-weight:600;color:var(--text2);margin-bottom:4px;">Mots à supprimer du nom partenaire</div>
+            <textarea id="whStripWords_${wh.id}" rows="3" placeholder="ex:&#10;LIVREUR&#10;ORAN&#10;GDS"
+              style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);font-size:11px;box-sizing:border-box;resize:vertical;"></textarea>
+            <div style="font-size:10px;color:var(--text3);margin-top:3px;">Un mot/expression par ligne. Insensible à la casse.</div>
+          </div>
+          <div>
+            <div style="font-size:10px;font-weight:600;color:var(--text2);margin-bottom:4px;">Mots à supprimer du nom van/emplacement</div>
+            <textarea id="whStripVanWords_${wh.id}" rows="3" placeholder="ex:&#10;Stock.Préparation&#10;Physical Locations&#10;ORAN"
+              style="width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);font-size:11px;box-sizing:border-box;resize:vertical;"></textarea>
+            <div style="font-size:10px;color:var(--text3);margin-top:3px;">Un mot/expression par ligne. Insensible à la casse.</div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2);cursor:pointer;">
+            <input type="checkbox" id="whSplitSlash_${wh.id}" style="width:14px;height:14px;accent-color:#4f8ef7;"/>
+            Raccourcir après "/" (prendre dernière partie)
+          </label>
+
+        <button onclick="_saveWarehouseSettings(${wh.id})"
+          style="margin-top:10px;padding:7px 14px;border-radius:6px;background:#4f8ef7;color:#fff;font-size:11px;font-weight:700;border:none;cursor:pointer;">
+          Enregistrer
+        </button>
+        <span id="whSaveMsg_${wh.id}" style="font-size:11px;color:#22c55e;margin-left:8px;"></span>
+      </div>`;
+  }
+  container.innerHTML = html;
+
+  // تعبئة القيم المحفوظة
+  for (const wh of whs) {
+    const whSaved = saved[wh.id] || {};
+    if (whSaved.stockLocationId) {
+      const sel = document.getElementById(`whStock_${wh.id}`);
+      if (sel) sel.value = whSaved.stockLocationId;
+    }
+    if (whSaved.prepSourceId) {
+      const sel = document.getElementById(`whPrep_${wh.id}`);
+      if (sel) sel.value = whSaved.prepSourceId;
+    }
+   const stripEl = document.getElementById(`whStripWords_${wh.id}`);
+    if (stripEl && whSaved.stripWords) stripEl.value = whSaved.stripWords;
+    const stripVanEl = document.getElementById(`whStripVanWords_${wh.id}`);
+    if (stripVanEl && whSaved.stripVanWords) stripVanEl.value = whSaved.stripVanWords;
+    const slashEl = document.getElementById(`whSplitSlash_${wh.id}`);
+    if (slashEl) slashEl.checked = !!whSaved.splitSlash;
+  }
+}
+
+async function _saveWarehouseSettings(whId) {
+  const stockSel = document.getElementById(`whStock_${whId}`);
+  const prepSel  = document.getElementById(`whPrep_${whId}`);
+  const msg      = document.getElementById(`whSaveMsg_${whId}`);
+  const stripEl = document.getElementById(`whStripWords_${whId}`);
+  const slashEl = document.getElementById(`whSplitSlash_${whId}`);
+  const data = {
+    stockLocationId: stockSel?.value ? parseInt(stockSel.value) : null,
+    prepSourceId:    prepSel?.value  ? parseInt(prepSel.value)  : null,
+    stripWords:      stripEl?.value.trim() || "",
+    stripVanWords:   document.getElementById(`whStripVanWords_${whId}`)?.value.trim() || "",
+    splitSlash:      slashEl?.checked || false,
+  };
+  try {
+    await fetch(`${_FB_DB_URL}/warehouse_settings/${whId}.json`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    // تحديث الـ cache المحلي فوراً
+    if (!AppAuth.warehouseSettings) AppAuth.warehouseSettings = {};
+    AppAuth.warehouseSettings[whId] = data;
+    if (msg) { msg.textContent = "Sauvegardé ✓"; setTimeout(() => msg.textContent = "", 2000); }
+  } catch(e) {
+    if (msg) { msg.style.color = "#f87171"; msg.textContent = "Erreur: " + e.message; }
+  }
+}
+
 async function saveSettings() {
   const s = App.settings;
   const saveMsg = document.getElementById("saveMsg");
@@ -4457,12 +4696,16 @@ async function _rpc_call(baseUrl, payload) {
 }
 
 // ── Stock Final — Gestion distributeurs ──────────────────────
+function _sfDistKey() {
+  const whId = _getWarehouseId() || "default";
+  return `sf_distributeurs_${whId}`;
+}
 window.sfGetDistributeurs = function sfGetDistributeurs() {
-  try { return JSON.parse(localStorage.getItem("sf_distributeurs") || "[]"); } catch { return []; }
+  try { return JSON.parse(localStorage.getItem(_sfDistKey()) || "[]"); } catch { return []; }
 }
 window.sfSaveDistributeurs = function sfSaveDistributeurs(list) {
-  localStorage.setItem("sf_distributeurs", JSON.stringify(list));
-  fetch(`${_FB_DB_URL}/sf_distributeurs.json`, {
+  localStorage.setItem(_sfDistKey(), JSON.stringify(list));
+  fetch(`${_FB_DB_URL}/${_sfDistKey()}.json`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(list),
@@ -4646,6 +4889,40 @@ window.sfRefreshDist = async function(distId, distNom, distSafeId) {
   }
 };
 
+// ── Stock Final — جلب الليفرورين من Odoo تلقائياً ────────────
+async function _sfFetchLivreurs() {
+  try {
+    const since = new Date();
+    since.setMonth(since.getMonth() - 3);
+    const sinceStr = since.toISOString().slice(0, 10);
+
+    const r = await fetch("/api/web/dataset/call_kw", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:0, params:{
+        model: "planning.planning", method: "search_read",
+        args: [[["date_start", ">=", sinceStr], ["user_id.name", "ilike", "LIVREUR"]]],
+        kwargs: { fields: ["user_id"], limit: 2000 }
+      }})
+    });
+    const result = (await r.json())?.result || [];
+
+    // تجميع فريد بـ user_id
+    const seen = {};
+    result.forEach(p => {
+      if (p.user_id) seen[p.user_id[0]] = p.user_id[1];
+    });
+
+    return Object.entries(seen).map(([id, nom]) => ({
+      id: parseInt(id),
+      nom: _cleanPartnerName(nom)
+    })).sort((a, b) => a.nom.localeCompare(b.nom, "fr", { sensitivity: "base" }));
+  } catch(e) {
+    console.warn("_sfFetchLivreurs failed:", e);
+    return [];
+  }
+}
+
 // ── Stock Final — render tab ──────────────────────────────────
 // الدالة الموحدة: تتحقق من cache أولاً، وتجلب من الشبكة إذا لم يوجد
 window.sfRenderFromCache = async function sfRenderFromCache() {
@@ -4676,9 +4953,19 @@ window.sfRenderFromCache = async function sfRenderFromCache() {
     </div>
     <div id="sfResultsContainer" style="padding:8px;display:grid;align-items:start;gap:10px;"></div>`;
 
-  const distributeurs = sfGetDistributeurs();
-  const container     = document.getElementById("sfResultsContainer");
+  let distributeurs = sfGetDistributeurs();
+  const container   = document.getElementById("sfResultsContainer");
   if (!container) return;
+
+  // إذا القائمة فارغة → جلب تلقائي من Odoo
+  if (!distributeurs.length) {
+    container.innerHTML = `<div style="padding:20px;color:var(--text3);font-size:12px;text-align:center;">Chargement des livreurs…</div>`;
+    distributeurs = await _sfFetchLivreurs();
+    if (distributeurs.length) sfSaveDistributeurs(distributeurs);
+  }
+
+  // ترتيب أبجدي دائماً
+  distributeurs.sort((a, b) => a.nom.localeCompare(b.nom, "fr", { sensitivity: "base" }));
 
   const sfMaxCols  = parseInt(localStorage.getItem("sf_columns_per_row") || "1");
   const screenW    = window.innerWidth;
@@ -4778,12 +5065,16 @@ window.sfRenderFromCache = async function sfRenderFromCache() {
 // ── Force refresh: يمسح cache اليوم الحالي ويعيد الجلب من الشبكة
 window.renderGdsStockFinal = async function renderGdsStockFinal() {
   if (!isAdmin() && !_hasTabPerm("stockfinal")) return;
-  const distributeurs = sfGetDistributeurs();
+  let distributeurs = sfGetDistributeurs();
+  if (!distributeurs.length) {
+    distributeurs = await _sfFetchLivreurs();
+    if (distributeurs.length) sfSaveDistributeurs(distributeurs);
+  }
   if (!distributeurs.length) {
     const el = document.getElementById("gdsStockFinalContent");
     if (el) el.innerHTML = `<div style="padding:20px;color:var(--text3);font-size:13px;text-align:center;">
-      ⚠ Aucun distributeur configuré.<br>
-      <span style="font-size:11px;">Allez dans Paramètres → Stock Final pour importer la liste.</span>
+      ⚠ Aucun livreur trouvé dans Odoo.<br>
+      <span style="font-size:11px;">Vérifiez que les utilisateurs ont le workflow LIVREUR.</span>
     </div>`;
     return;
   }
