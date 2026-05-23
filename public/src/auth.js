@@ -893,7 +893,18 @@ async function _loadUserWarehouses() {
             AppAuth.allowedWarehouseIds = ids;
     } else {
       AppAuth.warehouseDetails = fetched;
-      AppAuth.allowedWarehouseIds = fetched.map(w => w.id);
+      // دمج مع Firebase للأدمن
+      try {
+        const rFb = await fetch(`${_FB_DB_URL}/warehouse_details.json`);
+        const saved = (await rFb.json()) || {};
+        const currentIds = fetched.map(w => w.id);
+        Object.values(saved).forEach(w => {
+          if (w?.id && !currentIds.includes(w.id)) {
+            AppAuth.warehouseDetails.push(w);
+          }
+        });
+      } catch(_) {}
+      AppAuth.allowedWarehouseIds = AppAuth.warehouseDetails.map(w => w.id);
     }
 
     // إذا الفلترة أفرغت القائمة → جلب من Firebase كـ fallback (فقط الـ ids المسموح بها)
