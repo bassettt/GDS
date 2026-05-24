@@ -3626,7 +3626,28 @@ function _gdsPrepToggleSearch() {
       : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
     btn.style.background = visible ? "var(--gds-color)" : "var(--red)";
   }
-  if (!visible) { inp?.focus(); inp?.select(); }
+  if (!visible) {
+    inp?.focus(); inp?.select();
+    if (window.visualViewport) {
+      const reposition = () => {
+        const wrap = document.getElementById("gdsPrepSearchFloatWrap");
+        if (!wrap) return;
+        const vv = window.visualViewport;
+        wrap.style.bottom = (window.innerHeight - vv.height - vv.offsetTop + 8) + "px";
+      };
+      window.visualViewport.addEventListener("resize", reposition);
+      window.visualViewport.addEventListener("scroll", reposition);
+      reposition();
+      inp._vpCleanup = () => {
+        window.visualViewport.removeEventListener("resize", reposition);
+        window.visualViewport.removeEventListener("scroll", reposition);
+      };
+    }
+  } else {
+    inp?._vpCleanup?.();
+    const wrap = document.getElementById("gdsPrepSearchFloatWrap");
+    if (wrap) wrap.style.bottom = "18px";
+  }
   else { _gdsPrepClearSearch(); }
 }
 
