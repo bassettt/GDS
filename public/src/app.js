@@ -480,17 +480,15 @@ async function renderGdsTransferts() {
     </div>
     <style>
       .gds-tr-ref-short { display:none; }
-      .flatpickr-input:not(.flatpickr-mobile) { display:none !important; }
       .gds-tr-action-cell { display:flex; gap:4px; align-items:center; }
       .gds-tr-action-btn  { padding:2px 8px; }
+      .gds-tr-date-input.flatpickr-input:not(.flatpickr-mobile) { display:none !important; }
       @media (max-width:600px) {
         .gds-tr-action-cell { flex-direction:column; gap:2px; }
         .gds-tr-action-btn  { padding:2px 4px; font-size:11px; }
+        .gds-tr-table th, .gds-tr-table td { padding:3px 4px !important; font-size:10px; }
         .gds-tr-ref-full { display:none; }
         .gds-tr-ref-short { display:inline; }
-        .gds-tr-table th, .gds-tr-table td { padding:3px 4px !important; font-size:10px; }
-        
-        .gds-tr-ref { font-size:9px; }
         .gds-tr-state { padding:1px 4px !important; font-size:9px; }
       }
     </style>
@@ -1097,6 +1095,41 @@ function exportStockFinalXlsx(vendorLabel, lines) {
     a.click();
   }
 }
+function exportStockFinalPdf(vendorLabel, lines) {
+  const title = `STOCK FINAL: ${vendorLabel}`;
+  const today = new Date().toLocaleDateString("fr-FR");
+  const filtered = lines.filter(l => l.qty > 0);
+  function _load(cb) {
+    if (window.jspdf) { cb(); return; }
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    s.onload = () => {
+      const s2 = document.createElement("script");
+      s2.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js";
+      s2.onload = cb;
+      document.head.appendChild(s2);
+    };
+    document.head.appendChild(s);
+  }
+  _load(() => {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    doc.setFontSize(13); doc.setFont(undefined, "bold");
+    doc.text(`${title} (${today})`, 14, 15);
+    doc.autoTable({
+      startY: 22,
+      head: [["Article", "CDN", "Quantité"]],
+      body: filtered.map(l => {
+        const cdn = l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "";
+        return [l.name, cdn, l.qty];
+      }),
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [26, 107, 58] },
+      columnStyles: { 1: { halign: "center" }, 2: { halign: "center" } },
+    });
+    doc.save(`stock_final_${vendorLabel.replace(/\s+/g, "_")}.pdf`);
+  });
+}
 const _gdsPrep = {
   lines:            [],
   loaded:           false,
@@ -1528,7 +1561,7 @@ const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
       <button onclick="_gdsPrepToggleColPanel('__global__')" style="font-size:9px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;display:flex;align-items:center;gap:4px;">
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Col
       </button>
-      <div id="gdsPrepColPanel___global__" style="display:none;position:absolute;top:100%;right:0;z-index:200;max-width:calc(100vw - 8px);background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;flex-direction:column;gap:6px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5);">
+      <div id="gdsPrepColPanel___global__" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;flex-direction:column;gap:6px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5);">
         ${[
           { key:"stock",  label:"Stock",       color:"var(--text3)"    },
           { key:"sugg",   label:"Suggéré",     color:"var(--text3)"    },
@@ -1758,8 +1791,6 @@ function _gdsPrepInitFlatpickr(fromVal, toVal) {
 
 // ── فتح النافذة ───────────────────────────────────────────────
 async function gdsPrepOpenModal(isEdit = false) {
-  // guard: منع التعديل إذا لم يكن للمستخدم صلاحية
-  if (isEdit && !isAdmin() && !_hasTabPerm("prep_modifier")) return;
   _gdsPrep.isEdit = isEdit;
   if (!_gdsPrep.loaded) await _gdsPrepLoadStock();
   const modal = document.getElementById("gdsPrepModal");
@@ -2048,7 +2079,7 @@ function _gdsPrepRenderModalBody() {
     <button onclick="_gdsPrepToggleColPanel('__global__')" style="font-size:9px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;display:flex;align-items:center;gap:4px;">
       <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Col
     </button>
-    <div id="gdsPrepColPanel___global__" style="display:none;position:absolute;top:100%;right:0;z-index:200;max-width:calc(100vw - 8px);background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;flex-direction:column;gap:6px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5);">
+    <div id="gdsPrepColPanel___global__" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;flex-direction:column;gap:6px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5);">
       ${[
         { key:"stock",  label:"Stock",       color:"var(--text3)"    },
         { key:"sugg",   label:"Suggéré",     color:"var(--text3)"    },
@@ -2297,7 +2328,6 @@ body.innerHTML = `<div><table class="gds-table" style="font-size:11px;width:100%
 
 // ── زر +/− في وضع التعديل ────────────────────────────────────
 function _gdsPrepDelta(pid, field, dir, btn) {
-  if (!isAdmin() && !_hasTabPerm("prep_modifier")) return;
   const line = _gdsPrep.lines.find(l => l.pid === pid); if (!line) return;
   const deltaField = field === "prepCarton" ? "_deltaCarton" : "_deltaUnite";
   line[deltaField] = (line[deltaField] || 0) + dir;
@@ -2308,7 +2338,6 @@ function _gdsPrepDelta(pid, field, dir, btn) {
 }
 
 function _gdsPrepDeltaInput(pid, field, inputEl) {
-  if (!isAdmin() && !_hasTabPerm("prep_modifier")) return;
   const line = _gdsPrep.lines.find(l => l.pid === pid); if (!line) return;
   const val = parseFloat(inputEl.value) || 0;
   if (field === "prepUnite") {
@@ -3273,14 +3302,8 @@ function _gdsPrepToggleColPanel(cat) {
   // أغلق كل الـ panels المفتوحة
   document.querySelectorAll("[id^='gdsPrepColPanel_']").forEach(p => p.style.display = "none");
   if (isOpen) return;
-panel.style.display = "flex";
-  // تصحيح الموضع ليبقى داخل الشاشة
-  requestAnimationFrame(() => {
-    const rect = panel.getBoundingClientRect();
-    if (rect.left < 0) panel.style.right = "auto", panel.style.left = "0";
-    if (rect.right > window.innerWidth) panel.style.right = "0", panel.style.left = "auto";
-    if (rect.bottom > window.innerHeight) panel.style.top = "auto", panel.style.bottom = "100%";
-  });  // listener للإغلاق عند الضغط خارج الإطار (مرة واحدة)
+  panel.style.display = "flex";
+  // listener للإغلاق عند الضغط خارج الإطار (مرة واحدة)
   setTimeout(() => {
     function _outsideClick(e) {
       if (!panel.contains(e.target) && !e.target.closest("button[onclick*='_gdsPrepToggleColPanel']")) {
@@ -3457,9 +3480,8 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
         </td>
        <td style="text-align:center;min-width:40px;" class="no-print"><div class="gds-prep-action-cell">
           <span data-perm="prep_quick_add" ${_gdsPrep.finished ? 'style="display:none"' : ''}>
-
           <button class="gds-prep-hist-btn" onclick="_gdsPrepQuickAdd(${line.pid}, this)" title="Ajout rapide"
-            style="background:var(--gds-color);color:#fff;font-weight:700;font-size:13px;padding:0 5px;margin-right:2px;${!App.settings?.allowOverstock && line.qty === 0 ? 'opacity:.35;cursor:not-allowed;' : ''}">
+            style="background:var(--gds-color);color:#fff;font-weight:700;font-size:13px;padding:0 5px;${!App.settings?.allowOverstock && line.qty === 0 ? 'opacity:.35;cursor:not-allowed;' : ''}">
             ＋
           </button>
           </span>
@@ -3472,7 +3494,7 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
             : ""}
           ${(() => {
             const hasChg = Object.values(_gdsPrep.byPicking).some(mv => mv.some(m => m.product_id?.[0] === line.pid));
-            return `<button class="gds-prep-hist-btn" onclick="${hasChg ? `gdsPrepShowCharge(${line.pid})` : ''}" title="Détail chargement" style="margin-left:2px;${!hasChg ? 'opacity:.3;cursor:not-allowed;' : ''}" ${!hasChg ? 'disabled' : ''}>
+            return `<button class="gds-prep-hist-btn" onclick="${hasChg ? `gdsPrepShowCharge(${line.pid})` : ''}" title="Détail chargement" style="${!hasChg ? 'opacity:.3;cursor:not-allowed;' : ''}" ${!hasChg ? 'disabled' : ''}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
                 <circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
@@ -3484,7 +3506,7 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
         <td style="text-align:center;min-width:40px;"><div class="gds-prep-action-cell">
           <span data-perm="prep_quick_add" ${_gdsPrep.finished ? 'style="display:none"' : ''}>
           <button class="gds-prep-hist-btn" onclick="_gdsPrepQuickAdd(${line.pid}, this)" title="Ajout rapide"
-            style="padding:0 5px;margin-right:2px;${!App.settings?.allowOverstock && line.qty === 0 ? 'opacity:.35;cursor:not-allowed;' : ''}">
+            style="padding:0 5px;${!App.settings?.allowOverstock && line.qty === 0 ? 'opacity:.35;cursor:not-allowed;' : ''}">
             ＋
           </button>
           </span>
@@ -3497,7 +3519,7 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
             : ""}
           ${(() => {
             const hasChg = Object.values(_gdsPrep.byPicking).some(mv => mv.some(m => m.product_id?.[0] === line.pid));
-            return `<button class="gds-prep-hist-btn" onclick="${hasChg ? `gdsPrepShowCharge(${line.pid})` : ''}" title="Détail chargement" style="margin-left:2px;${!hasChg ? 'opacity:.3;cursor:not-allowed;' : ''}" ${!hasChg ? 'disabled' : ''}>
+            return `<button class="gds-prep-hist-btn" onclick="${hasChg ? `gdsPrepShowCharge(${line.pid})` : ''}" title="Détail chargement" style="${!hasChg ? 'opacity:.3;cursor:not-allowed;' : ''}" ${!hasChg ? 'disabled' : ''}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
                 <circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
@@ -3633,7 +3655,8 @@ function _gdsPrepToggleSearch() {
     popup._vpCleanup = () => {
       window.visualViewport?.removeEventListener("resize", reposition);
       window.visualViewport?.removeEventListener("scroll", reposition);
-      document.getElementById("gdsPrepSearchFloatWrap").style.bottom = "18px";
+      const wrap = document.getElementById("gdsPrepSearchFloatWrap");
+      if (wrap) wrap.style.bottom = "18px";
     };
   } else {
     popup._vpCleanup?.();
@@ -4920,7 +4943,10 @@ window.sfRefreshDist = async function(distId, distNom, distSafeId) {
       });
       const roundLabel = `${distNom} - ${round.name || round.id}`;
       tableHtml += `</tbody></table>
-        <button class="gds-refresh-btn" style="margin-top:6px;" onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})'>⬇ Export ${round.name || round.id}</button>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <button class="gds-refresh-btn" style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;" onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})'>📊 EXCEL</button>
+          <button class="gds-refresh-btn" style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;background:var(--red);" onclick='exportStockFinalPdf("${roundLabel}", ${JSON.stringify(lines)})'>🖨 PDF</button>
+        </div>
       </div>`;
       bodyHtml += tableHtml;
     }
@@ -4991,7 +5017,8 @@ window.sfRenderFromCache = async function sfRenderFromCache() {
     <div style="display:flex;gap:6px;padding:6px 10px;flex-shrink:0;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center;">
       <button class="gds-refresh-btn" data-perm="sf_btn_refresh" onclick="renderGdsStockFinal()">↻ Actualiser</button>
       <button class="gds-refresh-btn" data-perm="sf_btn_today" onclick="window._sfSelectedDate=new Date().toISOString().slice(0,10); sfRenderFromCache();">📅 Aujourd'hui</button>
-      <button class="gds-refresh-btn" data-perm="sf_btn_export" onclick="sfExportAll()">⬇ Tout exporter</button>
+      <button class="gds-refresh-btn" data-perm="sf_btn_export" onclick="sfExportAll('xlsx')">⬇ Tout exporter Excel</button>
+      <button class="gds-refresh-btn" data-perm="sf_btn_export" style="background:var(--red);" onclick="sfExportAll('pdf')">🖨 Tout exporter PDF</button>
     </div>
     <div id="sfResultsContainer" style="padding:8px;display:grid;align-items:start;gap:10px;"></div>`;
 
@@ -5087,9 +5114,13 @@ window.sfRenderFromCache = async function sfRenderFromCache() {
               <td style="padding:3px 6px;text-align:center;font-weight:600;color:var(--text1);">${l.qty}</td>
             </tr>`;
           });
-          const roundLabel = `${dist.nom} - ${round.name || round.id}`;
+          const roundDate = (round.date_start || savedDate).slice(0, 10).split("-").reverse().join("/");
+          const roundLabel = `${dist.nom} - ${round.name || round.id} - ${roundDate}`;
           tableHtml += `</tbody></table>
-            <button class="gds-refresh-btn" data-perm="sf_round_export" style="margin-top:6px;" onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})'>⬇ Export ${round.name || round.id}</button>
+            <div style="display:flex;gap:6px;margin-top:6px;">
+            <button class="gds-refresh-btn" style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;" onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})'>📊 EXCEL</button>
+            <button class="gds-refresh-btn" style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;background:var(--red);" onclick='exportStockFinalPdf("${roundLabel}", ${JSON.stringify(lines)})'>🖨 PDF</button>
+          </div>
           </div>`;
           bodyHtml += tableHtml;
           lines.forEach(l => allDistLines.push({ ...l, _roundLabel: round.name || round.id }));
@@ -5132,34 +5163,196 @@ window.renderGdsStockFinal = async function renderGdsStockFinal() {
 }
 
 
-async function sfExportAll() {
+window.sfExportAll = async function sfExportAll(format = 'xlsx') {
   const distributeurs = sfGetDistributeurs();
   const baseUrl = ODOO_BASE;
   if (!baseUrl || !distributeurs.length) return;
 
-  addNotif(`Stock final: export groupé (${distributeurs.length} distributeurs)…`, "info");
-  const allLines = [];
-  for (const dist of distributeurs) {
+  const savedDate = window._sfSelectedDate || new Date().toISOString().slice(0, 10);
+  addNotif(`Export en cours…`, "info");
+
+  if (format === 'xlsx') {
+    // تحميل SheetJS
+    if (!window.XLSX) {
+      await new Promise((res, rej) => {
+        const s = document.createElement("script");
+        s.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+        s.onload = res; s.onerror = rej;
+        document.head.appendChild(s);
+      });
+    }
+    const wb = window.XLSX.utils.book_new();
+    const allRows = [];
+    for (const dist of distributeurs) {
+      try {
+        const plannings = await _rpc_call(baseUrl, {
+          model: "planning.planning", method: "search_read",
+          args: [[["user_id.id", "=", parseInt(dist.id)], ["date_start", "=", savedDate]]],
+          kwargs: { fields: ["id", "name", "date_start"] },
+        });
+        if (!plannings?.length) continue;
+        let distHasData = false;
+        for (const round of plannings) {
+          const lines = await _rpc_fetchStockFinal(baseUrl, round.id);
+          if (!lines.length) continue;
+          if (!distHasData) {
+            // عنوان الموزع
+            allRows.push([`▶ ${dist.nom}`, "", ""]);
+            distHasData = true;
+          }
+          const roundDate = (round.date_start || savedDate).slice(0, 10).split("-").reverse().join("/");
+          allRows.push([`  Tournée: ${round.name || round.id} — ${roundDate}`, "", ""]);
+          allRows.push(["  Article", "CDN", "Quantité"]);
+          lines.forEach(l => {
+            const cdn = l._cdn_override != null ? l._cdn_override
+              : (l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "");
+            allRows.push([`  ${l.name}`, cdn, l.qty]);
+          });
+          allRows.push(["", "", ""]);
+        }
+      } catch(err) { addNotif(`Erreur ${dist.nom}: ${err.message}`, "error"); }
+    }
+    if (allRows.length) {
+      const ws = window.XLSX.utils.aoa_to_sheet(allRows);
+      window.XLSX.utils.book_append_sheet(wb, ws, "Stock Final");
+      const dateLabel = savedDate.split("-").reverse().join("-");
+      window.XLSX.writeFile(wb, `stock_final_${dateLabel}.xlsx`);
+    }
+    addNotif(`✓ Export Excel terminé`, "success");
+    return;
+  }
+
+  // PDF: ملف واحد لكل موزع يضم جميع جولاته
+  function _loadPdfLibs(cb) {
+    if (window.jspdf?.jsPDF?.prototype?.autoTable) { cb(); return; }
+    const s1 = document.createElement("script");
+    s1.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    s1.onload = () => {
+      const s2 = document.createElement("script");
+      s2.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js";
+      s2.onload = cb;
+      document.head.appendChild(s2);
+    };
+    document.head.appendChild(s1);
+  }
+
+  _loadPdfLibs(async () => {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    let isFirst = true;
+
+    for (const dist of distributeurs) {
+      try {
+        const plannings = await _rpc_call(baseUrl, {
+          model: "planning.planning", method: "search_read",
+          args: [[["user_id.id", "=", parseInt(dist.id)], ["date_start", "=", savedDate]]],
+          kwargs: { fields: ["id", "name", "date_start"] },
+        });
+        if (!plannings?.length) continue;
+
+        for (const round of plannings) {
+          const lines = await _rpc_fetchStockFinal(baseUrl, round.id);
+          if (!lines.length) continue;
+          const roundDate = (round.date_start || savedDate).slice(0, 10).split("-").reverse().join("/");
+          const filtered = lines.filter(l => l.qty > 0);
+
+          if (!isFirst) doc.addPage();
+          isFirst = false;
+
+          // عنوان الموزع
+          doc.setFontSize(13); doc.setFont(undefined, "bold");
+          doc.text(dist.nom, 14, 14);
+          // عنوان الـ tournée
+          doc.setFontSize(10); doc.setFont(undefined, "normal");
+          doc.text(`Tournée: ${round.name || round.id} — ${roundDate}`, 14, 21);
+
+          doc.autoTable({
+            startY: 26,
+            head: [["Article", "CDN", "Quantité"]],
+            body: filtered.map(l => {
+              const cdn = l._cdn_override != null ? l._cdn_override
+                : (l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "");
+              return [l.name, cdn, l.qty];
+            }),
+            styles: { fontSize: 8, cellPadding: 2 },
+            headStyles: { fillColor: [26, 107, 58] },
+            columnStyles: { 1: { halign: "center" }, 2: { halign: "center" } },
+          });
+        }
+      } catch(err) { addNotif(`Erreur ${dist.nom}: ${err.message}`, "error"); }
+    }
+
+    if (!isFirst) {
+      const dateLabel = savedDate.split("-").reverse().join("-");
+      doc.save(`stock_final_${dateLabel}.pdf`);
+    }
+    addNotif(`✓ Export PDF terminé`, "success");
+  });
+};
+window.sfExportDistPdf = async function sfExportDistPdf(distId, distNom) {
+  const baseUrl = ODOO_BASE;
+  const savedDate = window._sfSelectedDate || new Date().toISOString().slice(0, 10);
+
+  function _loadPdfLibs(cb) {
+    if (window.jspdf?.jsPDF?.prototype?.autoTable) { cb(); return; }
+    const s1 = document.createElement("script");
+    s1.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    s1.onload = () => {
+      const s2 = document.createElement("script");
+      s2.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js";
+      s2.onload = cb;
+      document.head.appendChild(s2);
+    };
+    document.head.appendChild(s1);
+  }
+
+  _loadPdfLibs(async () => {
+    const { jsPDF } = window.jspdf;
     try {
-      const today = new Date().toISOString().slice(0, 10);
       const plannings = await _rpc_call(baseUrl, {
         model: "planning.planning", method: "search_read",
-        args: [[["user_id.id", "=", parseInt(dist.id)], ["date_start", "=", today]]],
-        kwargs: { fields: ["id", "name"], limit: 1 },
+        args: [[["user_id.id", "=", parseInt(distId)], ["date_start", "=", savedDate]]],
+        kwargs: { fields: ["id", "name", "date_start"] },
       });
-      if (!plannings?.length) continue;
-      const lines = await _rpc_fetchStockFinal(baseUrl, plannings[0].id);
-      lines.forEach(l => allLines.push({ ...l, _vendorLabel: dist.nom }));
-    } catch(err) {
-      addNotif(`Erreur ${dist.nom}: ${err.message}`, "error");
-    }
-  }
-  if (!allLines.length) { addNotif("Stock final: vide", "info"); return; }
+      if (!plannings?.length) { addNotif(`Aucune tournée pour ${distNom}`, "info"); return; }
 
-  // export CSV/XLSX مجمع
-  exportStockFinalXlsx("Groupe", allLines);
-  addNotif(`✓ Export groupé téléchargé`, "success");
-}
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      let isFirst = true;
+
+      for (const round of plannings) {
+        const lines = await _rpc_fetchStockFinal(baseUrl, round.id);
+        if (!lines.length) continue;
+        const roundDate = (round.date_start || savedDate).slice(0, 10).split("-").reverse().join("/");
+        const filtered = lines.filter(l => l.qty > 0);
+
+        if (!isFirst) doc.addPage();
+        isFirst = false;
+
+        doc.setFontSize(13); doc.setFont(undefined, "bold");
+        doc.text(distNom, 14, 14);
+        doc.setFontSize(10); doc.setFont(undefined, "normal");
+        doc.text(`Tournee: ${round.name || round.id} - ${roundDate}`, 14, 21);
+
+        doc.autoTable({
+          startY: 26,
+          head: [["Article", "CDN", "Quantite"]],
+          body: filtered.map(l => {
+            const cdn = l._cdn_override != null ? l._cdn_override
+              : (l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "");
+            return [l.name, cdn, l.qty];
+          }),
+          styles: { fontSize: 8, cellPadding: 2 },
+          headStyles: { fillColor: [26, 107, 58] },
+          columnStyles: { 1: { halign: "center" }, 2: { halign: "center" } },
+        });
+      }
+
+      if (!isFirst) doc.save(`stock_final_${distNom.replace(/\s+/g,"_")}.pdf`);
+      else addNotif(`Aucune donnee pour ${distNom}`, "info");
+    } catch(err) { addNotif(`Erreur ${distNom}: ${err.message}`, "error"); }
+  });
+};
+
 function sfSaveColumnsPerRow(val) {
   localStorage.setItem("sf_columns_per_row", val);
   fetch(`${_FB_DB_URL}/sf_settings.json`, {
