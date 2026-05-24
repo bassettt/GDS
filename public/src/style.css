@@ -473,3 +473,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 .gds-prep-modal-body table.gds-table:not(.edit-mode) th:nth-child(5),
 .gds-prep-modal-body table.gds-table:not(.edit-mode) td:nth-child(5) { width: 14%; }
 @media print { .no-print { display: none !important; } }
+/* قبل: (آخر سطر في الملف) */
+@media print { .no-print { display: none !important; } }
+
+/* بعد: */
+@media print { .no-print { display: none !important; } }
+.gds-prep-action-cell { display:flex; gap:3px; align-items:center; justify-content:center; flex-wrap:nowrap; }
+@media (max-width:600px) {
+  .gds-prep-action-cell { flex-direction:column; gap:2px; }
+}

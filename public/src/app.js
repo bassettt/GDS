@@ -445,7 +445,7 @@ async function renderGdsTransferts() {
       const to    = t.location_dest_id ? _cleanVanName(t.location_dest_id[1]) : "—";
       const partner = t.partner_id     ? t.partner_id[1]                               : "—";
       rows += `<tr>
-        <td><span class="gds-tr-ref">${escHtml(t.name)}</span></td>
+        <td><span class="gds-tr-ref gds-tr-ref-full">${escHtml(t.name)}</span><span class="gds-tr-ref gds-tr-ref-short">${escHtml(t.name.split('/').pop())}</span></td>
         <td>${escHtml(from)}</td>
         <td>${escHtml(to)}</td>
         <td style="color:var(--text2)">${escHtml(partner)}</td>
@@ -479,11 +479,19 @@ async function renderGdsTransferts() {
       <span class="gds-last-updated">Mis à jour : ${now} — ${transfers.length} transfert(s)</span>
     </div>
     <style>
+      .gds-tr-ref-short { display:none; }
+      .flatpickr-input:not(.flatpickr-mobile) { display:none !important; }
       .gds-tr-action-cell { display:flex; gap:4px; align-items:center; }
       .gds-tr-action-btn  { padding:2px 8px; }
       @media (max-width:600px) {
         .gds-tr-action-cell { flex-direction:column; gap:2px; }
         .gds-tr-action-btn  { padding:2px 4px; font-size:11px; }
+        .gds-tr-ref-full { display:none; }
+        .gds-tr-ref-short { display:inline; }
+        .gds-tr-table th, .gds-tr-table td { padding:3px 4px !important; font-size:10px; }
+        
+        .gds-tr-ref { font-size:9px; }
+        .gds-tr-state { padding:1px 4px !important; font-size:9px; }
       }
     </style>
     <div style="overflow-x:auto">
@@ -1503,22 +1511,24 @@ const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
       </button>
     </div>
     ${hasData && App.settings?.showPrepSearch !== false ? `
-    <div id="gdsPrepSearchWrap" style="display:flex;align-items:center;gap:4px;margin-left:auto;">
+    <div id="gdsPrepSearchFloatWrap" style="position:fixed;bottom:18px;right:18px;z-index:999;display:flex;flex-direction:column;align-items:flex-end;gap:6px;">
+      <div id="gdsPrepSearchPopup" style="display:none;align-items:center;gap:6px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:6px 10px;box-shadow:0 4px 20px rgba(0,0,0,.5);">
+        <input id="gdsPrepSearchInput" type="text" placeholder="Rechercher…"
+          oninput="_gdsPrepApplySearch(this.value)"
+          style="width:180px;max-width:55vw;padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);font-size:13px;outline:none;"/>
+        <button id="gdsPrepSearchClear" onclick="_gdsPrepClearSearch()" title="Effacer"
+          style="font-size:13px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;">✕</button>
+      </div>
       <button id="gdsPrepSearchBtn" onclick="_gdsPrepToggleSearch()" title="Rechercher"
-        style="font-size:9px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;display:flex;align-items:center;gap:4px;">
-        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        style="width:44px;height:44px;border-radius:50%;background:var(--gds-color);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(0,0,0,.4);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       </button>
-      <input id="gdsPrepSearchInput" type="text" placeholder="Rechercher…"
-        oninput="_gdsPrepApplySearch(this.value)"
-        style="display:none;width:140px;max-width:40vw;padding:3px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);font-size:11px;outline:none;transition:width .2s;"/>
-      <button id="gdsPrepSearchClear" onclick="_gdsPrepClearSearch()" title="Effacer"
-        style="display:none;font-size:11px;padding:2px 6px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;">✕</button>
     </div>` : ""}
     ${hasData ? `<div style="position:relative;">
       <button onclick="_gdsPrepToggleColPanel('__global__')" style="font-size:9px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;display:flex;align-items:center;gap:4px;">
         <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Col
       </button>
-      <div id="gdsPrepColPanel___global__" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;flex-direction:column;gap:6px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5);">
+      <div id="gdsPrepColPanel___global__" style="display:none;position:absolute;top:100%;right:0;z-index:200;max-width:calc(100vw - 8px);background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;flex-direction:column;gap:6px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5);">
         ${[
           { key:"stock",  label:"Stock",       color:"var(--text3)"    },
           { key:"sugg",   label:"Suggéré",     color:"var(--text3)"    },
@@ -1748,6 +1758,8 @@ function _gdsPrepInitFlatpickr(fromVal, toVal) {
 
 // ── فتح النافذة ───────────────────────────────────────────────
 async function gdsPrepOpenModal(isEdit = false) {
+  // guard: منع التعديل إذا لم يكن للمستخدم صلاحية
+  if (isEdit && !isAdmin() && !_hasTabPerm("prep_modifier")) return;
   _gdsPrep.isEdit = isEdit;
   if (!_gdsPrep.loaded) await _gdsPrepLoadStock();
   const modal = document.getElementById("gdsPrepModal");
@@ -2036,7 +2048,7 @@ function _gdsPrepRenderModalBody() {
     <button onclick="_gdsPrepToggleColPanel('__global__')" style="font-size:9px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;display:flex;align-items:center;gap:4px;">
       <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Col
     </button>
-    <div id="gdsPrepColPanel___global__" style="display:none;position:absolute;top:100%;right:0;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;flex-direction:column;gap:6px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5);">
+    <div id="gdsPrepColPanel___global__" style="display:none;position:absolute;top:100%;right:0;z-index:200;max-width:calc(100vw - 8px);background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;flex-direction:column;gap:6px;min-width:160px;box-shadow:0 4px 16px rgba(0,0,0,.5);">
       ${[
         { key:"stock",  label:"Stock",       color:"var(--text3)"    },
         { key:"sugg",   label:"Suggéré",     color:"var(--text3)"    },
@@ -2285,6 +2297,7 @@ body.innerHTML = `<div><table class="gds-table" style="font-size:11px;width:100%
 
 // ── زر +/− في وضع التعديل ────────────────────────────────────
 function _gdsPrepDelta(pid, field, dir, btn) {
+  if (!isAdmin() && !_hasTabPerm("prep_modifier")) return;
   const line = _gdsPrep.lines.find(l => l.pid === pid); if (!line) return;
   const deltaField = field === "prepCarton" ? "_deltaCarton" : "_deltaUnite";
   line[deltaField] = (line[deltaField] || 0) + dir;
@@ -2295,6 +2308,7 @@ function _gdsPrepDelta(pid, field, dir, btn) {
 }
 
 function _gdsPrepDeltaInput(pid, field, inputEl) {
+  if (!isAdmin() && !_hasTabPerm("prep_modifier")) return;
   const line = _gdsPrep.lines.find(l => l.pid === pid); if (!line) return;
   const val = parseFloat(inputEl.value) || 0;
   if (field === "prepUnite") {
@@ -3259,8 +3273,14 @@ function _gdsPrepToggleColPanel(cat) {
   // أغلق كل الـ panels المفتوحة
   document.querySelectorAll("[id^='gdsPrepColPanel_']").forEach(p => p.style.display = "none");
   if (isOpen) return;
-  panel.style.display = "flex";
-  // listener للإغلاق عند الضغط خارج الإطار (مرة واحدة)
+panel.style.display = "flex";
+  // تصحيح الموضع ليبقى داخل الشاشة
+  requestAnimationFrame(() => {
+    const rect = panel.getBoundingClientRect();
+    if (rect.left < 0) panel.style.right = "auto", panel.style.left = "0";
+    if (rect.right > window.innerWidth) panel.style.right = "0", panel.style.left = "auto";
+    if (rect.bottom > window.innerHeight) panel.style.top = "auto", panel.style.bottom = "100%";
+  });  // listener للإغلاق عند الضغط خارج الإطار (مرة واحدة)
   setTimeout(() => {
     function _outsideClick(e) {
       if (!panel.contains(e.target) && !e.target.closest("button[onclick*='_gdsPrepToggleColPanel']")) {
@@ -3435,8 +3455,9 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
             placeholder="0"
             oninput="_gdsPrepEcartInput(${line.pid}, this.value)"/>
         </td>
-       <td style="text-align:center;white-space:nowrap;min-width:40px;" class="no-print">
-          <span data-perm="prep_quick_add">
+       <td style="text-align:center;min-width:40px;" class="no-print"><div class="gds-prep-action-cell">
+          <span data-perm="prep_quick_add" ${_gdsPrep.finished ? 'style="display:none"' : ''}>
+
           <button class="gds-prep-hist-btn" onclick="_gdsPrepQuickAdd(${line.pid}, this)" title="Ajout rapide"
             style="background:var(--gds-color);color:#fff;font-weight:700;font-size:13px;padding:0 5px;margin-right:2px;${!App.settings?.allowOverstock && line.qty === 0 ? 'opacity:.35;cursor:not-allowed;' : ''}">
             ＋
@@ -3458,10 +3479,10 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
               </svg>
             </button>`;
           })()}
-        </td>
+        </div></td>
         ` : `
-        <td style="text-align:center;white-space:nowrap;min-width:40px;">
-          <span data-perm="prep_quick_add">
+        <td style="text-align:center;min-width:40px;"><div class="gds-prep-action-cell">
+          <span data-perm="prep_quick_add" ${_gdsPrep.finished ? 'style="display:none"' : ''}>
           <button class="gds-prep-hist-btn" onclick="_gdsPrepQuickAdd(${line.pid}, this)" title="Ajout rapide"
             style="padding:0 5px;margin-right:2px;${!App.settings?.allowOverstock && line.qty === 0 ? 'opacity:.35;cursor:not-allowed;' : ''}">
             ＋
@@ -3483,7 +3504,7 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
               </svg>
             </button>`;
           })()}
-        </td>`}
+        </div></td>`}
       </tr>`;
     });
     html += `</tbody></table></div></div>`;
@@ -3593,17 +3614,19 @@ function gdsPrepCloseHist() {
 
 // ── بحث في جدول التحضير ──────────────────────────────────────
 function _gdsPrepToggleSearch() {
-  const inp  = document.getElementById("gdsPrepSearchInput");
-  const clr  = document.getElementById("gdsPrepSearchClear");
-  const btn  = document.getElementById("gdsPrepSearchBtn");
-  if (!inp) return;
-  const visible = inp.style.display !== "none";
-  inp.style.display  = visible ? "none" : "inline-block";
-  clr.style.display  = visible ? "none" : "inline-block";
-  btn.style.background = visible ? "var(--bg3)" : "var(--gds-color)";
-  btn.style.color      = visible ? "var(--text3)" : "#fff";
-  btn.style.borderColor = visible ? "var(--border)" : "var(--gds-color)";
-  if (!visible) { inp.focus(); inp.select(); }
+  const popup = document.getElementById("gdsPrepSearchPopup");
+  const inp   = document.getElementById("gdsPrepSearchInput");
+  if (!popup) return;
+  const visible = popup.style.display === "flex";
+  popup.style.display = visible ? "none" : "flex";
+  const btn = document.getElementById("gdsPrepSearchBtn");
+  if (btn) {
+    btn.innerHTML = visible
+      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`
+      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+    btn.style.background = visible ? "var(--gds-color)" : "var(--red)";
+  }
+  if (!visible) { inp?.focus(); inp?.select(); }
   else { _gdsPrepClearSearch(); }
 }
 
