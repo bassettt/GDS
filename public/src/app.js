@@ -159,7 +159,14 @@ async function loadData() {
       if (fb.pdfFontQty          !== undefined) App.settings.pdfFontQty          = fb.pdfFontQty;
       if (fb.pdfRowPadding       !== undefined) App.settings.pdfRowPadding       = fb.pdfRowPadding;
     }
-  } catch(e) { console.warn("Firebase load failed:", e); }
+   } catch(e) { console.warn("Firebase load failed:", e); }
+
+  // جلب خريطة أسماء المنتجات من Firebase
+  try {
+    const rProd = await fetch(`${_FB_DB_URL}/${_PROD_NAMES_FB_KEY}.json`);
+    const fbProd = await rProd.json();
+    if (fbProd && typeof fbProd === "object") App.settings.productNamesMap = fbProd;
+  } catch(_) {}
 
   // جلب قائمة الموزعين من Firebase
   try {
@@ -731,7 +738,7 @@ async function renderGdsStock() {
       if (!p) return;
       const catName = p.categ_id ? p.categ_id[1] : "Autre";
       if (!byCategory[catName]) byCategory[catName] = [];
-      byCategory[catName].push({ name: _productDisplayName(p), qty: stockMap[pid].qty, carton: stockMap[pid].carton, reserved: stockMap[pid].reserved, unitSize: stockMap[pid].unitSize });
+      byCategory[catName].push({ name: _productDisplayName(p), _ordre: _productCustomOrder(String(p.id)), qty: stockMap[pid].qty, carton: stockMap[pid].carton, reserved: stockMap[pid].reserved, unitSize: stockMap[pid].unitSize });
     });
 
     const now        = new Date().toLocaleTimeString("fr-FR");
@@ -749,9 +756,8 @@ async function renderGdsStock() {
       <button class="gds-refresh-btn" data-perm="stock_collapse" onclick="gdsCollapseAll()">▲ Tout fermer</button>
       <span class="gds-last-updated">Mis à jour : ${now}</span>
     </div>`;
-
     sortedCats.forEach(cat => {
-      const items     = byCategory[cat].sort((a,b) => a.name.localeCompare(b.name));
+      const items     = byCategory[cat].sort((a,b) => a._ordre - b._ordre);
       const isCollapsed = !!collapsed[cat];
       const escapedCat  = escHtml(cat);
       // نستخدم data-cat بدل id للـ onclick لتجنب مشاكل الـ escaping
@@ -1022,6 +1028,15 @@ function _hasTabPerm(tab) {
   return allowed === undefined || allowed.includes(perm);
 }
 
+function _canOverstock() {
+  if (typeof isAdmin === "function" && isAdmin()) return App.settings?.allowOverstock === true;
+  if (!_permCache) return false;
+  const role = AppAuth.currentUser?.role;
+  if (!role) return false;
+  const allowed = _decodePerm(_permCache["gds_preparation"]?.[role]);
+  return allowed === undefined || allowed.includes("prep_overstock");
+}
+
 async function gdsShowTab(tab) {
   if (!isAdmin() && !_hasTabPerm(tab)) return;
   const stockEl     = document.getElementById("gdsContent");
@@ -1151,17 +1166,171 @@ function _getPrepStorageKey() {
   return `wafa_gds_preparation_${whId}`;
 }
 
-function _productDisplayName(p) {
+function _productDisplayName(p, { useCustom = false } = {}) {
   if (!p) return "—";
   const code = (p.default_code || "").toUpperCase();
   const name = p.name || "";
   const colorMap = { "BLEU": "BLEU", "VERT": "VERT", "ROSE": "ROSE", "ROUGE": "ROUGE", "JAUNE": "JAUNE" };
+  let odooName = name;
   for (const [key, label] of Object.entries(colorMap)) {
     if (code.includes(key) && !name.toUpperCase().includes(key)) {
-      return `${name} (${label})`;
+      odooName = `${name} (${label})`;
+      break;
     }
   }
-  return name;
+  if (!useCustom) return odooName;
+  const map = _getProdNamesMap();
+  return map[p.id]?.nom || odooName;
+}
+
+// ── Noms & Ordre personnalisés des produits ───────────────────
+const _PROD_NAMES_FB_KEY = "product_display_map";
+
+function _getProdNamesMap() {
+  return App.settings?.productNamesMap || {};
+}
+
+function _productCustomName(pid, originalName) {
+  const map = _getProdNamesMap();
+  return map[pid]?.nom || originalName;
+}
+
+function _productCustomOrder(pid) {
+  const map = _getProdNamesMap();
+  return map[String(pid)]?.ordre ?? 9999;
+}
+
+async function _initProduitNamesModal() {
+  const statusEl  = document.getElementById("prodNamesStatus");
+  const previewEl = document.getElementById("prodNamesPreview");
+  const map = _getProdNamesMap();
+  const count = Object.keys(map).length;
+  if (statusEl) statusEl.textContent = count > 0 ? `${count} produits configurés` : "Aucune configuration importée";
+  if (previewEl) {
+    if (count === 0) { previewEl.innerHTML = ""; return; }
+    const rows = Object.entries(map).slice(0, 50).map(([pid, v]) =>
+      `<div style="display:flex;gap:8px;padding:3px 0;border-bottom:1px solid var(--border);">
+        <span style="color:var(--text3);min-width:40px;">#${pid}</span>
+        <span style="min-width:30px;text-align:center;">${v.ordre}</span>
+        <span>${v.nom}</span>
+      </div>`
+    ).join("");
+    previewEl.innerHTML = `
+      <div style="display:flex;gap:8px;padding:3px 0;font-weight:700;font-size:10px;color:var(--text2);border-bottom:2px solid var(--border);margin-bottom:4px;">
+        <span style="min-width:40px;">ID</span>
+        <span style="min-width:30px;">Ordre</span>
+        <span>Nom affiché</span>
+      </div>${rows}
+      ${count > 50 ? `<div style="color:var(--text3);margin-top:4px;">… et ${count-50} autres</div>` : ""}`;
+  }
+
+  
+}
+
+async function _downloadProdTemplate() {
+  const statusEl = document.getElementById("prodNamesStatus");
+  if (statusEl) statusEl.textContent = "Chargement des produits…";
+
+  try {
+    // جلب كل المنتجات من Odoo
+    const res = await fetch("/api/web/dataset/call_kw", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc:"2.0", method:"call", id: Date.now(),
+        params: {
+          model: "product.product", method: "search_read",
+          args: [[["active","=",true]]],
+          kwargs: { fields: ["id","name","default_code","categ_id"], limit: 5000 }
+        }
+      })
+    });
+    const j = await res.json();
+    const products = j?.result || [];
+    if (!products.length) { if (statusEl) statusEl.textContent = "Aucun produit trouvé"; return; }
+
+    const map = _getProdNamesMap();
+    const wb = XLSX.utils.book_new();
+    const rows = [["id", "nom_odoo", "nom_affiche", "ordre"]];
+    products.forEach((p, i) => {
+      const existing = map[p.id];
+      rows.push([
+        p.id,
+        _productDisplayName(p),
+        existing?.nom || _productDisplayName(p),
+        existing?.ordre ?? (i + 1)
+      ]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [{ wch: 8 }, { wch: 40 }, { wch: 40 }, { wch: 8 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Produits");
+    XLSX.writeFile(wb, "produits_template.xlsx");
+    if (statusEl) statusEl.textContent = `${products.length} produits exportés`;
+  } catch(e) {
+    console.error(e);
+    if (statusEl) statusEl.textContent = "Erreur lors du chargement";
+  }
+}
+
+async function _onProdNamesFileImport(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const statusEl = document.getElementById("prodNamesStatus");
+  if (statusEl) statusEl.textContent = "Importation…";
+
+  try {
+    const buf  = await file.arrayBuffer();
+    const wb   = XLSX.read(buf, { type: "array" });
+    const ws   = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+    const map = {};
+    rows.forEach((row, i) => {
+      const pid  = parseInt(row["id"]);
+      const nom  = String(row["nom_affiche"] || row["nom_odoo"] || "").trim();
+      const ordre = parseInt(row["ordre"]) || (i + 1);
+      if (!pid || !nom) return;
+      map[pid] = { nom, ordre };
+    });
+
+    App.settings.productNamesMap = map;
+    await Storage.saveSettings(App.settings);
+    // حفظ في Firebase
+    try {
+      await fetch(`${_FB_DB_URL}/${_PROD_NAMES_FB_KEY}.json`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(map)
+      });
+    } catch(_) {}
+
+    input.value = "";
+    const count = Object.keys(map).length;
+    if (statusEl) statusEl.textContent = `✓ ${count} produits importés`;
+    // تحديث أسماء الـ lines الحالية في الـ prep
+    if (_gdsPrep?.lines?.length) {
+      _gdsPrep.lines.forEach(l => {
+        l.name = map[l.pid]?.nom || l._origName || l.name;
+      });
+      _gdsPrepRenderTable();
+    }
+    _initProduitNamesModal();
+    addNotif(`Noms produits mis à jour (${count})`, "success");
+  } catch(e) {
+    console.error(e);
+    if (statusEl) statusEl.textContent = "Erreur lors de l'importation";
+  }
+}
+
+async function _resetProdNames() {
+  if (!confirm("Réinitialiser tous les noms personnalisés ?")) return;
+  App.settings.productNamesMap = {};
+  await Storage.saveSettings(App.settings);
+  try {
+    await fetch(`${_FB_DB_URL}/${_PROD_NAMES_FB_KEY}.json`, { method: "DELETE" });
+  } catch(_) {}
+  _initProduitNamesModal();
+  addNotif("Noms réinitialisés", "success");
 }
 
 // ── Firebase Realtime Database ────────────────────────────────
@@ -1171,31 +1340,80 @@ function _getFbPrepKey() {
   return `wafa_gds_preparation_${whId}`;
 }
 
+let _gdsPrepSaving = false;
+
 async function _gdsPrepSaveCloud() {
+  _gdsPrepSaving = true;
   try {
+    // 1) جلب النسخة الحالية من Cloud
+    let remote = null;
+    try {
+      const res = await fetch(`${_FB_DB_URL}/${_getFbPrepKey()}.json`);
+      remote = await res.json();
+    } catch(_) {}
+
+    // 2) دمج الـ lines: الأحدث _ts يفوز، مع دمج history دائماً
+    let mergedLines = _gdsPrep.lines.map(local => {
+      if (!remote?.lines) return local;
+      const rem = remote.lines.find(r => r.pid === local.pid);
+      if (!rem) return local;
+      // الأحدث يفوز بالقيم (prepCarton, prepUnite, ...)
+      const base = (local._ts || 0) >= (rem._ts || 0)
+        ? { ...rem, ...local }
+        : { ...local, ...rem };
+      // دمج history دائماً بدون تكرار
+      const allHist = [...(local.history || []), ...(rem.history || [])];
+      const seen = new Set();
+      base.history = allHist.filter(h => {
+        const k = `${h.ts}|${h.type}|${h.carton}|${h.unite}|${h.by}`;
+        if (seen.has(k)) return false;
+        seen.add(k); return true;
+      });
+      base._ts = Math.max(local._ts || 0, rem._ts || 0);
+      return base;
+    });
+
+    // 3) أضف lines الموجودة في remote فقط (غير موجودة locally)
+    if (remote?.lines) {
+      remote.lines.forEach(rem => {
+        if (!mergedLines.find(l => l.pid === rem.pid)) mergedLines.push(rem);
+      });
+    }
+
+    // 4) دمج excludedPickings و outOfDateTransferts (union)
+    const mergeArr = (a, b) => [...new Set([...(a||[]), ...(b||[])])];
+
     const data = {
-      lines:               _gdsPrep.lines,
+      lines:               mergedLines,
       loaded:              _gdsPrep.loaded,
-      finished:            _gdsPrep.finished,
-      chargeFrom:          _gdsPrep.chargeFrom,
-      chargeTo:            _gdsPrep.chargeTo,
+	  finished: 		   _gdsPrep.finished,
+      chargeFrom:          _gdsPrep.chargeFrom || remote?.chargeFrom || null,
+      chargeTo:            _gdsPrep.chargeTo   || remote?.chargeTo   || null,
       chargeData:          _gdsPrep.chargeData,
       pickingsMap:         _gdsPrep.pickingsMap,
       byPicking:           _gdsPrep.byPicking,
-      excludedPickings:    _gdsPrep.excludedPickings,
-      outOfDateTransferts: _gdsPrep.outOfDateTransferts,
+      excludedPickings:    mergeArr(_gdsPrep.excludedPickings, remote?.excludedPickings),
+      outOfDateTransferts: mergeArr(_gdsPrep.outOfDateTransferts, remote?.outOfDateTransferts),
       date:                new Date().toISOString().slice(0, 10),
       savedBy:             AppAuth.currentUser?.username || "inconnu",
     };
+
+    // 5) تحديث الحالة المحلية بالبيانات المدمجة
+    _gdsPrep.lines               = mergedLines;
+    _gdsPrep.excludedPickings    = data.excludedPickings;
+    _gdsPrep.outOfDateTransferts = data.outOfDateTransferts;
+
     await fetch(`${_FB_DB_URL}/${_getFbPrepKey()}.json`, {
       method: "PUT",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(data),
     });
   } catch(e) { console.error("[GdsPrep] saveCloud:", e); }
+  finally { _gdsPrepSaving = false; }
 }
 
 async function _gdsPrepLoadFromCloud() {
+  if (_gdsPrepSaving) return false;
   try {
     const res  = await fetch(`${_FB_DB_URL}/${_getFbPrepKey()}.json`);
     const data = await res.json();
@@ -1389,6 +1607,8 @@ function _gdsPrepClosePicker() {
 
 function _gdsPrepSave() {
   try {
+    const now = Date.now();
+    _gdsPrep.lines.forEach(l => { if (!l._ts) l._ts = now; });
     const data = {
       lines:               _gdsPrep.lines,
       loaded:              _gdsPrep.loaded,
@@ -1843,7 +2063,7 @@ function gdsPrepPrintPrep() {
     rows += `<tr class="cat-row"><td colspan="3">${cat}</td></tr>`;
     lines.forEach(line => {
       rows += `<tr>
-        <td>${line.name}</td>
+        <td>${_productCustomName(line.pid, line.name)}</td>
         <td class="num">${line.prepCarton > 0 ? line.prepCarton : "—"}</td>
         <td class="num">${line.prepUnite  > 0 ? line.prepUnite  : "—"}</td>
       </tr>`;
@@ -1905,7 +2125,7 @@ function gdsPrepDownloadPrepPdf() {
     return arr.map(r => r.isCat
       ? `<tr class="cat-row"><td colspan="3">${r.cat}</td></tr>`
       : `<tr>
-          <td>${r.line.name}</td>
+          <td>${_productCustomName(r.line.pid, r.line.name)}</td>
           <td class="num">${r.line.prepCarton > 0 ? r.line.prepCarton : "—"}</td>
           <td class="num">${r.line.prepUnite  > 0 ? r.line.prepUnite  : "—"}</td>
         </tr>`
@@ -2030,7 +2250,7 @@ async function _gdsPrepLoadStock() {
         ex.carton += pkgCarton;
         if (ex.unitSize === 0 && unitSize > 0) ex.unitSize = unitSize;
       } else {
-        _gdsPrep.lines.push({ pid, name:_productDisplayName(p),
+        _gdsPrep.lines.push({ pid, name:_productDisplayName(p, {useCustom:true}), _origName:_productDisplayName(p, {useCustom:false}),
           categ:    p.categ_id ? p.categ_id[1] : "Autre",
           uom:      p.uom_id   ? p.uom_id[1]   : "",
           qty:      q.quantity,
@@ -2044,7 +2264,7 @@ async function _gdsPrepLoadStock() {
     _gdsPrep.lines.forEach(line => {
       if (line.unitSize === 0) line.unitSize = packagingMap[line.pid] || (line.carton > 0 ? line.qty / line.carton : 0);
     });
-    _gdsPrep.lines.sort((a,b) => {
+   _gdsPrep.lines.sort((a,b) => {
       const order = _getCatOrder();
       if (order.length) {
         const ia = order.indexOf(a.categ), ib = order.indexOf(b.categ);
@@ -2054,6 +2274,9 @@ async function _gdsPrepLoadStock() {
         const cmp = a.categ.localeCompare(b.categ);
         if (cmp !== 0) return cmp;
       }
+      // ترتيب مخصص داخل الفئة
+      const oa = _productCustomOrder(a.pid), ob = _productCustomOrder(b.pid);
+      if (oa !== ob) return oa - ob;
       return a.name.localeCompare(b.name);
     });
     _gdsPrep.loaded = true;
@@ -2111,23 +2334,25 @@ function _gdsPrepRenderModalBody() {
     <table class="gds-table ${isEdit ? "edit-mode" : ""}" style="margin-bottom:10px;">
       <thead><tr>
         <th style="min-width:80px;">Produit</th>
-        <th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">S.Colis</th>
-        <th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">S.U</th>
+        <th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Stock.C</th>
+        <th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Stock.U</th>
         ${isEdit
-          ? `<th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Act.Colis</th><th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Act.U</th>
-             <th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">R.Colis</th><th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">R.U</th>
+          ? `<th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Prepa.C</th><th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Prepa.U</th>
+             <th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Reste.C</th><th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Reste.U</th>
              <th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Δ Colis</th><th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Δ U</th>`
           : `<th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Prép. Colis</th><th style="text-align:right;white-space:nowrap;font-size:9px;padding:4px 3px;">Prép. U</th>`}
       </tr></thead><tbody>`;
 
-    byCateg[cat].forEach(({ line, i }) => {
+    byCateg[cat]
+  .sort((a, b) => _productCustomOrder(a.line.pid) - _productCustomOrder(b.line.pid))
+  .forEach(({ line, i }) => {
       const u = _gdsPrepUnitSize(line);
       const stockC = u > 0 ? Math.floor(line.qty / u) : 0;
       const stockU = u > 0 ? Math.round(line.qty % u) : Math.round(line.qty);
 
       if (!isEdit) {
         html += `<tr>
-          <td style="font-size:10px;">${escHtml(line.name)}</td>
+          <td style="font-size:10px;">${escHtml(_productCustomName(line.pid, line.name))}</td>
           <td class="gds-qty">${stockC > 0 ? stockC : "—"}</td>
           <td class="gds-qty">${stockU > 0 ? stockU : (stockC === 0 ? Math.round(line.qty) : "—")}</td>
           <td class="gds-qty">
@@ -2154,7 +2379,7 @@ function _gdsPrepRenderModalBody() {
         const restU     = u > 0 ? Math.round(restQty - Math.trunc(restQty / u) * u) : Math.round(restQty);
         const restColor = restQty <= 0 ? (restQty < 0 ? "color:#f5ac2f;" : "color:#5794f7;") : "color:#5794f7;";
         html += `<tr style="${hasErrRow?"background:rgba(239,68,68,.10);":""}">
-          <td style="font-size:10px;">${escHtml(line.name)}</td>
+          <td style="font-size:10px;">${escHtml(_productCustomName(line.pid, line.name))}</td>
           <td class="gds-qty">${stockC > 0 ? stockC : "—"}</td>
           <td class="gds-qty">${stockU > 0 ? stockU : (stockC === 0 ? Math.round(line.qty) : "—")}</td>
           <td class="gds-qty" style="color:var(--gds-color)">${line.prepCarton || "—"}</td>
@@ -2202,7 +2427,7 @@ const val  = parseFloat(inputEl.value) || 0;
     return;
   }
   const totalIfCarton = field === "prepCarton" ? val * u + line.prepUnite : line.prepCarton * u + val;
-  if (totalIfCarton > line.qty && !App.settings?.allowOverstock) {
+  if (totalIfCarton > line.qty && !_canOverstock()) {
     inputEl.style.borderColor = "var(--red)";
     inputEl.title = "القيمة تتجاوز المخزون";
     line._hasError = true;
@@ -2370,7 +2595,7 @@ function _gdsPrepDeltaInput(pid, field, inputEl) {
 function _gdsPrepUpdateConfirmBtn() {
   const btn = document.querySelector("#gdsPrepModal .gds-prep-modal-footer .gds-refresh-btn");
   if (!btn) return;
-  const hasErr = !App.settings?.allowOverstock && _gdsPrep.lines.some(l => l._hasError);
+    const hasErr = !_canOverstock() && _gdsPrep.lines.some(l => l._hasError);
   btn.disabled = hasErr;
   btn.style.opacity = hasErr ? ".4" : "1";
 }
@@ -2386,7 +2611,8 @@ function _gdsPrepQuickAdd(pid, anchorEl) {
   const u         = _gdsPrepUnitSize(line);
   const stockC    = u > 0 ? Math.floor(line.qty / u) : 0;
   const stockU    = u > 0 ? Math.round(line.qty % u) : Math.round(line.qty);
-  const allowOver = App.settings?.allowOverstock;
+  if (_gdsPrep.finished) return;
+  const allowOver = _canOverstock();
 
   const popup = document.createElement("div");
   popup.id = "gdsPrepQuickAddPopup";
@@ -2410,7 +2636,7 @@ function _gdsPrepQuickAdd(pid, anchorEl) {
   const lastU = "";
 
   popup.innerHTML = `
-    <div style="font-size:10px;font-weight:600;color:var(--text1);margin-bottom:6px;max-width:180px;word-break:break-word;">${escHtml(line.name)}</div>
+    <div style="font-size:10px;font-weight:600;color:var(--text1);margin-bottom:6px;max-width:180px;word-break:break-word;">${escHtml(_productCustomName(line.pid, line.name))}</div>
     <div style="font-size:9px;color:var(--text3);margin-bottom:8px;">
       Stock: ${stockC > 0 ? stockC+"C" : ""} ${stockU > 0 ? stockU+"U" : ""} ${line.qty === 0 ? "0" : ""}
       ${line.prepCarton > 0 || line.prepUnite > 0 ? `· Prép: ${line.prepCarton||0}C ${line.prepUnite||0}U` : ""}
@@ -2494,7 +2720,8 @@ function _gdsPrepQuickAdd(pid, anchorEl) {
     // تطبيق الإضافة
     line.prepCarton += c;
     line.prepUnite  += uv;
-    if (line._hasError && !App.settings?.allowOverstock) {
+    line._ts = Date.now();
+    if (line._hasError && !_canOverstock()) {
       line._hasError = false;
     }
     const now = new Date().toLocaleTimeString("fr-FR");
@@ -2561,12 +2788,13 @@ function gdsPrepModalConfirm() {
     Object.entries(vals).forEach(([pid, v]) => {
       const line = _gdsPrep.lines.find(l => l.pid === Number(pid)); if (!line) return;
       const unitSize = _gdsPrepUnitSize(line);
-      if (v.c * unitSize + (v.u || 0) > line.qty && !App.settings?.allowOverstock) {
+      if (v.c * unitSize + (v.u || 0) > line.qty && !_canOverstock()) {
         errors.push(line.name);
       } else {
         const wasEmpty = line.prepCarton === 0 && line.prepUnite === 0;
         line.prepCarton = v.c;
         line.prepUnite  = v.u || 0;
+        line._ts = Date.now();
         if (line.prepCarton > 0 || line.prepUnite > 0)
           if (!line.history) line.history = [];
 line.history.push({ ts: now, type: "Ajout", carton: line.prepCarton, unite: line.prepUnite, by: AppAuth.currentUser?.username || "" });
@@ -2580,7 +2808,7 @@ line.history.push({ ts: now, type: "Ajout", carton: line.prepCarton, unite: line
       const u    = _gdsPrepUnitSize(line);
       const newC = line.prepCarton + dc;
       const newU = line.prepUnite  + du;
-      if (newC < 0 || newU < 0 || (newC * u + newU > line.qty && !App.settings?.allowOverstock)) {
+      if (newC < 0 || newU < 0 || (newC * u + newU > line.qty && !_canOverstock())) {
         errors.push(line.name);
         line._hasError = true;
         return;
@@ -2588,6 +2816,7 @@ line.history.push({ ts: now, type: "Ajout", carton: line.prepCarton, unite: line
       line._hasError    = false;
       line.prepCarton   = newC;
       line.prepUnite    = newU;
+      line._ts = Date.now();
       const type = dc > 0 || du > 0 ? "Augmentation" : "Réduction";
       if (!line.history) line.history = [];
 line.history.push({ ts: now, type, carton: dc, unite: du, by: AppAuth.currentUser?.username || "" });
@@ -3258,7 +3487,7 @@ async function _gdsPrepFetchMissingNames() {
     prods.forEach(p => {
       const line = _gdsPrep.lines.find(l => l.pid === p.id);
       if (line) {
-        line.name  = _productDisplayName(p);
+        line.name  = _productDisplayName(p, {useCustom:true});
         line.categ = p.categ_id?.[1] || line.categ;
       }
     });
@@ -3404,7 +3633,9 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
           </tr>
         </thead><tbody>`;
 
-    byCateg[cat].forEach(({ line, i }) => {
+    byCateg[cat]
+  .sort((a, b) => _productCustomOrder(a.line.pid) - _productCustomOrder(b.line.pid))
+  .forEach(({ line, i }) => {
       const u        = _gdsPrepUnitSize(line);
       const stockC   = u > 0 ? Math.floor(line.qty / u) : 0;
       const stockU   = u > 0 ? Math.round(line.qty % u) : Math.round(line.qty);
@@ -3421,8 +3652,8 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
       const resteUnite  = u > 0 ? Math.round(resteTotal - Math.trunc(resteTotal / u) * u) : Math.round(resteTotal);
       const chargeOverPrep = ch.chargeTotal > prepTotal && prepTotal > 0;
 
-      html += `<tr style="${rowErr ? "background:rgba(239,68,68,.10);" : ""}">
-        <td style="${rowErr ? "color:var(--red);font-weight:600;" : ""}font-size:10px;min-width:80px;max-width:120px;word-break:break-word;white-space:normal;" title="${escHtml(line.name)}">${escHtml(line.name)}
+      html += `<tr style="${rowErr ? "background:rgba(239,68,68,.10);" : ""}" data-orig-name="${escHtml(line._origName || line.name).toLowerCase()}">
+        <td style="${rowErr ? "color:var(--red);font-weight:600;" : ""}font-size:10px;min-width:80px;max-width:120px;word-break:break-word;white-space:normal;" title="${escHtml(_productCustomName(line.pid, line.name))}">${escHtml(_productCustomName(line.pid, line.name))}
           ${overStock ? `<span style="font-size:9px;margin-left:4px;color:var(--red)">⚠ dépasse stock</span>` : ""}
           ${overCharge ? `<span style="font-size:9px;margin-left:4px;color:var(--red)">⚠ chargé sans prépa</span>` : ""}
         </td>
@@ -3479,9 +3710,9 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
             oninput="_gdsPrepEcartInput(${line.pid}, this.value)"/>
         </td>
        <td style="text-align:center;min-width:40px;" class="no-print"><div class="gds-prep-action-cell">
-          <span data-perm="prep_quick_add" ${_gdsPrep.finished ? 'style="display:none"' : ''}>
+          <span data-perm="prep_quick_add">
           <button class="gds-prep-hist-btn" onclick="_gdsPrepQuickAdd(${line.pid}, this)" title="Ajout rapide"
-            style="background:var(--gds-color);color:#fff;font-weight:700;font-size:13px;padding:0 5px;${!App.settings?.allowOverstock && line.qty === 0 ? 'opacity:.35;cursor:not-allowed;' : ''}">
+            style="background:${_gdsPrep.finished ? 'var(--border)' : 'var(--gds-color)'};color:#fff;font-weight:700;font-size:13px;padding:0 5px;${_gdsPrep.finished || (!_canOverstock() && line.qty === 0) ? 'opacity:.35;cursor:not-allowed;' : ''}">
             ＋
           </button>
           </span>
@@ -3504,9 +3735,9 @@ const collapsed = !!_gdsPrep.collapsed["tbl_" + cat];
         </div></td>
         ` : `
         <td style="text-align:center;min-width:40px;"><div class="gds-prep-action-cell">
-          <span data-perm="prep_quick_add" ${_gdsPrep.finished ? 'style="display:none"' : ''}>
+          <span data-perm="prep_quick_add">
           <button class="gds-prep-hist-btn" onclick="_gdsPrepQuickAdd(${line.pid}, this)" title="Ajout rapide"
-            style="padding:0 5px;${!App.settings?.allowOverstock && line.qty === 0 ? 'opacity:.35;cursor:not-allowed;' : ''}">
+            style="padding:0 5px;${_gdsPrep.finished ? 'opacity:.35;cursor:not-allowed;' : (!_canOverstock() && line.qty === 0 ? 'opacity:.35;cursor:not-allowed;' : '')}">
             ＋
           </button>
           </span>
@@ -3685,7 +3916,8 @@ function _gdsPrepApplySearch(q) {
   const regex = useRegex ? new RegExp(term) : null;
   document.querySelectorAll("#gdsPrepTableWrap tbody tr").forEach(tr => {
     const name = tr.querySelector("td:first-child")?.textContent?.toLowerCase() || "";
-    const match = !raw || (useRegex ? regex.test(name) : name.includes(raw));
+    const origName = tr.dataset.origName || "";
+    const match = !raw || (useRegex ? regex.test(name) || regex.test(origName) : name.includes(raw) || origName.includes(raw));
     tr.style.display = match ? "" : "none";
   });
   // إخفاء/إظهار headers الفئات إذا كل منتجاتها مخفية
@@ -3993,10 +4225,12 @@ function _gdsPrepExportXlsx() {
   </tr></thead>`;
 
   let allRows = [];
-  _sortCats(Object.keys(byCateg)).forEach(cat => {
+_sortCats(Object.keys(byCateg)).forEach(cat => {
     allRows.push({ type: "cat", cat });
-    byCateg[cat].forEach(item => allRows.push({ type: "row", ...item }));
-  });
+    byCateg[cat]
+      .sort((a, b) => _productCustomOrder(a.line.pid) - _productCustomOrder(b.line.pid))
+      .forEach(item => allRows.push({ type: "row", ...item }));
+});
 
   const buildRow = (item, idx) => {
     if (item.type === "cat") {
@@ -4005,7 +4239,7 @@ function _gdsPrepExportXlsx() {
     const { line, ch, resteCarton, resteUnite, resteTotal } = item;
     const resteColor = resteTotal === 0 ? "#16a34a" : resteTotal < 0 ? "#dc2626" : "#0ea5e9";
     return `<tr>
-      <td style="font-size:${_rptFontP}px">${line.name}</td>
+      <td style="font-size:${_rptFontP}px">${_productCustomName(line.pid, line.name)}</td>
       ${rC("rptColPrepCarton")  ? `<td class="num" style="font-size:${_rptFontQ}px">${line.prepCarton||"—"}</td>` : ''}
       ${rC("rptColPrepUnite")   ? `<td class="num" style="font-size:${_rptFontQ}px">${line.prepUnite ||"—"}</td>` : ''}
       ${rC("rptColChargCarton") ? `<td class="num" style="font-size:${_rptFontQ}px">${ch.chargeCarton||"—"}</td>` : ''}
@@ -4944,8 +5178,8 @@ window.sfRefreshDist = async function(distId, distNom, distSafeId) {
       const roundLabel = `${distNom} - ${round.name || round.id}`;
       tableHtml += `</tbody></table>
         <div style="display:flex;gap:6px;margin-top:6px;">
-          <button class="gds-refresh-btn" style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;" onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})'>📊 EXCEL</button>
-          <button class="gds-refresh-btn" style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;background:var(--red);" onclick='exportStockFinalPdf("${roundLabel}", ${JSON.stringify(lines)})'>🖨 PDF</button>
+          <button onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})' style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;background:#22c55e;color:#fff;border:none;border-radius:6px;cursor:pointer;">EXPORT</button>
+          <button onclick='exportStockFinalPdf("${roundLabel}", ${JSON.stringify(lines)})' style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;background:#ef4444;color:#fff;border:none;border-radius:6px;cursor:pointer;">EXPORT</button>
         </div>
       </div>`;
       bodyHtml += tableHtml;
@@ -5118,8 +5352,9 @@ window.sfRenderFromCache = async function sfRenderFromCache() {
           const roundLabel = `${dist.nom} - ${round.name || round.id} - ${roundDate}`;
           tableHtml += `</tbody></table>
             <div style="display:flex;gap:6px;margin-top:6px;">
-            <button class="gds-refresh-btn" style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;" onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})'>📊 EXCEL</button>
+            
             <button class="gds-refresh-btn" style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;background:var(--red);" onclick='exportStockFinalPdf("${roundLabel}", ${JSON.stringify(lines)})'>🖨 PDF</button>
+			<button class="gds-refresh-btn" style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;" onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})'>📊 EXCEL</button>
           </div>
           </div>`;
           bodyHtml += tableHtml;

@@ -319,6 +319,16 @@
             </div>
           </div>
 
+          <!-- Card: Noms & Ordre des produits -->
+          <div class="settings-card" onclick="_openSettingsModal('modalProduitNames'); _initProduitNamesModal();">
+            <div class="settings-card-icon">🏷️</div>
+            <div class="settings-card-text">
+              <div class="settings-card-title">Noms & Ordre des produits</div>
+              <div class="settings-card-desc">Importer un fichier Excel pour personnaliser les noms et l'ordre</div>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;color:var(--text3)"><polyline points="9 18 15 12 9 6"/></svg>
+          </div>
+
           <!-- Card: Ordre des catégories -->
           <div class="settings-card" onclick="_openSettingsModal('modalCategories')">
             <div class="settings-card-icon">📋</div>
@@ -635,6 +645,36 @@
               Actualiser
             </button>
             <button class="gds-refresh-btn" style="background:var(--accent);" onclick="_closeSettingsModal('modalCategories')">Fermer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: Noms & Ordre des produits -->
+      <div class="smodal-overlay" id="modalProduitNames">
+        <div class="smodal-box">
+          <div class="smodal-header">
+            <span class="smodal-title">🏷️ Noms & Ordre des produits</span>
+            <button class="smodal-close" onclick="_closeSettingsModal('modalProduitNames')">✕</button>
+          </div>
+          <div class="smodal-body">
+            <p class="settings-hint">Téléchargez le modèle, modifiez les noms et l'ordre, puis importez le fichier.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+              <button class="gds-refresh-btn" id="btnDownloadProdTemplate" style="background:var(--accent);" onclick="_downloadProdTemplate()">
+                ⬇ Télécharger le modèle
+              </button>
+              <label class="gds-refresh-btn" style="cursor:pointer;">
+                ⬆ Importer Excel
+                <input type="file" id="inputProdNamesFile" accept=".xlsx,.xls" style="display:none;" onchange="_onProdNamesFileImport(this)">
+              </label>
+              <button class="gds-refresh-btn" style="background:var(--red);" onclick="_resetProdNames()">
+                ✕ Réinitialiser
+              </button>
+            </div>
+            <div id="prodNamesStatus" style="font-size:11px;color:var(--text2);margin-bottom:8px;"></div>
+            <div id="prodNamesPreview" style="max-height:300px;overflow-y:auto;font-size:11px;"></div>
+          </div>
+          <div class="smodal-footer">
+            <button class="gds-refresh-btn" style="background:var(--accent);" onclick="_closeSettingsModal('modalProduitNames')">Fermer</button>
           </div>
         </div>
       </div>
