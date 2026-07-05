@@ -1392,7 +1392,7 @@ async function _gdsPrepSaveCloud() {
       chargeData:          _gdsPrep.chargeData,
       pickingsMap:         _gdsPrep.pickingsMap,
       byPicking:           _gdsPrep.byPicking,
-      includedPickings:    mergeArr(_gdsPrep.includedPickings, remote?.includedPickings),
+      includedPickings:    _gdsPrep.includedPickings,
       outOfDateTransferts: mergeArr(_gdsPrep.outOfDateTransferts, remote?.outOfDateTransferts),
       date:                new Date().toISOString().slice(0, 10),
       savedBy:             AppAuth.currentUser?.username || "inconnu",
