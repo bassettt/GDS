@@ -1157,7 +1157,7 @@ const _gdsPrep = {
   pickingsMap:      {},
   byPicking:        {},
   suggested:        {},
- excludedPickings: [], // references exclus du calcul
+ includedPickings: [], // references INCLUS au calcul (nouveau système toggle, défaut = tout exclu)
   outOfDateTransferts: [], // transferts hors date ajoutés manuellement
 };
 
@@ -1380,7 +1380,7 @@ async function _gdsPrepSaveCloud() {
       });
     }
 
-    // 4) دمج excludedPickings و outOfDateTransferts (union)
+    // 4) دمج includedPickings و outOfDateTransferts (union)
     const mergeArr = (a, b) => [...new Set([...(a||[]), ...(b||[])])];
 
     const data = {
@@ -1392,7 +1392,7 @@ async function _gdsPrepSaveCloud() {
       chargeData:          _gdsPrep.chargeData,
       pickingsMap:         _gdsPrep.pickingsMap,
       byPicking:           _gdsPrep.byPicking,
-      excludedPickings:    mergeArr(_gdsPrep.excludedPickings, remote?.excludedPickings),
+      includedPickings:    mergeArr(_gdsPrep.includedPickings, remote?.includedPickings),
       outOfDateTransferts: mergeArr(_gdsPrep.outOfDateTransferts, remote?.outOfDateTransferts),
       date:                new Date().toISOString().slice(0, 10),
       savedBy:             AppAuth.currentUser?.username || "inconnu",
@@ -1400,7 +1400,7 @@ async function _gdsPrepSaveCloud() {
 
     // 5) تحديث الحالة المحلية بالبيانات المدمجة
     _gdsPrep.lines               = mergedLines;
-    _gdsPrep.excludedPickings    = data.excludedPickings;
+    _gdsPrep.includedPickings    = data.includedPickings || [];
     _gdsPrep.outOfDateTransferts = data.outOfDateTransferts;
 
     await fetch(`${_FB_DB_URL}/${_getFbPrepKey()}.json`, {
@@ -1442,7 +1442,7 @@ async function _gdsPrepLoadFromCloud() {
     });
     _gdsPrep.pickingsMap         = data.pickingsMap         || {};
     _gdsPrep.byPicking           = data.byPicking           || {};
-    _gdsPrep.excludedPickings    = data.excludedPickings    || [];
+    _gdsPrep.includedPickings    = data.includedPickings    || [];
     _gdsPrep.outOfDateTransferts = data.outOfDateTransferts || [];
     _gdsPrep.savedBy = data.savedBy || "";
     return true;
@@ -1618,7 +1618,7 @@ function _gdsPrepSave() {
       chargeData:          _gdsPrep.chargeData,
       pickingsMap:         _gdsPrep.pickingsMap,
       byPicking:           _gdsPrep.byPicking,
-      excludedPickings:    _gdsPrep.excludedPickings,
+      includedPickings:    _gdsPrep.includedPickings,
       outOfDateTransferts: _gdsPrep.outOfDateTransferts,
       date:                new Date().toISOString().slice(0, 10),
     };
@@ -1657,9 +1657,8 @@ Object.entries(data.chargeData || {}).forEach(([pid, ch]) => {
 });
    _gdsPrep.pickingsMap         = data.pickingsMap         || {};
     _gdsPrep.byPicking           = data.byPicking           || {};
-    _gdsPrep.excludedPickings    = data.excludedPickings    || [];
+    _gdsPrep.includedPickings    = data.includedPickings    || [];
     _gdsPrep.outOfDateTransferts = data.outOfDateTransferts || [];
-    _gdsPrepUpdateExcluBtn();
     _gdsPrepUpdateOutOfDateBtn();
     // تحديث الحقول النصية إن وُجدت
     const fromEl = document.getElementById("gdsPrepChargeFrom");
@@ -1702,11 +1701,10 @@ async function renderGdsPreparation() {
       lines: _gdsPrep.lines, loaded: _gdsPrep.loaded, finished: _gdsPrep.finished,
       chargeFrom: _gdsPrep.chargeFrom, chargeTo: _gdsPrep.chargeTo,
       chargeData: _gdsPrep.chargeData, pickingsMap: _gdsPrep.pickingsMap,
-      byPicking: _gdsPrep.byPicking, excludedPickings: _gdsPrep.excludedPickings,
+      byPicking: _gdsPrep.byPicking, includedPickings: _gdsPrep.includedPickings,
       outOfDateTransferts: _gdsPrep.outOfDateTransferts,
       date: new Date().toISOString().slice(0,10)
     })); } catch(_) {}
-    _gdsPrepUpdateExcluBtn();
     _gdsPrepUpdateOutOfDateBtn();
   }
   const hasData = _gdsPrep.loaded && _gdsPrep.lines.length > 0;
@@ -1820,21 +1818,18 @@ const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
       Actualiser
     </button>
     <span class="gds-last-updated" id="gdsPrepChargeStatus"></span>
-    <button class="gds-refresh-btn" data-perm="prep_exclu" id="gdsPrepExcluBtn" onclick="_gdsPrepShowExcludeList()" style="padding:2px 8px;font-size:11px;background:var(--red);opacity:${Object.keys(_gdsPrep.pickingsMap).length ? '1' : '0.4'};cursor:${Object.keys(_gdsPrep.pickingsMap).length ? 'pointer' : 'default'};" ${Object.keys(_gdsPrep.pickingsMap).length ? '' : 'disabled'}>Exclu (${_gdsPrep.excludedPickings.length}/${Object.keys(_gdsPrep.pickingsMap).length})</button>
-    
     <button class="gds-refresh-btn" data-perm="prep_hors_date" id="gdsPrepOutOfDateBtn" onclick="_gdsPrepShowOutOfDateList()" style="padding:2px 8px;font-size:11px;background:var(--orange,#f59e0b);opacity:${_gdsPrep.outOfDateTransferts.length ? '1' : '0.4'};cursor:${_gdsPrep.outOfDateTransferts.length ? 'pointer' : 'default'};" ${_gdsPrep.outOfDateTransferts.length ? '' : 'disabled'}>Hors date (${_gdsPrep.outOfDateTransferts.length})</button>
     <button class="gds-refresh-btn" data-perm="prep_hors_date_add" onclick="_gdsPrepShowOutOfDateInput()" style="padding:2px 8px;font-size:11px;background:var(--orange,#f59e0b);" title="Ajouter transfert hors date">+</button>
     
-    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-left:8px;align-items:center;">
-      <div id="gdsPrepPickingBtns" style="display:flex;flex-wrap:wrap;gap:4px;">
+  </div>
+  <div style="display:flex;align-items:flex-start;gap:0;">
+    <div id="gdsPrepTableWrap" style="flex:1;min-width:0;padding:0 10px 20px;overflow-x:auto;-webkit-overflow-scrolling:touch;"></div>
+    <div id="gdsPrepPickingPanel" class="gds-prep-picking-panel">
+      <div id="gdsPrepPickingBtns" class="gds-prep-picking-panel-inner">
         ${_gdsPrepRenderPickingBtns()}
       </div>
-      <button onclick="(()=>{const p=document.getElementById('gdsPrepPickingBtns');const hidden=p.style.display==='none';p.style.display=hidden?'flex':'none';this.style.opacity=hidden?'1':'0.5';})()" style="font-size:9px;padding:2px 7px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;margin-left:2px;" title="Afficher/Masquer les tournées">
-        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-      </button>
     </div>
   </div>
-  <div id="gdsPrepTableWrap" style="padding:0 10px 20px;overflow-x:auto;-webkit-overflow-scrolling:touch;"></div>
 
   <!-- Barre Nouvelle préparation (visible après check complet) -->
   
@@ -1982,9 +1977,8 @@ function _gdsPrepInitFlatpickr(fromVal, toVal) {
               d=String(date.getDate()).padStart(2,"0"),
               h=String(date.getHours()).padStart(2,"0"), mi=String(date.getMinutes()).padStart(2,"0");
         _gdsPrep.chargeFrom = `${y}-${m}-${d}T${h}:${mi}`;
-        _gdsPrep.excludedPickings    = [];
+        _gdsPrep.includedPickings    = [];
         _gdsPrep.outOfDateTransferts = [];
-        _gdsPrepUpdateExcluBtn();
         _gdsPrepUpdateOutOfDateBtn();
         _gdsPrepSave();
       }
@@ -1999,9 +1993,8 @@ function _gdsPrepInitFlatpickr(fromVal, toVal) {
               d=String(date.getDate()).padStart(2,"0"),
               h=String(date.getHours()).padStart(2,"0"), mi=String(date.getMinutes()).padStart(2,"0");
         _gdsPrep.chargeTo = `${y}-${m}-${d}T${h}:${mi}`;
-        _gdsPrep.excludedPickings    = [];
+        _gdsPrep.includedPickings    = [];
         _gdsPrep.outOfDateTransferts = [];
-        _gdsPrepUpdateExcluBtn();
         _gdsPrepUpdateOutOfDateBtn();
         _gdsPrepSave();
       }
@@ -2859,132 +2852,78 @@ async function _gdsPrepIsVanLocation(locId) {
 // ── جلب تحركات الشحن من GDS → Vans ──────────────────────────
 
 
-function _gdsPrepUpdateExcluBtn() {
-  const btn = document.getElementById("gdsPrepExcluBtn");
-  if (!btn) return;
-  const n = _gdsPrep.excludedPickings.length;
-  const total = Object.keys(_gdsPrep.pickingsMap).length;
-  btn.textContent    = `Exclu (${n}/${total})`;
-  btn.disabled       = total === 0;
-  btn.style.opacity  = total ? "1" : "0.4";
-  btn.style.cursor   = total ? "pointer" : "default";
-}
-
-function _gdsPrepShowExcludeList() {
-  // حفظ scroll إذا كان الـ modal مفتوحاً مسبقاً
-  const existingModal = document.getElementById("gdsPrepExcluModal");
-  const prevScroll = existingModal
-    ? (existingModal.querySelector("div[style*='overflow-y']")?.scrollTop || 0)
-    : 0;
-  existingModal?.remove();
-
-  const modal = document.createElement("div");
-  modal.id = "gdsPrepExcluModal";
-  modal.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;";
-
-  const allPickings = Object.values(_gdsPrep.pickingsMap);
-
-  const rows = allPickings.length === 0
-    ? `<div style="color:var(--text3);font-size:12px;">Aucun transfert calculé</div>`
-    : allPickings.map(p => {
-        const isExcluded = _gdsPrep.excludedPickings.includes(p.name);
-        const partner = _cleanPartnerName(p.partner_id?.[1] || "—");
-        const safeId  = p.name.replace(/\W/g,"_");
-        return `
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);">
-            <div style="display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;">
-              <span id="exclu_name_${safeId}" style="font-size:12px;color:${isExcluded ? 'var(--text3)' : 'var(--text)'};text-decoration:${isExcluded ? 'line-through' : 'none'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${p.name}</span>
-              <span style="font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${partner}</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-left:12px;flex-shrink:0;" onclick="_gdsPrepToggleExcludeByName('${p.name.replace(/'/g,"\\'")}')">
-              <span id="exclu_label_${safeId}" style="font-size:10px;color:${isExcluded ? 'var(--red)' : 'var(--green)'};">${isExcluded ? 'Exclu' : 'Inclus'}</span>
-              <div style="position:relative;width:36px;height:20px;flex-shrink:0;">
-                <div id="exclu_track_${safeId}" style="position:absolute;inset:0;border-radius:20px;background:${isExcluded ? 'var(--border)' : 'var(--green)'};transition:background .2s;"></div>
-                <div id="exclu_thumb_${safeId}" style="position:absolute;top:2px;left:${isExcluded ? '2px' : '18px'};width:16px;height:16px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 4px #0004;"></div>
-              </div>
-            </div>
-          </div>`;
-      }).join("");
-
-  modal.innerHTML = `
-    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;min-width:320px;max-width:480px;box-shadow:0 8px 24px #0005;">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border);">
-        <span style="font-weight:600;font-size:13px;">Transferts (${allPickings.length})</span>
-        <button onclick="document.getElementById('gdsPrepExcluModal').remove()" style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--text2);">✕</button>
-      </div>
-      <div id="gdsPrepExcluScroll" style="padding:10px 14px;max-height:360px;overflow-y:auto;">${rows}</div>
-      <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;">
-        ${_gdsPrep.excludedPickings.length ? `<button class="gds-refresh-btn" style="background:var(--red);" onclick="_gdsPrepClearExcludes()">Tout inclure</button>` : ""}
-        <button class="gds-refresh-btn" style="background:var(--text3);" onclick="document.getElementById('gdsPrepExcluModal').remove()">Fermer</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-
-  // إرجاع الـ scroll
-  if (prevScroll > 0) {
-    requestAnimationFrame(() => {
-      const scrollEl = document.getElementById("gdsPrepExcluScroll");
-      if (scrollEl) scrollEl.scrollTop = prevScroll;
-    });
-  }
-}
-
-function _gdsPrepToggleExcludeByName(ref) {
-  const isExcluded = _gdsPrep.excludedPickings.includes(ref);
-  if (isExcluded) {
-    _gdsPrep.excludedPickings = _gdsPrep.excludedPickings.filter(r => r !== ref);
+function _gdsPrepTogglePickingInclude(ref) {
+  const isIncluded = _gdsPrep.includedPickings.includes(ref);
+  if (isIncluded) {
+    _gdsPrep.includedPickings = _gdsPrep.includedPickings.filter(r => r !== ref);
   } else {
-    _gdsPrep.excludedPickings.push(ref);
+    _gdsPrep.includedPickings.push(ref);
   }
-  const nowExcluded = _gdsPrep.excludedPickings.includes(ref);
-  _gdsPrepUpdateExcluBtn();
-  _gdsPrepSave();
-
-  // تحديث الـ UI مباشرة بدون إعادة بناء الـ modal
-  const safeId = ref.replace(/\W/g,"_");
-  const nameEl  = document.getElementById("exclu_name_"  + safeId);
-  const labelEl = document.getElementById("exclu_label_" + safeId);
-  const track   = document.getElementById("exclu_track_" + safeId);
-  const thumb   = document.getElementById("exclu_thumb_" + safeId);
-  if (nameEl)  { nameEl.style.color = nowExcluded ? "var(--text3)" : "var(--text)"; nameEl.style.textDecoration = nowExcluded ? "line-through" : "none"; }
-  if (labelEl) { labelEl.textContent = nowExcluded ? "Exclu" : "Inclus"; labelEl.style.color = nowExcluded ? "var(--red)" : "var(--green)"; }
-  if (track)   track.style.background = nowExcluded ? "var(--border)" : "var(--green)";
-  if (thumb)   thumb.style.left = nowExcluded ? "2px" : "18px";
-
-  // تحديث زر "Tout inclure" في footer
-  const footer = document.querySelector("#gdsPrepExcluModal > div > div:last-child");
-  if (footer) {
-    const clearBtn = footer.querySelector("button[onclick*='ClearExcludes']");
-    if (_gdsPrep.excludedPickings.length && !clearBtn) {
-      const fermerBtn = footer.querySelector("button:last-child");
-      const btn = document.createElement("button");
-      btn.className = "gds-refresh-btn";
-      btn.style.background = "var(--red)";
-      btn.setAttribute("onclick","_gdsPrepClearExcludes()");
-      btn.textContent = "Tout inclure";
-      footer.insertBefore(btn, fermerBtn);
-    } else if (!_gdsPrep.excludedPickings.length && clearBtn) {
-      clearBtn.remove();
-    }
-  }
+  _gdsPrepRecalcCharge();
 }
 
-function _gdsPrepRemoveExclude(i) {
-  _gdsPrep.excludedPickings.splice(i, 1);
-  _gdsPrepUpdateExcluBtn();
-  _gdsPrepSave();
-  _gdsPrepShowExcludeList();
-  const statusEl = document.getElementById("gdsPrepChargeStatus");
-  if (statusEl) statusEl.textContent = "✓ Retiré — Actualisez les chargements";
-}
+// إعادة حساب فورية (بدون طلب Odoo) بناءً على includedPickings الحالية
+function _gdsPrepRecalcCharge() {
+  const moves = _gdsPrep.allMoves || [];
+  const pm    = _gdsPrep.pickingsMap || {};
+  const cache = _gdsPrep._prodInfoCache || {};
 
-function _gdsPrepClearExcludes() {
-  _gdsPrep.excludedPickings = [];
-  _gdsPrepUpdateExcluBtn();
+  if (!moves.length) {
+    // لا توجد بيانات خام محمّلة بعد (مثلاً بعد إعادة تحميل الصفحة) — يُطلب Actualiser أولاً
+    _gdsPrepSave();
+    const panelEl0 = document.getElementById("gdsPrepPickingBtns");
+    if (panelEl0) panelEl0.innerHTML = _gdsPrepRenderPickingBtns();
+    const statusEl0 = document.getElementById("gdsPrepChargeStatus");
+    if (statusEl0) statusEl0.textContent = "Cliquez Actualiser pour recalculer";
+    return;
+  }
+
+  const filteredMoves = moves.filter(m => {
+    const pk = pm[m.picking_id?.[0]];
+    return pk && _gdsPrep.includedPickings.includes(pk.name);
+  });
+
+  const agg = {};
+  filteredMoves.forEach(m => {
+    const pid = m.product_id?.[0];
+    if (!pid) return;
+    agg[pid] = (agg[pid] || 0) + (m.qty_done || 0);
+  });
+
+  _gdsPrep.chargeData = {};
+  const prepPids = new Set(
+    _gdsPrep.lines.filter(l => l.prepCarton > 0 || l.prepUnite > 0).map(l => String(l.pid))
+  );
+
+  Object.entries(agg).forEach(([pidStr, total]) => {
+    if (!(total > 0)) return;
+    const pid = Number(pidStr);
+    const existing = _gdsPrep.lines.find(l => l.pid === pid);
+    if (existing || prepPids.has(pidStr)) { if (existing) existing._extraCharge = true; return; }
+    const info = cache[pid] || {};
+    _gdsPrep.lines.push({
+      pid, name: info.name || `pid:${pid}`, categ: info.categ || "— Chargé sans préparation —",
+      carton: info.pkgQty || 0, qty: info.pkgQty || 0, prepCarton: 0, prepUnite: 0, unitSize: info.pkgQty || 0,
+      history: [], check: false, ecart: 0, _extraCharge: true,
+    });
+  });
+
+  Object.entries(agg).forEach(([pidStr, total]) => {
+    const pid  = Number(pidStr);
+    const line = _gdsPrep.lines.find(l => l.pid === pid);
+    const info = cache[pid] || {};
+    const u    = line ? (_gdsPrepUnitSize(line) || info.pkgQty || 0) : (info.pkgQty || 0);
+    _gdsPrep.chargeData[pid] = {
+      chargeCarton: u > 0 ? Math.floor(total / u) : 0,
+      chargeUnite:  u > 0 ? Math.round(total % u) : Math.round(total),
+      chargeTotal:  total,
+    };
+  });
+
   _gdsPrepSave();
-  document.getElementById("gdsPrepExcluModal")?.remove();
-  const statusEl = document.getElementById("gdsPrepChargeStatus");
-  if (statusEl) statusEl.textContent = "✓ Tous retirés — Actualisez les chargements";
+  const panelEl = document.getElementById("gdsPrepPickingBtns");
+  if (panelEl) panelEl.innerHTML = _gdsPrepRenderPickingBtns();
+  _gdsPrepRenderTable();
 }
 
 function _gdsPrepShowOutOfDateInput() {
@@ -3229,55 +3168,7 @@ async function gdsPrepFetchCharge() {
     });
     }
 
-    // تطبيق الاستثناءات
-    const excludedIds = new Set(
-      Object.values(pickingsMap)
-        .filter(p => _gdsPrep.excludedPickings.includes(p.name))
-        .map(p => p.id)
-    );
-    const filteredMoves = moves.filter(m => !excludedIds.has(m.picking_id?.[0]));
-
-    // تجميع الـ moves حسب picking
-    const byPicking = {};
-    filteredMoves.forEach(m => {
-      const pickId = m.picking_id?.[0];
-      if (!pickId) return;
-      if (!byPicking[pickId]) byPicking[pickId] = [];
-      byPicking[pickId].push(m);
-    });
-
-  // جلب unitSize من product.packaging للمنتجات غير الموجودة في lines
-const allPids = [...new Set(filteredMoves.map(m => m.product_id[0]))];
-const missingPids = allPids.filter(pid => !_gdsPrep.lines.find(l => l.pid === pid));
-
-const pkgMap = {};
-if (missingPids.length) {
-  const rPkg = await fetch("/api/web/dataset/call_kw", {
-    method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:55, params:{
-      model:"product.packaging", method:"search_read",
-      args:[[["product_id","in",missingPids]]],
-      kwargs:{ fields:["product_id","qty"], limit:500 }
-    }})
-  });
-  ((await rPkg.json())?.result || []).forEach(pkg => {
-    const pid = pkg.product_id[0];
-    if (!pkgMap[pid]) pkgMap[pid] = pkg.qty || 0;
-  });
-}
-  // حفظ في _gdsPrep لاستخدامها في الأزرار
-    _gdsPrep.pickingsMap = pickingsMap;
-    _gdsPrep.byPicking   = byPicking;
-
-    // 3) Agréger par product_id
-    const agg = {};
-    filteredMoves.forEach(m => {
-      const pid = m.product_id[0];
-      if (!agg[pid]) agg[pid] = 0;
-      agg[pid] += m.qty_done || 0;
-    });
-
-    // جلب moves الخاصة بـ outOfDateTransferts وإضافتها
+    // جلب moves الخاصة بـ outOfDateTransferts ودمجها مع moves العادية (تُعامل كأي bon: قابلة للـ toggle)
     if (_gdsPrep.outOfDateTransferts.length) {
       const outIds = _gdsPrep.outOfDateTransferts.map(t => t.id).filter(Boolean);
       if (outIds.length) {
@@ -3291,12 +3182,6 @@ if (missingPids.length) {
             }})
           });
           const outMoves = (await rOut.json())?.result || [];
-          outMoves.forEach(m => {
-            const pid = m.product_id?.[0]; if (!pid) return;
-            if (!agg[pid]) agg[pid] = 0;
-            agg[pid] += m.qty_done || 0;
-          });
-          // إضافة pickings hors date إلى pickingsMap وbyPicking
           const rOutPick = await fetch("/api/web/dataset/call_kw", {
             method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
             body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:73, params:{
@@ -3309,100 +3194,74 @@ if (missingPids.length) {
             if (p.name) p.name = p.name.replace(/^"|"$/g, '');
             p._outOfDate = true;
             pickingsMap[p.id] = p;
-            const ms = outMoves.filter(m => m.picking_id?.[0] === p.id);
-            if (ms.length) {
-              if (!byPicking[p.id]) byPicking[p.id] = [];
-              byPicking[p.id].push(...ms);
-            }
           });
+          moves.push(...outMoves);
         } catch(e) {
           console.warn("[GdsPrep] outOfDate fetch error:", e);
         }
       }
     }
 
+    // تجميع كل الـ moves حسب picking (بدون تصفية — الاستثناء الآن عبر toggle حيّ في الـpanel)
+    const byPicking = {};
+    moves.forEach(m => {
+      const pickId = m.picking_id?.[0];
+      if (!pickId) return;
+      if (!byPicking[pickId]) byPicking[pickId] = [];
+      byPicking[pickId].push(m);
+    });
 
+    // جلب أسماء ووحدات المنتجات غير الموجودة في lines (كاش يُستعمل عند كل toggle بدون إعادة طلب Odoo)
+    const allPids     = [...new Set(moves.map(m => m.product_id?.[0]).filter(Boolean))];
+    const missingPids  = allPids.filter(pid => !_gdsPrep.lines.find(l => l.pid === pid));
+    const prodInfoCache = {};
 
-   _gdsPrep.chargeData = {};
-
-   // إضافة المنتجات المشحونة غير الموجودة في lines
-    const prepPids = new Set(
-      _gdsPrep.lines
-        .filter(l => l.prepCarton > 0 || l.prepUnite > 0)
-        .map(l => String(l.pid))
-    );
-    const extraPids = Object.entries(agg)
-      .filter(([pid, total]) => total > 0 && !prepPids.has(String(pid)))
-      .map(([pid]) => Number(pid));
-
-    if (extraPids.length) {
-      // جلب أسماء المنتجات الإضافية
-      const rExtra = await fetch("/api/web/dataset/call_kw", {
-        method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:53, params:{
-          model:"product.product", method:"search_read",
-          args:[[["id","in",extraPids]]],
-          kwargs:{ fields:["id","name","categ_id","packaging_quantity_1","quantity_svl"], limit:500 }
-        }})
-      });
-      const extraProds = {};
-((await rExtra.json())?.result || []).forEach(p => { extraProds[p.id] = p; });
-
-// جلب unitSize من product.packaging
-const rPkg = await fetch("/api/web/dataset/call_kw", {
-  method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
-  body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:54, params:{
-    model:"product.packaging", method:"search_read",
-    args:[[["product_id","in",extraPids]]],
-    kwargs:{ fields:["product_id","qty"], limit:500 }
-  }})
-});
-const extraPkgMap = {};
-((await rPkg.json())?.result || []).forEach(pkg => {
-  const pid = pkg.product_id[0];
-  if (!extraPkgMap[pid]) extraPkgMap[pid] = pkg.qty || 0;
-});
-
-      extraPids.forEach(pid => {
-        const total = agg[pid] || 0;
-        const p     = extraProds[pid] || {};
-        const name  = _productDisplayName(p) || `pid:${pid}`;
-        const categ = p.categ_id?.[1] || "— Chargé sans préparation —";
-        // تحديث إذا موجود مسبقاً كـ extraCharge
-        const existing = _gdsPrep.lines.find(l => l.pid === pid);
-        if (existing) { existing._extraCharge = true; return; }
-        const pkgQty = p.packaging_quantity_1 || 0;
-_gdsPrep.lines.push({
-  pid, name, categ,
-  carton: pkgQty, qty: pkgQty, prepCarton: 0, prepUnite: 0, unitSize: extraPkgMap[pid] || pkgQty,
-  history: [], check: false, ecart: 0, _extraCharge: true,
-});
-        // إضافة chargeData
-        _gdsPrep.chargeData[pid] = {
-          chargeCarton: 0,
-          chargeUnite:  Math.round(total),
-          chargeTotal:  total,
+    if (missingPids.length) {
+      const [rPkg, rProd] = await Promise.all([
+        fetch("/api/web/dataset/call_kw", {
+          method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:55, params:{
+            model:"product.packaging", method:"search_read",
+            args:[[["product_id","in",missingPids]]],
+            kwargs:{ fields:["product_id","qty"], limit:500 }
+          }})
+        }),
+        fetch("/api/web/dataset/call_kw", {
+          method:"POST", credentials:"include", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:53, params:{
+            model:"product.product", method:"search_read",
+            args:[[["id","in",missingPids]]],
+            kwargs:{ fields:["id","name","categ_id","packaging_quantity_1"], limit:500 }
+          }})
+        }),
+      ]);
+      const pkgRes  = (await rPkg.json())?.result  || [];
+      const prodRes = (await rProd.json())?.result || [];
+      prodRes.forEach(p => {
+        prodInfoCache[p.id] = {
+          name: _productDisplayName(p) || `pid:${p.id}`,
+          categ: p.categ_id?.[1] || "— Chargé sans préparation —",
+          pkgQty: p.packaging_quantity_1 || 0,
         };
       });
+      pkgRes.forEach(pkg => {
+        const pid = pkg.product_id[0];
+        if (!prodInfoCache[pid]) prodInfoCache[pid] = { name: `pid:${pid}`, categ: "— Chargé sans préparation —", pkgQty: 0 };
+        if (!prodInfoCache[pid].pkgQty) prodInfoCache[pid].pkgQty = pkg.qty || 0;
+      });
     }
-    // 4) Mapper sur les lignes prep (avec unitSize pour calculer C/F et U)
-    // 4) Mapper sur les lignes prep (avec unitSize pour calculer C/F et U)
-Object.entries(agg).forEach(([pidStr, total]) => {
-  const pid  = Number(pidStr);
-  const line = _gdsPrep.lines.find(l => l.pid === pid);
-  const u    = line ? (_gdsPrepUnitSize(line) || extraPkgMap[pid] || pkgMap[pid] || 0) : (extraPkgMap[pid] || pkgMap[pid] || 0);
-  _gdsPrep.chargeData[pid] = {
-    chargeCarton: u > 0 ? Math.floor(total / u) : 0,
-    chargeUnite:  u > 0 ? Math.round(total % u) : Math.round(total),
-    chargeTotal:  total,
-  };
-});
-    const nb = Object.values(agg).filter(v => v > 0).length;
-    if (statusEl) statusEl.textContent = `${nb} article(s) chargé(s) — ${new Date().toLocaleTimeString("fr-FR")}`;
-_gdsPrepSave();
-    // تحديث أزرار الموزعين مباشرة بدون إعادة رندر كاملة
-    const pickBtnsEl = document.getElementById("gdsPrepPickingBtns");
-    if (pickBtnsEl) pickBtnsEl.innerHTML = _gdsPrepRenderPickingBtns();
+
+    // حفظ الحالة الخام في _gdsPrep (تُستعمل من طرف _gdsPrepRecalcCharge عند كل toggle)
+    _gdsPrep.pickingsMap      = pickingsMap;
+    _gdsPrep.byPicking        = byPicking;
+    _gdsPrep.allMoves         = moves;
+    _gdsPrep._prodInfoCache   = prodInfoCache;
+
+    // إعادة الحساب حسب includedPickings الحالية (bon جديد = مستثنى افتراضياً)
+    _gdsPrepRecalcCharge();
+
+    const nbIncluded = _gdsPrep.includedPickings.length;
+    if (statusEl) statusEl.textContent = `${Object.keys(pickingsMap).length} bon(s) — ${nbIncluded} inclus — ${new Date().toLocaleTimeString("fr-FR")}`;
  _gdsPrepFetchSuggested().then(sugg => {
       _gdsPrep.suggested = sugg;
       _gdsPrepRenderTable();
@@ -4027,7 +3886,9 @@ function gdsPrepDoCancel() {
   _gdsPrep.chargeData          = {};
   _gdsPrep.pickingsMap         = {};
   _gdsPrep.byPicking           = {};
-  _gdsPrep.excludedPickings    = [];
+  _gdsPrep.allMoves            = [];
+  _gdsPrep._prodInfoCache      = {};
+  _gdsPrep.includedPickings    = [];
   _gdsPrep.outOfDateTransferts = [];
   localStorage.removeItem(_getPrepStorageKey());
   _gdsPrepSaveCloud();
@@ -4160,7 +4021,9 @@ function gdsPrepDoNew() {
   _gdsPrep.collapsed           = {};
   _gdsPrep.chargeFrom          = null;
   _gdsPrep.chargeData          = {};
-  _gdsPrep.excludedPickings    = [];
+  _gdsPrep.allMoves            = [];
+  _gdsPrep._prodInfoCache      = {};
+  _gdsPrep.includedPickings    = [];
   _gdsPrep.outOfDateTransferts = [];
   localStorage.removeItem(_getPrepStorageKey());
   _gdsPrepSaveCloud();
@@ -4302,28 +4165,32 @@ const right = allRows.slice(splitIdx).map(buildRow).join("");
 }
 function _gdsPrepRenderPickingBtns() {
   const pm = _gdsPrep.pickingsMap || {};
-  const bp = _gdsPrep.byPicking   || {};
-  if (!Object.keys(pm).length) return "";
+  if (!Object.keys(pm).length) return `<div style="font-size:11px;color:var(--text3);padding:6px;">Aucun bon</div>`;
 
-  // تجميع حسب partner مع تصفية المستثنيات
-  const byPartner = {};
-  Object.entries(pm).forEach(([pickId, pick]) => {
-    if (_gdsPrep.excludedPickings.includes(pick.name)) return; // مستثنى
-    const partnerName = pick.partner_id?.[1] || "Inconnu";
-    if (!byPartner[partnerName]) byPartner[partnerName] = [];
-    byPartner[partnerName].push({ pickId: Number(pickId), pick });
-  });
+  // ترتيب حسب وقت الـ validation في Odoo (date_done) — الأقدم أولاً
+  const entries = Object.entries(pm)
+    .map(([pickId, pick]) => ({ pickId: Number(pickId), pick }))
+    .sort((a, b) => new Date(a.pick.date_done || 0) - new Date(b.pick.date_done || 0));
 
+  const partnerCount = {};
   let html = "";
-  Object.entries(byPartner).forEach(([partner, entries]) => {
-    entries.forEach((entry, idx) => {
-      const partnerClean = _cleanPartnerName(entry.pick.partner_id?.[1] || "");
-      const label = idx === 0 ? partnerClean : `${partnerClean} (${idx + 1})`;
-      html += `<button class="gds-refresh-btn" style="font-size:10px;"
-        onclick="_gdsPrepDownloadPickingPdf(${entry.pickId})">
-        📄 ${escHtml(label)}
-      </button>`;
-    });
+  entries.forEach(({ pickId, pick }) => {
+    const partnerRaw   = pick.partner_id?.[1] || "Inconnu";
+    const partnerClean = _cleanPartnerName(partnerRaw);
+    partnerCount[partnerRaw] = (partnerCount[partnerRaw] || 0) + 1;
+    const idx   = partnerCount[partnerRaw];
+    const label = idx === 1 ? partnerClean : `${partnerClean} (${idx})`;
+    const isOn  = _gdsPrep.includedPickings.includes(pick.name);
+    const safeName = String(pick.name || "").replace(/'/g, "\\'");
+
+    html += `
+      <div class="gds-prep-bon-card" style="opacity:${isOn ? '1' : '0.55'};background:${isOn ? 'var(--bg)' : 'var(--bg3)'};">
+        <span style="flex:1;min-width:0;font-size:11px;color:${isOn ? 'var(--text)' : 'var(--text3)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(pick.name || '')}">${escHtml(label)}</span>
+        <button title="Imprimer" onclick="event.stopPropagation();_gdsPrepDownloadPickingPdf(${pickId})" style="background:none;border:none;cursor:pointer;font-size:13px;padding:0 3px;color:var(--text2);flex-shrink:0;">🖨</button>
+        <div class="gds-prep-toggle" onclick="_gdsPrepTogglePickingInclude('${safeName}')" style="position:relative;width:30px;height:16px;border-radius:20px;background:${isOn ? 'var(--green)' : 'var(--border)'};cursor:pointer;flex-shrink:0;">
+          <div style="position:absolute;top:2px;left:${isOn ? '16px' : '2px'};width:12px;height:12px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 3px #0004;"></div>
+        </div>
+      </div>`;
   });
   return html;
 }
