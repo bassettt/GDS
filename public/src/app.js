@@ -4185,10 +4185,12 @@ function _gdsPrepRenderPickingBtns() {
 
     html += `
       <div class="gds-prep-bon-card" style="opacity:${isOn ? '1' : '0.55'};background:${isOn ? 'var(--bg)' : 'var(--bg3)'};">
-        <span style="flex:1;min-width:0;font-size:11px;color:${isOn ? 'var(--text)' : 'var(--text3)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(pick.name || '')}">${escHtml(label)}</span>
-        <button title="Imprimer" onclick="event.stopPropagation();_gdsPrepDownloadPickingPdf(${pickId})" style="background:none;border:none;cursor:pointer;font-size:13px;padding:0 3px;color:var(--text2);flex-shrink:0;">🖨</button>
-        <div class="gds-prep-toggle" onclick="_gdsPrepTogglePickingInclude('${safeName}')" style="position:relative;width:30px;height:16px;border-radius:20px;background:${isOn ? 'var(--green)' : 'var(--border)'};cursor:pointer;flex-shrink:0;">
-          <div style="position:absolute;top:2px;left:${isOn ? '16px' : '2px'};width:12px;height:12px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 3px #0004;"></div>
+        <span style="flex:1;min-width:0;font-size:10px;color:${isOn ? 'var(--text)' : 'var(--text3)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(pick.name || '')}">${escHtml(label)}</span>
+        <button class="gds-prep-bon-print" title="Imprimer" onclick="event.stopPropagation();_gdsPrepDownloadPickingPdf(${pickId})">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+        </button>
+        <div class="gds-prep-toggle" onclick="_gdsPrepTogglePickingInclude('${safeName}')" style="position:relative;width:26px;height:14px;border-radius:20px;background:${isOn ? 'var(--green)' : 'var(--border)'};cursor:pointer;flex-shrink:0;">
+          <div style="position:absolute;top:2px;left:${isOn ? '14px' : '2px'};width:10px;height:10px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 3px #0004;"></div>
         </div>
       </div>`;
   });
