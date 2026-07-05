@@ -519,3 +519,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   justify-content: center;
 }
 .gds-prep-bon-print svg { display: block; }
+
+@media (max-width: 768px) {
+  .gds-prep-layout {
+    flex-direction: column;
+  }
+  .gds-prep-picking-panel {
+    width: 100%;
+    position: static;
+    max-height: none;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    margin-left: 0;
+  }
+  .gds-prep-picking-panel:hover { overflow-y: visible; }
+}

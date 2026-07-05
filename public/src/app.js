@@ -1822,7 +1822,7 @@ const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
     <button class="gds-refresh-btn" data-perm="prep_hors_date_add" onclick="_gdsPrepShowOutOfDateInput()" style="padding:2px 8px;font-size:11px;background:var(--orange,#f59e0b);" title="Ajouter transfert hors date">+</button>
     
   </div>
-  <div style="display:flex;align-items:flex-start;gap:0;">
+  <div class="gds-prep-layout" style="display:flex;align-items:flex-start;gap:0;">
     <div id="gdsPrepTableWrap" style="flex:1;min-width:0;padding:0 10px 20px;overflow-x:auto;-webkit-overflow-scrolling:touch;"></div>
     <div id="gdsPrepPickingPanel" class="gds-prep-picking-panel">
       <div id="gdsPrepPickingBtns" class="gds-prep-picking-panel-inner">
@@ -2468,6 +2468,7 @@ function gdsPrepShowCharge(pid) {
   const rows = [];
   Object.entries(_gdsPrep.byPicking).forEach(([pickId, moves]) => {
     const pick = _gdsPrep.pickingsMap[Number(pickId)] || {};
+    if (!_gdsPrep.includedPickings.includes(pick.name)) return;
     moves.filter(m => m.product_id?.[0] === pid).forEach(m => {
       rows.push({
         van:     (pick.van     || "—").toString().replace(/^"|"$/g, ''),
