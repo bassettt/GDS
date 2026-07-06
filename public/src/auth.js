@@ -519,9 +519,6 @@ function _addUserBadge() {
     <span style="font-size:10px;color:${roleColors[AppAuth.currentUser.role]};font-weight:600">
       ${AppAuth.currentUser.username}
     </span>
-    <span style="font-size:9px;color:${roleColors[AppAuth.currentUser.role]};background:${roleColors[AppAuth.currentUser.role]}22;padding:1px 5px;border-radius:4px">
-      ${roleLabels[AppAuth.currentUser.role]}
-    </span>
   `;
   badge.addEventListener("click", () => {
     const existing = document.getElementById("badgeMenu");
