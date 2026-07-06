@@ -1771,6 +1771,7 @@ const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
           style="font-size:13px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:4px;color:var(--text3);cursor:pointer;">✕</button>
       </div>
       <button id="gdsPrepSearchBtn" onclick="_gdsPrepToggleSearch()" title="Rechercher"
+        class="gds-prep-search-btn"
         style="width:44px;height:44px;border-radius:50%;background:var(--gds-color);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(0,0,0,.4);">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       </button>
@@ -4187,7 +4188,7 @@ function _gdsPrepRenderPickingBtns() {
     html += `
       <div class="gds-prep-bon-card" style="opacity:${isOn ? '1' : '0.55'};background:${isOn ? 'var(--bg)' : 'var(--bg3)'};">
         <span style="flex:1;min-width:0;font-size:10px;color:${isOn ? 'var(--text)' : 'var(--text3)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(pick.name || '')}">${escHtml(label)}</span>
-        <button class="gds-prep-bon-print" data-perm="prep_bon_print" title="Imprimer" onclick="event.stopPropagation();_gdsPrepDownloadPickingPdf(${pickId})">
+        <button class="gds-prep-bon-print" data-perm="prep_bon_print" title="Imprimer" onclick="event.stopPropagation();_gdsPrepDownloadPickingPdf(${pickId})" style="background:#33c393;border:none;border-radius:4px;width:18px;height:18px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
         </button>
         <div class="gds-prep-toggle" data-perm="prep_bon_toggle" onclick="_gdsPrepTogglePickingInclude('${safeName}')" style="position:relative;width:26px;height:14px;border-radius:20px;background:${isOn ? 'var(--green)' : 'var(--border)'};cursor:pointer;flex-shrink:0;">
