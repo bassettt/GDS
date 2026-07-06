@@ -1395,7 +1395,7 @@ async function _gdsPrepSaveCloud() {
       includedPickings:    _gdsPrep.includedPickings,
       outOfDateTransferts: mergeArr(_gdsPrep.outOfDateTransferts, remote?.outOfDateTransferts),
       date:                new Date().toISOString().slice(0, 10),
-      savedBy:             AppAuth.currentUser?.username || "inconnu",
+      savedBy:             AppAuth.currentUser?.displayName || AppAuth.currentUser?.username || "inconnu",
     };
 
     // 5) تحديث الحالة المحلية بالبيانات المدمجة
@@ -2720,7 +2720,7 @@ function _gdsPrepQuickAdd(pid, anchorEl) {
     }
     const now = new Date().toLocaleTimeString("fr-FR");
     if (!line.history) line.history = [];
-    line.history.push({ ts: now, type: "Ajout rapide", carton: c, unite: uv, by: AppAuth.currentUser?.username || "" });
+    line.history.push({ ts: now, type: "Ajout rapide", carton: c, unite: uv, by: AppAuth.currentUser?.displayName || AppAuth.currentUser?.username || "" });
 
     _gdsPrepSave();
     _gdsPrepRenderTable();
@@ -2791,7 +2791,7 @@ function gdsPrepModalConfirm() {
         line._ts = Date.now();
         if (line.prepCarton > 0 || line.prepUnite > 0)
           if (!line.history) line.history = [];
-line.history.push({ ts: now, type: "Ajout", carton: line.prepCarton, unite: line.prepUnite, by: AppAuth.currentUser?.username || "" });
+line.history.push({ ts: now, type: "Ajout", carton: line.prepCarton, unite: line.prepUnite, by: AppAuth.currentUser?.displayName || AppAuth.currentUser?.username || "" });
       }
     });
   } else {
@@ -2813,7 +2813,7 @@ line.history.push({ ts: now, type: "Ajout", carton: line.prepCarton, unite: line
       line._ts = Date.now();
       const type = dc > 0 || du > 0 ? "Augmentation" : "Réduction";
       if (!line.history) line.history = [];
-line.history.push({ ts: now, type, carton: dc, unite: du, by: AppAuth.currentUser?.username || "" });
+line.history.push({ ts: now, type, carton: dc, unite: du, by: AppAuth.currentUser?.displayName || AppAuth.currentUser?.username || "" });
       line._deltaCarton = 0;
       line._deltaUnite  = 0;
     });

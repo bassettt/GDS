@@ -67,7 +67,7 @@ async function appLogin(username, password) {
   const hash = await _hashPassword(password);
   if (hash !== user.password) throw new Error("Identifiant ou mot de passe incorrect");
 
-  AppAuth.currentUser = { username: user.username, role: user.role, passwordHash: hash, warehouses: user.warehouses || [] };
+  AppAuth.currentUser = { username: user.username, displayName: user.displayName || user.username, role: user.role, passwordHash: hash, warehouses: user.warehouses || [] };
   localStorage.setItem("owdoo_app_user", JSON.stringify(AppAuth.currentUser));
   return AppAuth.currentUser;
 }
@@ -91,7 +91,7 @@ async function _restoreAppSession() {
         localStorage.removeItem("owdoo_app_user");
         return false;
       }
-      AppAuth.currentUser = { username: parsed.username, role: fbUser.role, passwordHash: parsed.passwordHash, warehouses: fbUser.warehouses || [] };
+      AppAuth.currentUser = { username: parsed.username, displayName: fbUser.displayName || parsed.username, role: fbUser.role, passwordHash: parsed.passwordHash, warehouses: fbUser.warehouses || [] };
       return true;
     }
   } catch (_) {}
@@ -517,7 +517,7 @@ function _addUserBadge() {
   badge.title = "Se déconnecter de l'application";
   badge.innerHTML = `
     <span style="font-size:10px;color:${roleColors[AppAuth.currentUser.role]};font-weight:600">
-      ${AppAuth.currentUser.username}
+      ${AppAuth.currentUser.displayName || AppAuth.currentUser.username}
     </span>
   `;
   badge.addEventListener("click", () => {
@@ -587,7 +587,7 @@ async function getAppUsers() {
   return users ? Object.values(users) : [];
 }
 
-async function addAppUser(username, password, role) {
+async function addAppUser(username, password, role, displayName) {
   if (!isAdmin()) throw new Error("Accès refusé");
   if (!username || !password || !role) throw new Error("Champs manquants");
   if (!["admin", "user", "group1", "group2", "group3"].includes(role)) throw new Error("Rôle invalide");
@@ -598,10 +598,16 @@ async function addAppUser(username, password, role) {
   const hash = await _hashPassword(password);
   await _fbSet(`app_users/${username.toLowerCase()}`, {
     username: username.toLowerCase(),
+    displayName: displayName || username.toLowerCase(),
     password: hash,
     role,
     createdAt: Date.now(),
   });
+}
+
+async function changeAppUserDisplayName(username, newDisplayName) {
+  if (!isAdmin()) throw new Error("Accès refusé");
+  await _fbPatch(`app_users/${username.toLowerCase()}`, { displayName: newDisplayName || username.toLowerCase() });
 }
 
 async function deleteAppUser(username) {
