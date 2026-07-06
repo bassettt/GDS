@@ -1,5 +1,5 @@
 // ============================================================
-// src/auth.js — OwDoo App Authentication Layer
+// src/auth.js — OwlGDS App Authentication Layer
 // Layer 1: App login (Firebase) → Layer 2: Odoo session
 // Roles: admin | user | group1 | group2 | group3
 // ============================================================
@@ -68,27 +68,27 @@ async function appLogin(username, password) {
   if (hash !== user.password) throw new Error("Identifiant ou mot de passe incorrect");
 
   AppAuth.currentUser = { username: user.username, displayName: user.displayName || user.username, role: user.role, passwordHash: hash, warehouses: user.warehouses || [] };
-  localStorage.setItem("owdoo_app_user", JSON.stringify(AppAuth.currentUser));
+  localStorage.setItem("owlgds_app_user", JSON.stringify(AppAuth.currentUser));
   return AppAuth.currentUser;
 }
 
 // ── App Logout ────────────────────────────────────────────────
 function appLogout() {
   AppAuth.currentUser = null;
-  localStorage.removeItem("owdoo_app_user");
+  localStorage.removeItem("owlgds_app_user");
 }
 
 // ── Restore session ───────────────────────────────────────────
 async function _restoreAppSession() {
   try {
-    const saved = localStorage.getItem("owdoo_app_user");
+    const saved = localStorage.getItem("owlgds_app_user");
     if (saved) {
       const parsed = JSON.parse(saved);
       // تحقق من الـ hash مقابل Firebase فقط للتأكد من أن الحساب لم يُحذف أو يُغيَّر
       const fbUser = await _fbGet(`app_users/${parsed.username}`);
       if (!fbUser || fbUser.password !== parsed.passwordHash) {
         // كلمة المرور تغيرت أو الحساب حُذف — تسجيل خروج
-        localStorage.removeItem("owdoo_app_user");
+        localStorage.removeItem("owlgds_app_user");
         return false;
       }
       AppAuth.currentUser = { username: parsed.username, displayName: fbUser.displayName || parsed.username, role: fbUser.role, passwordHash: parsed.passwordHash, warehouses: fbUser.warehouses || [] };
@@ -443,7 +443,7 @@ function _buildAppLoginScreen() {
   div.style.cssText = "display:flex;position:fixed;inset:0;z-index:10000;background:#0f1117;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px";
   div.innerHTML = `
     <img src="icons/icon512.png" style="width:72px;height:72px;border-radius:18px;margin-bottom:4px;"/>
-    <div style="color:#e2e8f0;font-size:17px;font-weight:700">OwDoo</div>
+    <div style="color:#e2e8f0;font-size:17px;font-weight:700">OwlGDS</div>
     <div style="color:#64748b;font-size:12px;margin-bottom:4px">Connexion à l'application</div>
     <form onsubmit="event.preventDefault(); document.getElementById('appLoginBtn').click();" style="display:contents">
     <input id="appLoginUser" type="text" placeholder="Identifiant" autocomplete="username"
