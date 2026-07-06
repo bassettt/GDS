@@ -704,6 +704,8 @@ async function _showAdminEditModal(username, role) {
       </div>
       <input id="aeNewName" type="text" placeholder="Nouvel identifiant" value="${username}"
         style="padding:9px 12px;border-radius:7px;border:1px solid #2a2f45;background:#0f1117;color:#e2e8f0;font-size:12px;outline:none"/>
+      <input id="aeDisplayName" type="text" placeholder="Nom affiché" value="${fbUser?.displayName || username}"
+        style="padding:9px 12px;border-radius:7px;border:1px solid #2a2f45;background:#0f1117;color:#e2e8f0;font-size:12px;outline:none"/>
       <input id="aeNewPass" type="password" placeholder="Nouveau mot de passe"
         style="padding:9px 12px;border-radius:7px;border:1px solid #2a2f45;background:#0f1117;color:#e2e8f0;font-size:12px;outline:none"/>
       <input id="aeNewPass2" type="password" placeholder="Confirmer le mot de passe"
@@ -722,6 +724,7 @@ async function _showAdminEditModal(username, role) {
 
   document.getElementById("aeSave").onclick = async () => {
     const newName = document.getElementById("aeNewName").value.trim();
+    const newDisplayName = document.getElementById("aeDisplayName").value.trim();
     const newPass = document.getElementById("aeNewPass").value.trim();
     const newPass2= document.getElementById("aeNewPass2").value.trim();
     const err     = document.getElementById("aeErr");
@@ -734,10 +737,10 @@ async function _showAdminEditModal(username, role) {
     btn.textContent = "…"; btn.disabled = true;
     try {
       await adminEditUser(username, newName, newPass || null);
-      // حفظ warehouses
+      // حفظ warehouses + displayName
       const selectedWh = [...modal.querySelectorAll("input[data-whid]:checked")]
         .map(cb => parseInt(cb.dataset.whid));
-      await _fbPatch(`app_users/${newName || username}`, { warehouses: selectedWh });
+      await _fbPatch(`app_users/${newName || username}`, { warehouses: selectedWh, displayName: newDisplayName || newName || username });
       err.style.color = "#22c55e";
       err.textContent = "Modifié ✓";
       setTimeout(() => { modal.remove(); renderUserManagementUI(); }, 900);
@@ -800,6 +803,8 @@ async function renderUserManagementUI() {
       <div style="font-size:11px;font-weight:600;color:var(--text2)">Ajouter un utilisateur</div>
       <input id="newUserName" type="text" placeholder="Identifiant"
         style="padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3,#252a3d);color:var(--text1);font-size:12px;outline:none"/>
+      <input id="newUserDisplayName" type="text" placeholder="Nom affiché"
+        style="padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3,#252a3d);color:var(--text1);font-size:12px;outline:none"/>
       <input id="newUserPass" type="password" placeholder="Mot de passe"
         style="padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3,#252a3d);color:var(--text1);font-size:12px;outline:none"/>
       <select id="newUserRole"
@@ -820,12 +825,13 @@ async function renderUserManagementUI() {
 }
 
 async function _addUserUI() {
-  const username = document.getElementById("newUserName")?.value.trim();
-  const password = document.getElementById("newUserPass")?.value.trim();
-  const role     = document.getElementById("newUserRole")?.value;
-  const errEl    = document.getElementById("addUserErr");
+  const username    = document.getElementById("newUserName")?.value.trim();
+  const displayName = document.getElementById("newUserDisplayName")?.value.trim();
+  const password    = document.getElementById("newUserPass")?.value.trim();
+  const role        = document.getElementById("newUserRole")?.value;
+  const errEl       = document.getElementById("addUserErr");
   try {
-    await addAppUser(username, password, role);
+    await addAppUser(username, password, role, displayName);
     errEl.style.color = "#22c55e";
     errEl.textContent = "Utilisateur ajouté ✓";
     setTimeout(() => renderUserManagementUI(), 1000);
