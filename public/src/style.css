@@ -473,6 +473,46 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 .gds-prep-modal-body table.gds-table:not(.edit-mode) th:nth-child(5),
 .gds-prep-modal-body table.gds-table:not(.edit-mode) td:nth-child(5) { width: 14%; }
 @media print { .no-print { display: none !important; } }
+/* Panel bons (sticky, scroll interne au hover, 2 colonnes) */
+.gds-prep-picking-panel {
+  width: 330px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 90px;
+  max-height: calc(100vh - 110px);
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--bg2);
+  margin-left: 4px;
+}
+.gds-prep-picking-panel:hover {
+  overflow-y: auto;
+}
+.gds-prep-picking-panel-inner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 8px;
+}
+.gds-prep-bon-card {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  transition: opacity .15s, background .15s;
+}
+@media (max-width:768px) {
+  .gds-prep-picking-panel {
+    width: 100%;
+    position: static;
+    max-height: none;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    margin-left: 0;
+  }
+}
 .gds-prep-action-cell { display:flex; gap:3px; align-items:center; justify-content:center; flex-wrap:nowrap; }
 @media (max-width:600px) {
   .gds-prep-action-cell { flex-direction:column; gap:2px; }
