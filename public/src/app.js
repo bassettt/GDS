@@ -347,7 +347,7 @@ async function renderGdsTransferts() {
     const allStates = [
       { key: "draft",     label: "Brouillon",  color: "#94a3b8" },
       { key: "waiting",   label: "En attente", color: "#f59e0b" },
-      { key: "confirmed", label: "Confirmé",   color: "#3b82f6" },
+      { key: "confirmed", label: "Confirmé",   color: "#33c393" },
       { key: "assigned",  label: "Prêt",       color: "#8b5cf6" },
       { key: "done",      label: "Validé",     color: "#22c55e" },
     ];
@@ -437,7 +437,7 @@ async function renderGdsTransferts() {
     const stateLabel = {
       draft:       { label: "Brouillon",  color: "#94a3b8" },
       waiting:     { label: "En attente", color: "#f59e0b" },
-      confirmed:   { label: "Confirmé",   color: "#3b82f6" },
+      confirmed:   { label: "Confirmé",   color: "#33c393" },
       assigned:    { label: "Prêt",       color: "#8b5cf6" },
       done:        { label: "Validé",     color: "#22c55e" },
     };
@@ -4600,12 +4600,12 @@ async function renderWarehouseSettingsUI() {
             <div style="font-size:10px;color:var(--text3);margin-top:3px;">Un mot/expression par ligne. Insensible à la casse.</div>
           </div>
           <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2);cursor:pointer;">
-            <input type="checkbox" id="whSplitSlash_${wh.id}" style="width:14px;height:14px;accent-color:#4f8ef7;"/>
+            <input type="checkbox" id="whSplitSlash_${wh.id}" style="width:14px;height:14px;accent-color:#33c393;"/>
             Raccourcir après "/" (prendre dernière partie)
           </label>
 
         <button onclick="_saveWarehouseSettings(${wh.id})"
-          style="margin-top:10px;padding:7px 14px;border-radius:6px;background:#4f8ef7;color:#fff;font-size:11px;font-weight:700;border:none;cursor:pointer;">
+          style="margin-top:10px;padding:7px 14px;border-radius:6px;background:#33c393;color:#fff;font-size:11px;font-weight:700;border:none;cursor:pointer;">
           Enregistrer
         </button>
         <span id="whSaveMsg_${wh.id}" style="font-size:11px;color:#22c55e;margin-left:8px;"></span>

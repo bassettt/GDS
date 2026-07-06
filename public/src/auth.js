@@ -451,7 +451,7 @@ function _buildAppLoginScreen() {
     <input id="appLoginPass" type="password" placeholder="Mot de passe" autocomplete="current-password"
       style="width:min(320px,90vw);padding:14px 16px;border-radius:10px;border:1px solid #2a2f45;background:#1e2336;color:#e2e8f0;font-size:16px;outline:none"/>
     <button id="appLoginBtn" type="submit"
-      style="width:min(320px,90vw);padding:14px;border-radius:10px;background:#4f8ef7;color:#fff;font-size:16px;font-weight:700;border:none;cursor:pointer">
+      style="width:min(320px,90vw);padding:14px;border-radius:10px;background:#33c393;color:#fff;font-size:16px;font-weight:700;border:none;cursor:pointer">
       Se connecter
     </button>
     </form>
@@ -508,7 +508,7 @@ function _addUserBadge() {
   const headerRight = document.querySelector(".header-right");
   if (!headerRight || !AppAuth.currentUser) return;
 
-  const roleColors = { admin: "#4f8ef7", user: "#22c55e", group1: "#f59e0b", group2: "#a78bfa", group3: "#f87171" };
+  const roleColors = { admin: "#33c393", user: "#22c55e", group1: "#f59e0b", group2: "#a78bfa", group3: "#f87171" };
   const roleLabels = { admin: "Admin", user: "Utilisateur", group1: "Group 1", group2: "Group 2", group3: "Group 3" };
 
   const badge = document.createElement("div");
@@ -535,8 +535,8 @@ function _addUserBadge() {
           const active = (AppAuth.activeWarehouseId || whs[0].id) === w.id;
           return `<div class="bm-wh-item" data-whid="${w.id}"
             style="padding:4px 6px;font-size:11px;border-radius:5px;cursor:pointer;
-                   color:${active ? "#4f8ef7" : "#94a3b8"};
-                   background:${active ? "#4f8ef722" : "transparent"};
+                   color:${active ? "#33c393" : "#94a3b8"};
+                   background:${active ? "#33c39322" : "transparent"};
                    font-weight:${active ? "700" : "400"}">
             ${active ? "● " : "○ "}${w.name}
           </div>`;
@@ -686,7 +686,7 @@ async function _showAdminEditModal(username, role) {
   const whCheckboxes = allWarehouses.map(w => `
     <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#94a3b8;cursor:pointer;">
       <input type="checkbox" data-whid="${w.id}" ${userWarehouses.includes(w.id) ? "checked" : ""}
-        style="width:13px;height:13px;accent-color:#4f8ef7;cursor:pointer;"/>
+        style="width:13px;height:13px;accent-color:#33c393;cursor:pointer;"/>
       ${w.name}
     </label>
   `).join("");
@@ -699,7 +699,7 @@ async function _showAdminEditModal(username, role) {
       <div style="font-size:13px;font-weight:700;color:#e2e8f0">Modifier — ${username}</div>
       <div style="font-size:11px;color:#94a3b8">Laisser vide pour ne pas modifier</div>
       <div style="border:1px solid #2a2f45;border-radius:7px;padding:8px;display:flex;flex-direction:column;gap:5px;">
-        <div style="font-size:10px;font-weight:600;color:#4f8ef7;margin-bottom:2px;">Entrepôts autorisés</div>
+        <div style="font-size:10px;font-weight:600;color:#33c393;margin-bottom:2px;">Entrepôts autorisés</div>
         ${whCheckboxes || '<div style="font-size:11px;color:#f87171;">Aucun entrepôt trouvé</div>'}
       </div>
       <input id="aeNewName" type="text" placeholder="Nouvel identifiant" value="${username}"
@@ -713,7 +713,7 @@ async function _showAdminEditModal(username, role) {
       <div id="aeErr" style="color:#f87171;font-size:11px;min-height:14px;"></div>
       <div style="display:flex;gap:8px;">
         <button id="aeCancel" style="flex:1;padding:8px;border-radius:7px;background:#2a2f45;color:#94a3b8;font-size:12px;border:none;cursor:pointer;">Annuler</button>
-        <button id="aeSave" style="flex:1;padding:8px;border-radius:7px;background:#4f8ef7;color:#fff;font-size:12px;font-weight:700;border:none;cursor:pointer;">Enregistrer</button>
+        <button id="aeSave" style="flex:1;padding:8px;border-radius:7px;background:#33c393;color:#fff;font-size:12px;font-weight:700;border:none;cursor:pointer;">Enregistrer</button>
       </div>
     </div>
   `;
@@ -760,7 +760,7 @@ async function renderUserManagementUI() {
   container.innerHTML = `<div style="font-size:11px;color:var(--text2)">Chargement…</div>`;
 
   const users = await getAppUsers();
-  const roleColors = { admin: "#4f8ef7", user: "#22c55e", group1: "#f59e0b", group2: "#a78bfa", group3: "#f87171" };
+  const roleColors = { admin: "#33c393", user: "#22c55e", group1: "#f59e0b", group2: "#a78bfa", group3: "#f87171" };
   const roleLabels = { admin: "Admin", user: "Utilisateur", group1: "Group 1", group2: "Group 2", group3: "Group 3" };
 
   container.innerHTML = `
@@ -778,7 +778,7 @@ async function renderUserManagementUI() {
             ${roleLabels[u.role]}
           </span>
           <button onclick="_showAdminEditModal('${u.username}', '${u.role}')"
-            style="background:none;border:none;cursor:pointer;color:#4f8ef7;padding:2px 4px;border-radius:4px"
+            style="background:none;border:none;cursor:pointer;color:#33c393;padding:2px 4px;border-radius:4px"
             title="Modifier">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -817,7 +817,7 @@ async function renderUserManagementUI() {
       </select>
       <div id="addUserErr" style="color:#f87171;font-size:11px;min-height:14px;"></div>
       <button onclick="_addUserUI()"
-        style="padding:8px;border-radius:6px;background:#4f8ef7;color:#fff;font-size:12px;font-weight:700;border:none;cursor:pointer">
+        style="padding:8px;border-radius:6px;background:#33c393;color:#fff;font-size:12px;font-weight:700;border:none;cursor:pointer">
         Ajouter
       </button>
     </div>
@@ -1096,7 +1096,7 @@ function _showChangePasswordModal() {
       <div id="cpErr" style="color:#f87171;font-size:11px;min-height:14px;"></div>
       <div style="display:flex;gap:8px;">
         <button id="cpCancel" style="flex:1;padding:8px;border-radius:7px;background:#2a2f45;color:#94a3b8;font-size:12px;border:none;cursor:pointer;">Annuler</button>
-        <button id="cpSave" style="flex:1;padding:8px;border-radius:7px;background:#4f8ef7;color:#fff;font-size:12px;font-weight:700;border:none;cursor:pointer;">Enregistrer</button>
+        <button id="cpSave" style="flex:1;padding:8px;border-radius:7px;background:#33c393;color:#fff;font-size:12px;font-weight:700;border:none;cursor:pointer;">Enregistrer</button>
       </div>
     </div>
   `;
