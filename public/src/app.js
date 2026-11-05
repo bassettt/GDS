@@ -79,10 +79,11 @@ async function _checkAndLogin() {
     });
   });
 }
-const ODOO_BASE = "https://wafa.presalio.com";
+let ODOO_BASE = "https://wafa.presalio.com"; // modifié par _applyEnv() (auth.js) en environnement Training
 
 // ── App State ─────────────────────────────────────────────────
 const App = {
+  env:       "prod", // "prod" | "training" (défini par _applyEnv)
   settings:  null,
   currentMode: "gds",
 };
@@ -451,7 +452,7 @@ async function renderGdsTransferts() {
       const from  = t.location_id      ? _cleanVanName(t.location_id[1])      : "—";
       const to    = t.location_dest_id ? _cleanVanName(t.location_dest_id[1]) : "—";
       const partner = t.partner_id     ? t.partner_id[1]                               : "—";
-      rows += `<tr>
+      rows += `<tr data-tr-pid="${t.id}" data-tr-name="${escHtml(t.name)}" data-tr-partner="${escHtml(t.partner_id ? t.partner_id[1] : '')}" data-tr-state="${escHtml(t.state)}">
         <td><span class="gds-tr-ref gds-tr-ref-full">${escHtml(t.name)}</span><span class="gds-tr-ref gds-tr-ref-short">${escHtml(t.name.split('/').pop())}</span></td>
         <td>${escHtml(from)}</td>
         <td>${escHtml(to)}</td>
@@ -462,6 +463,7 @@ async function renderGdsTransferts() {
           <button class="gds-refresh-btn gds-tr-action-btn" onclick="window.open((ODOO_BASE||'')+'/web#id=${t.id}&action=233&active_id=76&model=stock.picking&view_type=form&cids=1&menu_id=115','_blank')">↗</button>
           <button class="gds-refresh-btn gds-tr-action-btn" style="background:var(--bg3);color:var(--text);" onclick="gdsShowPickingDetail(${t.id},'${escHtml(t.name)}')">☰</button>
           <button class="gds-refresh-btn gds-tr-action-btn" title="Copier la référence" style="background:var(--bg3);color:var(--text2);" onclick="(b=>{navigator.clipboard.writeText('${escHtml(t.name)}').then(()=>{b.textContent='✓';b.style.color='#22c55e';setTimeout(()=>{b.textContent='⎘';b.style.color='';},1200)})})(this)">⎘</button>
+          ${typeof trActionsHtml === "function" ? trActionsHtml(t) : ""}
         </td>
       </tr>`;
     });
@@ -738,7 +740,7 @@ async function renderGdsStock() {
       if (!p) return;
       const catName = p.categ_id ? p.categ_id[1] : "Autre";
       if (!byCategory[catName]) byCategory[catName] = [];
-      byCategory[catName].push({ name: _productDisplayName(p), _ordre: _productCustomOrder(String(p.id)), qty: stockMap[pid].qty, carton: stockMap[pid].carton, reserved: stockMap[pid].reserved, unitSize: stockMap[pid].unitSize });
+      byCategory[catName].push({ name: _productDisplayName(p, { short: true }), _ordre: _productCustomOrder(String(p.id)), qty: stockMap[pid].qty, carton: stockMap[pid].carton, reserved: stockMap[pid].reserved, unitSize: stockMap[pid].unitSize });
     });
 
     const now        = new Date().toLocaleTimeString("fr-FR");
@@ -911,7 +913,7 @@ async function renderGdsVans() {
       const carton = q.packaging_quantity_1 || 0;
       const unitSize = carton > 0 ? q.quantity / carton : 0;
       byVan[locId].categories[catName].push({
-        name: _productDisplayName(p),
+        name: _productDisplayName(p, { short: true }),
         qty: q.quantity,
         reserved: q.reserved_quantity || 0,
         carton,
@@ -1166,21 +1168,28 @@ function _getPrepStorageKey() {
   return `wafa_gds_preparation_${whId}`;
 }
 
-function _productDisplayName(p, { useCustom = false } = {}) {
-  if (!p) return "—";
+// Nom Odoo (avec suffixe de couleur) — base commune de l'affichage ET du dictionnaire d'abréviations.
+function _productOdooName(p) {
+  if (!p) return "";
   const code = (p.default_code || "").toUpperCase();
   const name = p.name || "";
   const colorMap = { "BLEU": "BLEU", "VERT": "VERT", "ROSE": "ROSE", "ROUGE": "ROUGE", "JAUNE": "JAUNE" };
-  let odooName = name;
   for (const [key, label] of Object.entries(colorMap)) {
-    if (code.includes(key) && !name.toUpperCase().includes(key)) {
-      odooName = `${name} (${label})`;
-      break;
-    }
+    if (code.includes(key) && !name.toUpperCase().includes(key)) return `${name} (${label})`;
   }
-  if (!useCustom) return odooName;
-  const map = _getProdNamesMap();
-  return map[p.id]?.nom || odooName;
+  return name;
+}
+
+// Affichage uniquement. Priorité : (1) nom personnalisé [useCustom], (2) dictionnaire d'abréviations [short], (3) nom Odoo.
+// `short` est opt-in : les anciens appels (Préparation legacy, export modèle) gardent le comportement d'origine.
+function _productDisplayName(p, { useCustom = false, short = false } = {}) {
+  if (!p) return "—";
+  const odooName = _productOdooName(p);
+  if (useCustom) {
+    const custom = _getProdNamesMap()[p.id]?.nom;
+    if (custom) return custom;
+  }
+  return short && typeof NameDict !== "undefined" ? NameDict.shortName(odooName) : odooName;
 }
 
 // ── Noms & Ordre personnalisés des produits ───────────────────
@@ -4811,6 +4820,7 @@ if (isAdmin()) {
   if (container) container.style.display = "";
   const rpc = document.getElementById("rolePermissionsContainer");
   if (rpc) rpc.style.display = "";
+  if (typeof NameDict !== "undefined") NameDict.initSettings();
   renderUserManagementUI();
   renderRolePermissionsUI();
 }
@@ -5547,7 +5557,7 @@ async function _rpc_fetchStockFinal(baseUrl, roundId) {
       const pid = Array.isArray(l.product_id) ? l.product_id[0] : l.product_id;
       const pkg = packagingMap[pid];
       return {
-        name:           _productDisplayName(prodMap[pid]) || (Array.isArray(l.product_id) ? l.product_id[1] : String(l.product_id)),
+        name:           _productDisplayName(prodMap[pid], { short: true }) || (Array.isArray(l.product_id) ? l.product_id[1] : String(l.product_id)),
         qty:            l.product_uom_qty || 0,
         packaging_qty:  pkg?.qty || 0,
         packaging_name: pkg?.name || "",

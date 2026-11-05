@@ -12,10 +12,36 @@ const AppAuth = {
 };
 
 // ── Hash password (SHA-256) ───────────────────────────────────
+// Pure-JS SHA-256 fallback: crypto.subtle is undefined on non-secure origins (http://192.168.x.x)
+function _sha256Fallback(bytes) {
+  const K = new Uint32Array(64), H = new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]);
+  for (let i = 0, n = 2, c = 0; c < 64; n++) { let p = true; for (let d = 2; d * d <= n; d++) if (n % d === 0) { p = false; break; }
+    if (p) { K[c++] = Math.floor((Math.cbrt(n) % 1) * 4294967296); } }
+  const l = bytes.length, total = ((l + 9 + 63) >> 6) << 6, m = new Uint8Array(total);
+  m.set(bytes); m[l] = 0x80;
+  const dv = new DataView(m.buffer); dv.setUint32(total - 8, Math.floor((l * 8) / 4294967296)); dv.setUint32(total - 4, (l * 8) >>> 0);
+  const w = new Uint32Array(64), rr = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let o = 0; o < total; o += 64) {
+    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(o + i * 4);
+    for (let i = 16; i < 64; i++) { const s0 = rr(w[i-15],7) ^ rr(w[i-15],18) ^ (w[i-15] >>> 3), s1 = rr(w[i-2],17) ^ rr(w[i-2],19) ^ (w[i-2] >>> 10); w[i] = (w[i-16] + s0 + w[i-7] + s1) >>> 0; }
+    let [a,b,c,d,e,f,g,h] = H;
+    for (let i = 0; i < 64; i++) {
+      const t1 = (h + (rr(e,6) ^ rr(e,11) ^ rr(e,25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) >>> 0;
+      const t2 = ((rr(a,2) ^ rr(a,13) ^ rr(a,22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+      h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    H[0]+=a; H[1]+=b; H[2]+=c; H[3]+=d; H[4]+=e; H[5]+=f; H[6]+=g; H[7]+=h;
+  }
+  return Array.from(H).map(x => x.toString(16).padStart(8, "0")).join("");
+}
+
 async function _hashPassword(password) {
   const enc = new TextEncoder().encode(password);
-  const buf = await crypto.subtle.digest("SHA-256", enc);
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  if (window.crypto && crypto.subtle) {
+    const buf = await crypto.subtle.digest("SHA-256", enc);
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+  return _sha256Fallback(enc);
 }
 
 // ── Firebase helpers ──────────────────────────────────────────
@@ -117,6 +143,9 @@ const ROLE_PERMISSIONS = {
   ],
   gds_transferts: [
     { perm: "transferts_actualiser", label: "Transferts — Actualiser" },
+    { perm: "tr_state",  label: "Transferts — Bouton d'état (Marquer à faire / Vérifier / Valider)" },
+    { perm: "tr_cancel", label: "Transferts — Annuler" },
+    { perm: "tr_pdf_bc", label: "Transferts — Télécharger Bon de chargement (PDF)" },
   ],
   gds_preparation: [
     { perm: "prep_nouvelle",          label: "Préparation — Nouvelle" },
@@ -133,6 +162,8 @@ const ROLE_PERMISSIONS = {
     { perm: "prep_hors_date_add",     label: "Préparation — Hors date (+)" },
     { perm: "prep_quick_add",         label: "Préparation — Ajout rapide (+)" },
     { perm: "prep_overstock",         label: "Préparation — Autoriser dépasser le stock" },
+    { perm: "prep_mode",              label: "Préparation — Changer de mode (Odoo / Libre)" },
+    { perm: "prep_visibility",        label: "Préparation — Masquer / afficher les produits" },
   ],
   gds_stock_final: [
     { perm: "sf_date_bar",    label: "Stock Final — Barre de date" },
@@ -148,6 +179,9 @@ const ROLE_PERMISSIONS = {
     { perm: "tab_stockfinal",  label: "Onglet — Stock Final" },
   ],
 };
+
+// Permissions OFF by default for non-admin roles (admin-only until explicitly granted)
+const PERM_DEFAULT_OFF = ["prep_mode", "prep_visibility", "tr_state", "tr_cancel"];
 
 const ROLE_SECTION_LABELS = {
   gds_stock:       "GDS — Stock",
@@ -346,7 +380,7 @@ async function renderRolePermissionsUI() {
                 const raw     = perms[section]?.[role];
                 const decoded = _decodePerm(raw);
                 // undefined = not configured → checked. [] = all hidden → unchecked
-                const checked = (decoded === undefined) || decoded.includes(btn.perm);
+                const checked = (decoded === undefined) ? !PERM_DEFAULT_OFF.includes(btn.perm) : decoded.includes(btn.perm);
                 return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:11px;color:var(--text2)">
                   <input type="checkbox"
                     data-section="${section}" data-role="${role}" data-btnperm="${btn.perm}"
@@ -379,7 +413,7 @@ async function _onPermChange(cb) {
   const current = _decodePerm(perms[section][role]);
   // If undefined (never set), initialize with all allowed
   let arr = (current === undefined)
-    ? ROLE_PERMISSIONS[section].map(b => b.perm)
+    ? ROLE_PERMISSIONS[section].map(b => b.perm).filter(p => !PERM_DEFAULT_OFF.includes(p))
     : [...current];
 
   if (cb.checked) {
@@ -406,6 +440,7 @@ function _guardSettings() {
     document.getElementById("warehouseSettingsContainer")?.style.setProperty("display", "");
     document.getElementById("rolePermissionsContainer")?.style.setProperty("display", "");
     document.getElementById("userManagementContainer")?.style.setProperty("display", "");
+    if (typeof NameDict !== "undefined") NameDict.initSettings();
   }
   if (!isAdmin()) {
     btn.style.display = "none";
@@ -549,6 +584,10 @@ function _addUserBadge() {
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         Changer le mot de passe
       </div>
+      ${isAdmin() ? `<div id="bmSwitchEnv" style="padding:9px 14px;font-size:12px;color:#fbbf24;cursor:pointer;display:flex;align-items:center;gap:8px;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+        Changer d'environnement (${App.env === "training" ? "Test → Officiel" : "Officiel → Test"})
+      </div>` : ""}
       <div id="bmLogout" style="padding:9px 14px;font-size:12px;color:#f87171;cursor:pointer;border-top:1px solid #2a2f45;display:flex;align-items:center;gap:8px;">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         Se déconnecter
@@ -569,8 +608,14 @@ function _addUserBadge() {
       };
     });
     document.getElementById("bmChangePwd").onclick = () => { menu.remove(); _showChangePasswordModal(); };
-    document.getElementById("bmLogout").onclick = () => {
-      if (confirm(`Se déconnecter (${AppAuth.currentUser.username}) ?`)) { appLogout(); location.reload(); }
+    const swEnv = document.getElementById("bmSwitchEnv");
+    if (swEnv) swEnv.onclick = async () => {
+      if (!confirm("Fermer la session Odoo et choisir l'environnement (Officiel / Test) ?")) return;
+      await _odooDestroySession();   // les sessions Officiel et Test sont différentes
+      location.reload();
+    };
+    document.getElementById("bmLogout").onclick = async () => {
+      if (confirm(`Se déconnecter (${AppAuth.currentUser.username}) ?`)) { appLogout(); await _odooDestroySession(); location.reload(); }
     };
     setTimeout(() => document.addEventListener("click", function h(e) {
       if (!menu.contains(e.target) && e.target !== badge) { menu.remove(); }
@@ -860,6 +905,9 @@ async function checkAndLoginTwoStep() {
   // Step 2: Odoo session (existing logic)
   await _checkOdooSession();
 
+  // Step 2b: environnement (Officiel / Training) — fixe ODOO_BASE et la pastille TEST
+  await _applyEnv();
+
   // Step 3: Load warehouse details from Odoo
   await _loadUserWarehouses();
 
@@ -1010,6 +1058,24 @@ async function _checkOdooSession() {
   const screen = document.getElementById("loginScreen");
   if (screen) screen.style.display = "flex";
 
+  // Sélecteur Officiel/Test : admin seulement. Choix NON persisté (défaut : Officiel).
+  let selectedEnv = "prod";
+  const envToggle = document.getElementById("loginEnvToggle");
+  const envForLogin = () => (isAdmin() && selectedEnv === "training" ? "training" : "prod");
+  if (envToggle) {
+    envToggle.style.display = isAdmin() ? "flex" : "none";
+    const paint = () => document.querySelectorAll(".loginEnvBtn").forEach(b => {
+      const on = b.dataset.env === selectedEnv, test = b.dataset.env === "training";
+      b.style.background  = on ? (test ? "#f59e0b" : "#714B67") : "#f9fafb";
+      b.style.borderColor = on ? (test ? "#f59e0b" : "#714B67") : "#d1d5db";
+      b.style.color       = on ? "#fff" : "#64748b";
+    });
+    if (isAdmin()) {
+      document.querySelectorAll(".loginEnvBtn").forEach(b => { b.onclick = () => { selectedEnv = b.dataset.env; paint(); }; });
+      paint();
+    }
+  }
+
   await new Promise(resolve => {
     function doLogin() {
       const login    = document.getElementById("loginUser").value.trim();
@@ -1021,9 +1087,10 @@ async function _checkOdooSession() {
       btn.textContent = "Connexion…";
       btn.disabled = true;
 
+      const envHdr = envForLogin();
       fetch("/api/web/database/list", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json", "X-Odoo-Env": envHdr },
         body: JSON.stringify({ jsonrpc: "2.0", method: "call", id: 1, params: {} })
       })
       .then(r => r.json())
@@ -1031,8 +1098,8 @@ async function _checkOdooSession() {
         const db = (d?.result || [])[0];
         if (!db) throw new Error("Base de données introuvable");
         return fetch("/api/web/session/authenticate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json", "X-Odoo-Env": envHdr },
           body: JSON.stringify({ jsonrpc: "2.0", method: "call", id: 2, params: { db, login, password } })
         });
       })
@@ -1060,6 +1127,38 @@ async function _checkOdooSession() {
       });
     });
   });
+}
+
+// ── Environnement Officiel / Training ─────────────────────────
+// Le serveur choisit l'hôte Odoo via un cookie HttpOnly (gds_env) ; ici on ne fait que le lire.
+async function _odooDestroySession() {
+  try {
+    await fetch("/api/web/session/destroy", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "call", id: 9, params: {} })
+    });
+  } catch (_) {}
+}
+
+async function _applyEnv(depth = 0) {
+  let info = { env: "prod", host: null };
+  try {
+    const r = await fetch("/api/env", { credentials: "include", cache: "no-store" });
+    if (r.ok) { const j = await r.json(); if (j && (j.env === "prod" || j.env === "training")) info = j; }
+  } catch (_) {}
+
+  // Utilisateur non-admin : toujours Officiel. Si une session Training traîne (même navigateur), on la ferme.
+  if (info.env === "training" && !isAdmin() && depth < 2) {
+    await _odooDestroySession();
+    await _checkOdooSession();   // réaffiche le login (Officiel, sans sélecteur)
+    return _applyEnv(depth + 1);
+  }
+
+  App.env = (info.env === "training" && isAdmin()) ? "training" : "prod";
+  if (info.host) ODOO_BASE = "https://" + info.host;
+  const badge = document.getElementById("envBadge");
+  if (badge) badge.style.display = App.env === "training" ? "" : "none";
 }
 
 async function changeOwnPassword(oldPassword, newPassword) {

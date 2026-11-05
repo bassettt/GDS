@@ -12,6 +12,7 @@
   <link rel="manifest" href="/manifest.json"/>
   <link rel="apple-touch-icon" href="/icons/icon192.png"/>
   <link rel="stylesheet" href="/src/style.css"/>
+  <link rel="stylesheet" href="/src/preparation.css"/>
 <style id="tabGuardStyle">
   #gdsTabStock, #gdsTabVans, #gdsTabTransferts, #gdsTabPreparation, #gdsTabStockFinal {
     visibility: hidden;
@@ -117,6 +118,11 @@
   <div id="loginScreen" style="display:none;position:fixed;inset:0;z-index:9999;background:#ffffff;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px">
     <img src="icons/odoo.png" style="width:160px;margin-bottom:8px;"/>
     <div style="color:#64748b;font-size:13px;margin-bottom:4px">Connexion requise</div>
+    <!-- Sélecteur d'environnement : visible uniquement pour l'admin (géré par auth.js) -->
+    <div id="loginEnvToggle" style="display:none;gap:6px;margin-bottom:2px">
+      <button type="button" class="loginEnvBtn" data-env="prod" style="padding:7px 16px;border-radius:8px;border:1px solid #d1d5db;font-size:13px;font-weight:600;cursor:pointer">Officiel</button>
+      <button type="button" class="loginEnvBtn" data-env="training" style="padding:7px 16px;border-radius:8px;border:1px solid #d1d5db;font-size:13px;font-weight:600;cursor:pointer">Test</button>
+    </div>
     <form onsubmit="event.preventDefault(); document.getElementById('loginBtn').click();" style="display:contents">
       <input id="loginUser" type="text" placeholder="Identifiant" autocomplete="username"
         style="width:min(320px,90vw);padding:14px 16px;border-radius:10px;border:1px solid #d1d5db;background:#f9fafb;color:#111827;font-size:16px;outline:none"/>
@@ -137,6 +143,7 @@
       <div class="logo">
         <img src="icons/logo.png" width="18" height="18" alt="logo"/>
         <span class="logo-text"><b>OwlGDS</b></span>
+        <span id="envBadge" title="Environnement de test (training)" style="display:none;margin-left:6px;padding:2px 8px;border-radius:5px;background:#f59e0b;color:#fff;font-size:10px;font-weight:800;letter-spacing:.05em">TEST</span>
       </div>
       <div class="header-right">
         <button id="btnInstallPwa" class="icon-btn" title="Installer l'application" style="display:none">
@@ -324,6 +331,18 @@
               <div class="settings-card-desc">Importer un fichier Excel pour personnaliser les noms et l'ordre</div>
             </div>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;color:var(--text3)"><polyline points="9 18 15 12 9 6"/></svg>
+          </div>
+
+          <!-- Card: Dictionnaire d'abréviations (admin) -->
+          <div id="nameDictContainer" style="display:none">
+            <div class="settings-card" onclick="NameDict.openSettings()">
+              <div class="settings-card-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="13" y2="11"/></svg></div>
+              <div class="settings-card-text">
+                <div class="settings-card-title">Dictionnaire d'abréviations</div>
+                <div class="settings-card-desc">Raccourcir les noms de produits à l'affichage (modifiable, import Excel)</div>
+              </div>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;color:var(--text3)"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
           </div>
 
           <!-- Card: Ordre des catégories -->
@@ -676,6 +695,22 @@
         </div>
       </div>
 
+      <!-- Modal: Dictionnaire d'abréviations -->
+      <div class="smodal-overlay" id="modalNameDict">
+        <div class="smodal-box nd-box">
+          <div class="smodal-header">
+            <span class="smodal-title">Dictionnaire d'abréviations</span>
+            <button class="smodal-close" onclick="NameDict.cancel()" aria-label="Fermer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+          <div class="smodal-body" id="ndRoot"></div>
+          <div class="smodal-footer">
+            <span id="ndStatus" class="nd-status"></span>
+            <button class="gds-refresh-btn" style="background:var(--text3,#888);" onclick="NameDict.cancel()">Annuler</button>
+            <button class="gds-refresh-btn" id="ndSave" style="background:var(--accent);opacity:.5" disabled onclick="NameDict.save()">Enregistrer</button>
+          </div>
+        </div>
+      </div>
+
       <script>
         function _openSettingsModal(id) {
           document.getElementById(id)?.classList.add('open');
@@ -701,7 +736,11 @@
 <script src="/src/utils.js"></script>
 <script src="/src/renderer.js"></script>
 <script src="/src/auth.js"></script>
+<script src="/src/name-dict.js"></script>
 <script src="/src/app.js"></script>
+<script src="/src/transfert-actions.js"></script>
+<script src="/src/preparation.js"></script>
+<script src="/src/preparation-charge.js"></script>
 
 </body>
 </html>

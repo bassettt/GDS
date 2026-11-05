@@ -529,3 +529,62 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
 @media (max-width:600px) {
   .gds-prep-action-cell { flex-direction:column; gap:2px; }
 }
+/* ── Dictionnaire d'abréviations (settings) ───────────────── */
+.nd-box { width:min(96vw,780px) !important; max-height:90vh !important; }
+.nd-sec { margin-bottom:14px; }
+.nd-h { font-size:12px; font-weight:700; color:var(--text1); margin-bottom:6px; display:flex; align-items:baseline; gap:8px; }
+.nd-cnt { font-size:10.5px; font-weight:500; color:var(--text3); }
+.nd-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+.nd-btn { display:inline-flex; align-items:center; gap:6px; padding:6px 11px; font-size:11px; font-weight:600; color:var(--text1);
+  background:var(--bg2); border:1px solid var(--border); border-radius:8px; cursor:pointer; user-select:none; }
+.nd-btn:hover { background:var(--bg3); }
+.nd-btn:disabled { opacity:.45; cursor:default; }
+.nd-pri { background:var(--accent,#1a6b3a); color:#fff; border-color:transparent; }
+.nd-pri:hover { background:var(--accent,#1a6b3a); opacity:.9; }
+.nd-warn { color:var(--red,#dc2626); }
+.nd-sel, .nd-in { font:inherit; font-size:12px; color:var(--text1); background:var(--bg,#fff); border:1px solid var(--border); border-radius:7px; padding:6px 8px; min-width:0; }
+.nd-in { width:100%; box-sizing:border-box; }
+.nd-in:focus, .nd-sel:focus, .nd-sbox input:focus { outline:2px solid var(--accent,#1a6b3a); outline-offset:-1px; }
+.nd-sbox { flex:1; min-width:150px; display:flex; align-items:center; gap:6px; padding:0 8px; background:var(--bg,#fff); border:1px solid var(--border); border-radius:7px; color:var(--text3); }
+.nd-sbox input { flex:1; border:none; background:transparent; font:inherit; font-size:12px; color:var(--text1); padding:6px 0; outline:none; min-width:0; }
+.nd-test { display:flex; align-items:center; gap:8px; }
+.nd-test .nd-in { flex:1; }
+.nd-out { flex:1; min-height:32px; display:flex; align-items:center; padding:0 10px; font-size:12.5px; font-weight:700; color:var(--accent,#1a6b3a); background:var(--bg2); border:1px solid var(--border); border-radius:7px; word-break:break-word; }
+.nd-out.nd-same, .nd-sample .nd-same { color:var(--text3); font-weight:500; }
+.nd-arrow { color:var(--text3); display:inline-flex; flex-shrink:0; }
+.nd-thead, .nd-row { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 44px 32px; gap:8px; align-items:center; }
+.nd-thead { padding:0 6px 4px; font-size:10px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:.03em; }
+.nd-rules { max-height:280px; overflow-y:auto; border:1px solid var(--border); border-radius:8px; -webkit-overflow-scrolling:touch; }
+.nd-row { padding:5px 6px; border-bottom:1px solid var(--border); }
+.nd-row:last-child { border-bottom:none; }
+.nd-row.nd-bad .nd-in[data-f="from"] { border-color:var(--red,#dc2626); background:rgba(220,38,38,.06); }
+.nd-fw { position:relative; display:flex; }
+.nd-sp { position:absolute; right:6px; top:50%; transform:translateY(-50%); font-size:9px; font-weight:700; color:var(--accent,#1a6b3a); background:var(--bg2); border-radius:4px; padding:1px 4px; pointer-events:none; }
+.nd-ico { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border:none; background:transparent; color:var(--text3); border-radius:6px; cursor:pointer; }
+.nd-ico:hover { color:var(--red,#dc2626); background:var(--bg2); }
+.nd-empty { padding:14px; text-align:center; font-size:11.5px; color:var(--text3); }
+.nd-hint { font-size:10px; color:var(--text3); line-height:1.4; margin-top:4px; }
+.nd-status { margin-right:auto; align-self:center; font-size:11px; color:var(--text2); }
+.nd-imp { margin-top:8px; padding:10px; background:var(--bg2); border:1px solid var(--border); border-radius:8px; }
+.nd-imp-h { font-size:11.5px; font-weight:700; margin-bottom:6px; word-break:break-all; }
+.nd-imp-s { display:flex; gap:14px; flex-wrap:wrap; font-size:11px; color:var(--text2); }
+.nd-imp-s b { color:var(--text1); }
+.nd-imp-s .nd-e, .nd-imp-s .nd-e b { color:var(--red,#dc2626); }
+.nd-errs { margin-top:6px; padding:6px 8px; font-size:10.5px; color:var(--red,#dc2626); background:rgba(220,38,38,.07); border-radius:6px; }
+.nd-note { display:flex; align-items:center; gap:6px; margin-top:6px; font-size:10.5px; color:#b45309; }
+.nd-il-h { margin-top:8px; font-size:10px; font-weight:700; color:var(--text2); text-transform:uppercase; }
+.nd-il { display:flex; align-items:center; gap:6px; font-size:11px; padding:2px 0; min-width:0; }
+.nd-il span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:pre; max-width:45%; }
+.nd-il small { color:var(--text3); }
+.nd-dup { padding:10px; margin-bottom:8px; background:rgba(245,158,11,.10); border:1px solid rgba(245,158,11,.45); border-radius:8px; }
+.nd-dup-h { display:flex; align-items:center; gap:6px; font-size:11.5px; font-weight:700; color:#b45309; margin-bottom:6px; }
+.nd-dup-g { font-size:10.5px; padding:4px 0; border-top:1px dashed rgba(245,158,11,.45); }
+.nd-dup-g b { display:block; color:var(--text1); }
+.nd-dup-g div { color:var(--text2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.nd-ok { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--accent,#1a6b3a); margin-bottom:8px; }
+.nd-sample { border:1px solid var(--border); border-radius:8px; max-height:260px; overflow-y:auto; }
+.nd-srow { display:grid; grid-template-columns:minmax(0,1fr) 16px minmax(0,1fr); gap:6px; align-items:center; padding:4px 8px; font-size:11px; border-bottom:1px solid var(--border); }
+.nd-srow:last-child { border-bottom:none; }
+.nd-srow span:first-child, .nd-srow b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.nd-sh { font-size:10px; font-weight:700; color:var(--text2); text-transform:uppercase; background:var(--bg2); position:sticky; top:0; }
+@media (max-width:520px) { .nd-thead, .nd-row { grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) 40px 28px; gap:5px; } .nd-test { flex-direction:column; align-items:stretch; } .nd-test .nd-arrow { display:none; } }

@@ -1,0 +1,354 @@
+/* ============================================================
+   preparation.css — Preparation v2 (scoped: .gp2-*)
+   Mobile-first. Uses the app's existing CSS variables.
+   ============================================================ */
+.gp2-root { display:flex; flex-direction:column; min-height:100%; background:var(--bg); font-size:13px; }
+.gp2-root [hidden], .gp2-row[hidden], .gp2-cat[hidden] { display:none !important; }
+.gp2-loading { padding:28px 14px; text-align:center; color:var(--text2); }
+.gp2-fail { color:var(--red); }
+.gp2-empty { padding:24px; text-align:center; color:var(--text3); }
+
+/* ── sticky toolbar ─────────────────────────────────────── */
+.gp2-bar { position:sticky; top:0; z-index:20; background:var(--bg2); border-bottom:1px solid var(--border);
+  padding:6px 8px 0; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+.gp2-bar-r { display:flex; align-items:center; gap:6px; margin-bottom:6px; flex-wrap:wrap; }
+.gp2-bar-s { display:flex; align-items:center; gap:6px; flex:1 1 100%; min-width:0; }   /* mobile: search keeps its own full-width line */
+.gp2-search { flex:1; min-width:120px; height:38px; padding:0 12px; font-size:15px; border:1px solid var(--border);
+  border-radius:var(--r); background:var(--bg3); color:var(--text); }
+.gp2-search:focus { outline:none; border-color:var(--gds-color); background:var(--bg2); }
+.gp2-conn { width:9px; height:9px; border-radius:50%; background:var(--text3); flex:none; }
+.gp2-conn.on { background:var(--green); box-shadow:0 0 0 3px rgba(34,197,94,.18); }
+.gp2-status { font-size:11px; font-weight:600; min-width:92px; text-align:right; color:var(--text3); }
+.gp2-status.saving { color:var(--orange); }
+.gp2-status.ok { color:var(--gds-color); }
+.gp2-status.err { color:var(--red); }
+
+.gp2-btn { height:32px; padding:0 10px; font-size:12px; font-weight:600; color:var(--text2); background:var(--bg3);
+  border:1px solid var(--border); border-radius:var(--r-sm); cursor:pointer; }
+.gp2-btn:active { background:var(--border); }
+.gp2-btn-sm { height:26px; font-size:11px; margin-bottom:4px; }
+.gp2-seg { display:inline-flex; border:1px solid var(--border); border-radius:var(--r-sm); overflow:hidden; }
+.gp2-seg button { height:32px; padding:0 14px; font-size:12px; font-weight:700; border:0; background:var(--bg3); color:var(--text2); cursor:pointer; }
+.gp2-seg button.on { background:var(--gds-color); color:#fff; }
+.gp2-seg button:disabled { cursor:default; opacity:.85; }
+.gp2-seg button:disabled:not(.on) { opacity:.5; }
+
+.gp2-menu { position:relative; }
+.gp2-panel { position:absolute; top:36px; left:0; z-index:30; min-width:220px; max-height:55vh; overflow:auto;
+  background:var(--bg2); border:1px solid var(--border); border-radius:var(--r); padding:8px; box-shadow:0 6px 20px rgba(0,0,0,.18); }
+.gp2-chk { display:flex; align-items:center; gap:8px; padding:5px 2px; font-size:13px; color:var(--text); cursor:pointer; }
+.gp2-chk input { width:18px; height:18px; accent-color:var(--gds-color); }
+
+.gp2-warn { margin:0 0 6px; padding:6px 10px; font-size:12px; color:#92400e; background:#fef3c7; border-radius:var(--r-sm); }
+
+/* column header (wide screens only) */
+.gp2-cols { display:none; }
+
+/* ── categories ─────────────────────────────────────────── */
+.gp2-cat-h { width:100%; display:flex; align-items:center; gap:8px; padding:5px 10px; border:0;
+  border-bottom:1px solid var(--border); background:var(--bg3); color:var(--text); font-size:13px; font-weight:700;
+  text-align:left; cursor:pointer; position:sticky; top:var(--gp2-head-h); left:0; width:var(--gp2-sw, 100%); box-sizing:border-box; z-index:5; }
+.gp2-arrow { display:inline-block; transition:transform .15s; color:var(--text3); }
+.gp2-root:not(.gp2-searching) .gp2-cat.collapsed .gp2-arrow { transform:rotate(-90deg); }
+.gp2-cat-t { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gp2-cat-n { font-size:11px; font-weight:600; color:var(--text3); font-variant-numeric:tabular-nums; }
+.gp2-root:not(.gp2-searching) .gp2-cat.collapsed .gp2-cat-b { display:none; }
+.gp2-searching .gp2-cat .gp2-cat-b { display:block !important; }
+
+/* ── table (RS sheet): sticky product column + 3 groups, scrolls inside .gp2-scroll ─ */
+.gp2-root { --gp2-head-h:46px; }
+.gp2-scroll { overflow:auto; -webkit-overflow-scrolling:touch; height:var(--gp2-sh, auto); position:relative; }
+.gp2-sheet { width:max-content; min-width:100%; }
+.gp2-list { padding:0 0 40px; }
+.gp2-g { display:flex; flex:none; border-left:1px solid var(--border); }
+.gp2-g-prep { --cw:68px; } .gp2-g-charge, .gp2-g-reste { --cw:56px; }
+.gp2-hide-prep .gp2-g-prep, .gp2-hide-charge .gp2-g-charge, .gp2-hide-reste .gp2-g-reste { display:none; }
+.gp2-nmcol { position:sticky; left:0; z-index:3; flex:0 0 172px; width:172px; box-sizing:border-box; min-width:0; }
+
+/* two-level header */
+.gp2-head { position:sticky; top:0; z-index:8; display:flex; height:var(--gp2-head-h); background:var(--bg2); border-bottom:1px solid var(--border); }
+.gp2-hn { z-index:9; display:flex; align-items:center; padding-left:10px; background:var(--bg2);
+  font-size:10px; font-weight:700; text-transform:uppercase; color:var(--text3); }
+.gp2-hg { flex-direction:column; }
+.gp2-gt { height:24px; line-height:24px; text-align:center; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.04em;
+  color:#fff; background:var(--gds-color); }
+.gp2-g-charge .gp2-gt { background:var(--orange); } .gp2-g-reste .gp2-gt { background:var(--accent); }
+.gp2-gs { display:flex; height:22px; }
+.gp2-gs span { width:var(--cw); text-align:center; line-height:22px; font-size:10px; font-weight:600; color:var(--text3); }
+
+/* rows */
+.gp2-row { display:flex; align-items:stretch; width:100%; background:var(--bg2); border-bottom:1px solid var(--border); }
+.gp2-row.gp2-has { background:#f0fdf8; }
+.gp2-row.gp2-over { box-shadow:inset 3px 0 0 var(--orange); }
+.gp2-name { background:inherit; padding:0 6px 0 6px; display:flex; flex-direction:row; align-items:center; gap:5px; border-right:1px solid var(--border); }
+.gp2-nm { flex:1 1 auto; min-width:0; font-size:13px; font-weight:600; line-height:1.2; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gp2-sub { flex:none; display:flex; align-items:baseline; white-space:nowrap; font-size:10px; color:var(--text3); }
+.gp2-sub:empty { display:none; }
+.gp2-sub > .gp2-who:not(:empty)::before, .gp2-sub > .gp2-stock:not(:empty)::before { content:"·"; margin:0 4px; }
+@media (max-width: 719px) { .gp2-who, .gp2-stock { display:none; } }   /* phone: only name + ×colisage on the line; editor + stock live in the name card */
+.gp2-stock { color:var(--text2); font-variant-numeric:tabular-nums; }
+.gp2-over .gp2-stock { color:var(--orange); font-weight:700; }
+.gp2-f { display:flex; flex:none; width:var(--cw); box-sizing:border-box; padding:3px 3px; margin:0; align-items:center; }
+.gp2-ro { flex:none; width:var(--cw); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700;
+  font-variant-numeric:tabular-nums lining-nums; color:var(--orange); }
+.gp2-g-reste .gp2-ro { color:var(--accent); }
+.gp2-ro.gp2-dim { color:var(--text3); font-weight:500; opacity:.6; }
+.gp2-ro.gp2-neg { color:var(--red); }
+.gp2-extra { display:none !important; }   /* legacy phase-2 strip: kept in DOM only so its update() hooks keep running */
+
+.gp2-in { width:100%; height:30px; padding:0 4px; text-align:center; font-size:16px; font-weight:700; color:var(--text);
+  font-family:"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif; font-variant-numeric:tabular-nums lining-nums;
+  background:var(--bg2); border:1.5px solid var(--border); border-radius:var(--r); -webkit-appearance:none; appearance:none; }
+.gp2-in::placeholder { color:#cbd5e1; font-weight:500; }
+.gp2-in:focus { outline:none; border-color:var(--gds-color); box-shadow:0 0 0 3px rgba(16,185,129,.18); }
+.gp2-in[readonly] { background:var(--bg3); color:var(--text2); }
+.gp2-nosize .gp2-g-prep .gp2-f:first-child .gp2-in { background:var(--bg3); border-style:dashed; }
+.gp2-in.gp2-err { border-color:var(--red); background:#fef2f2; color:var(--red); box-shadow:0 0 0 3px rgba(239,68,68,.15); }
+
+/* ── wide screens ───────────────────────────────────────── */
+@media (min-width: 720px) {
+  .gp2-nmcol { flex:1 0 400px; width:auto; min-width:400px; }
+  .gp2-in { height:28px; font-size:14px; }
+  .gp2-g-prep { --cw:92px; } .gp2-g-charge, .gp2-g-reste { --cw:76px; }
+  .gp2-nm { font-size:13px; }
+}
+
+/* ============================================================
+   PHASE 2 — Chargement / Reste / bons  (preparation-charge.js)
+   ============================================================ */
+.gp2-ext { display:contents; }
+.gp2-extra { display:flex; gap:18px; flex-wrap:wrap; font-size:12px; padding-top:2px; }
+.gp2-nocharge .gp2-extra, .gp2-hide-charge.gp2-hide-reste .gp2-extra { display:none; }
+.gp2-hide-charge .gp2c-ch, .gp2-hide-reste .gp2c-re { display:none; }
+.gp2c { display:flex; flex-direction:column; gap:1px; min-width:0; }
+.gp2c b { font-size:14px; font-variant-numeric:tabular-nums; color:var(--orange); }
+.gp2c-re b { color:var(--accent); }
+.gp2c-re.gp2c-zero b { color:var(--green); }
+.gp2c-re.gp2c-neg b { color:var(--red); }
+.gp2-row.gp2-ghost { display:none !important; }
+.gp2-cat[data-cat="— Chargé sans préparation —"] .gp2-cat-n { display:none; }
+.gp2-cat[data-cat="— Chargé sans préparation —"]:not(:has(.gp2-row:not(.gp2-ghost))) { display:none; }
+
+.gp2c-bar { display:contents; }   /* its buttons are direct items of the wrapping toolbar row */
+.gp2c-lbl { font-size:11px; font-weight:600; color:var(--text2); }
+.gp2c-dt { height:32px; padding:0 6px; font-size:12px; color:var(--text); background:var(--bg3);
+  border:1px solid var(--border); border-radius:var(--r-sm); min-width:0; }
+.gp2c-msg { font-size:11px; color:var(--text3); }
+.gp2c-panel { flex:1 1 100%; }
+.gp2c-ood { margin-bottom:4px; display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+.gp2c-ref { height:26px; padding:0 8px; font-size:12px; border:1px solid var(--border); border-radius:var(--r-sm);
+  background:var(--bg3); color:var(--text); width:190px; max-width:100%; }
+.gp2c-bons { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:4px; max-height:34vh; overflow:auto; padding-bottom:6px; }
+.gp2c-none { font-size:11px; color:var(--text3); padding:4px; }
+.gp2c-bon { display:flex; align-items:center; gap:6px; padding:5px 8px; border:1px solid var(--border); border-radius:var(--r-sm);
+  background:var(--bg3); opacity:.6; cursor:pointer; user-select:none; }
+.gp2c-bon.on { opacity:1; background:var(--bg); border-color:var(--green); }
+.gp2c-bon.ro { cursor:default; }
+.gp2c-bn { flex:1; min-width:0; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text); }
+.gp2c-x { border:0; background:var(--orange); color:#fff; border-radius:4px; font-size:10px; width:18px; height:18px; cursor:pointer; flex:none; }
+.gp2c-sw { position:relative; width:26px; height:14px; border-radius:20px; background:var(--border); flex:none; }
+.gp2c-sw::after { content:""; position:absolute; top:2px; left:2px; width:10px; height:10px; border-radius:50%; background:#fff; transition:left .15s; }
+.gp2c-bon.on .gp2c-sw { background:var(--green); }
+.gp2c-bon.on .gp2c-sw::after { left:14px; }
+.gp2c-cap { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; color:var(--text3); white-space:nowrap; }
+.gp2c { flex-direction:row; align-items:baseline; gap:6px; }
+
+/* ── Détail chargement: truck button + read-only modal ───── */
+.gp2-truck { flex:none; width:22px; height:22px; padding:0; font-size:14px; line-height:1;
+  border:1px solid var(--border); border-radius:6px; background:var(--bg3); color:var(--text2); cursor:pointer; }
+.gp2-truck:disabled { opacity:.3; cursor:not-allowed; }
+.gp2m { position:fixed; inset:0; z-index:99990; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; padding:10px; }
+.gp2m-box { background:var(--bg2); border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 24px #0005;
+  width:min(640px,100%); max-height:85vh; display:flex; flex-direction:column; }
+.gp2m-h { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 14px; border-bottom:1px solid var(--border); font-weight:700; font-size:13px; color:var(--text); }
+.gp2m-x { border:0; background:none; font-size:16px; cursor:pointer; color:var(--text2); }
+.gp2m-b { overflow:auto; padding:8px 10px 12px; }
+.gp2m-none { padding:16px; text-align:center; color:var(--text3); }
+.gp2m-wrap { overflow-x:auto; }
+.gp2m-t { width:100%; border-collapse:collapse; font-size:12px; color:var(--text); }
+.gp2m-t th { text-align:left; font-size:10px; text-transform:uppercase; color:var(--text3); padding:4px 6px; border-bottom:1px solid var(--border); }
+.gp2m-t td { padding:5px 6px; border-bottom:1px solid var(--border); vertical-align:top; overflow-wrap:anywhere; }
+.gp2m-t .n { text-align:right; font-variant-numeric:tabular-nums; } .gp2m-t .c { text-align:center; } .gp2m-t .b { font-weight:700; }
+.gp2m-t tr.juml { background:rgba(251,146,60,.15); }
+.gp2m-w { color:var(--orange); font-weight:700; margin-left:4px; }
+.gp2m-t tfoot td { font-weight:700; border-top:2px solid var(--border); border-bottom:0; }
+
+/* ============================================================
+   Inline SVG icons + hors date list + query-limit alert
+   ============================================================ */
+.gp2-ic { width:1em; height:1em; flex:none; vertical-align:-.15em; }
+.gp2-btn { display:inline-flex; align-items:center; justify-content:center; gap:4px; }
+.gp2-arrow { display:inline-flex; align-items:center; }
+.gp2-truck { display:flex; align-items:center; justify-content:center; }
+.gp2-truck .gp2-ic { width:13px; height:13px; }
+.gp2m-x { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; padding:0; }
+.gp2m-x .gp2-ic { width:16px; height:16px; }
+.gp2c-x { display:inline-flex; align-items:center; justify-content:center; padding:0; }
+.gp2c-x .gp2-ic { width:11px; height:11px; }
+.gp2m-w { display:inline-flex; vertical-align:middle; }
+.gp2-status .gp2-ic { vertical-align:-.12em; }
+
+.gp2c-msg { display:inline-flex; align-items:center; gap:4px; }
+.gp2c-msg.ok   { color:var(--green); }
+.gp2c-msg.warn { color:var(--orange); }
+.gp2c-msg.err  { color:var(--red); font-weight:600; }
+.gp2c-alert { flex:1 1 100%; display:flex; align-items:flex-start; gap:6px; padding:6px 10px; font-size:12px; color:#92400e;
+  background:#fef3c7; border-radius:var(--r-sm); }
+.gp2c-alert .gp2-ic { width:15px; height:15px; margin-top:1px; }
+
+.gp2c-ood-tag { display:inline-flex; vertical-align:middle; color:var(--orange); }
+.gp2c-bon .gp2c-bn { display:flex; align-items:center; gap:4px; }
+.gp2c-ood .gp2-btn:disabled { opacity:.45; cursor:default; }
+
+.gp2m-f { display:flex; justify-content:flex-end; gap:8px; padding:8px 12px; border-top:1px solid var(--border); }
+.gp2m-f [hidden] { display:none !important; }
+.gp2o-row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 2px; border-bottom:1px solid var(--border); }
+.gp2o-i { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.gp2o-ref { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:600; color:var(--text); overflow-wrap:anywhere; }
+.gp2o-ref .gp2-ic { color:var(--orange); }
+.gp2o-sub { font-size:10px; color:var(--text3); }
+.gp2o-rm { margin-bottom:0; flex:none; }
+
+/* ── multi-day labels: date (small grey) + JUM badge ───────── */
+.gp2-bd { margin-left:4px; font-size:9.5px; font-weight:500; color:var(--text3); white-space:nowrap; flex:none; }
+.gp2-jum { display:inline-block; margin-left:4px; padding:0 6px; border-radius:8px; background:var(--orange); color:#fff;
+  font-size:9.5px; font-weight:700; line-height:15px; white-space:nowrap; flex:none; }
+.gp2c-bn .gp2-bd, .gp2c-bn .gp2-jum { margin-left:0; }
+.gp2c-bt { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.gp2c-bons { grid-template-columns:repeat(auto-fill,minmax(175px,1fr)); }
+
+/* ── auto-refresh indicator, "Nouveau" badge, light notice ─── */
+.gp2c-sync { display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--text3); white-space:nowrap; }
+.gp2c-sync.ok .gp2-ic { color:var(--green); }
+.gp2c-sync.err { color:var(--red); }
+.gp2c-sync.busy .gp2-ic { color:var(--orange); }
+@keyframes gp2spin { to { transform:rotate(360deg); } }
+.gp2-spin { animation:gp2spin 1s linear infinite; }
+.gp2-new { display:inline-block; margin-left:4px; padding:0 6px; border-radius:8px; background:var(--green); color:#fff;
+  font-size:9.5px; font-weight:700; line-height:15px; white-space:nowrap; flex:none; }
+.gp2c-bn .gp2-new { margin-left:0; }
+.gp2c-toast { flex:1 1 100%; display:flex; align-items:center; gap:6px; padding:5px 10px; font-size:12px; color:#065f46;
+  background:#d1fae5; border-radius:var(--r-sm); }
+.gp2c-toast .gp2-ic { width:14px; height:14px; }
+
+/* ============================================================
+   Toolbar v2 — single wrapping row, icon buttons, period popover
+   ============================================================ */
+.gp2-root[data-mode="libre"] [data-act="refresh"] { display:none !important; }   /* Odoo data refresh: Odoo mode only */
+
+/* header: collapse / expand all */
+.gp2-hbtn { margin-left:auto; margin-right:6px; width:24px; height:24px; padding:0; display:inline-flex; align-items:center; justify-content:center;
+  color:var(--text2); background:var(--bg3); border:1px solid var(--border); border-radius:var(--r-sm); cursor:pointer; }
+.gp2-hbtn:active { background:var(--border); }
+.gp2-hbtn .gp2-ic { width:15px; height:15px; }
+
+/* Actualiser button carries the state icon + hh:mm */
+.gp2c-refbtn { white-space:nowrap; }
+.gp2c-refbtn .gp2c-sync { font-size:11px; font-weight:600; color:var(--text3); }
+.gp2c-refbtn .gp2c-sync.err { color:var(--red); }
+.gp2c-msg:not([hidden]) { flex:1 1 100%; }
+
+/* period button + popover */
+.gc-range { position:relative; }
+.gp2c-rbtn { gap:6px; white-space:nowrap; }
+.gp2c-rtxt { font-size:11px; font-weight:600; }
+.gp2c-dot { width:7px; height:7px; border-radius:50%; background:var(--orange); flex:none; }
+.gp2c-rpanel { display:flex; flex-direction:column; gap:8px; width:260px; min-width:0; }
+.gp2c-rf { display:flex; flex-direction:column; gap:3px; }
+.gp2c-rpanel .gp2c-dt { width:100%; height:36px; box-sizing:border-box; }
+.gp2c-rerr { font-size:11px; font-weight:600; color:var(--red); }
+.gp2c-ract { display:flex; justify-content:flex-end; }
+.gp2c-rapply { background:var(--gds-color); color:#fff; border-color:transparent; }
+.gp2c-rapply:disabled { opacity:.45; cursor:default; }
+
+/* phone: popover spans the full width right under the toolbar */
+@media (max-width: 719px) {
+  .gc-range { position:static; }
+  .gp2c-rpanel { left:0; right:0; top:100%; width:auto; border-radius:0 0 var(--r) var(--r); }
+}
+/* wide: short search, buttons wrap on the same line */
+@media (min-width: 720px) {
+  .gp2-bar-s { flex:0 1 auto; }
+  .gp2-search { flex:0 1 240px; width:240px; min-width:140px; }
+}
+
+/* ============================================================
+   Product visibility (hide / show) + phone name card
+   ============================================================ */
+.gp2-eye { display:none; flex:none; width:22px; height:22px; padding:0; align-items:center; justify-content:center; color:var(--text2);
+  background:var(--bg3); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
+.gp2-eye .gp2-ic { width:14px; height:14px; }
+.gp2-eye[data-v="0"] { color:var(--orange); border-color:var(--orange); }
+.gp2-vedit .gp2-eye { display:inline-flex; }
+.gp2-cat[data-cat="— Chargé sans préparation —"] .gp2-eye { display:none !important; }
+.gp2-nm[data-act="nmcard"] { cursor:default; }
+@media (max-width: 719px) { .gp2-nm[data-act="nmcard"] { cursor:pointer; } }
+
+/* rows that the unsaved draft will hide / hidden rows found through "Tout": dimmed, not removed (cells only, so the sticky name column stays opaque) */
+.gp2-vdim .gp2-nm, .gp2-vdim .gp2-sub, .gp2-vdim .gp2-g,
+.gp2-vpeek .gp2-nm, .gp2-vpeek .gp2-sub, .gp2-vpeek .gp2-g { opacity:.45; }
+
+.gp2-tout { padding:0; font-size:12px; white-space:nowrap; flex:none; }
+.gp2-vwarn { display:flex; align-items:center; gap:6px; }
+.gp2-vwarn .gp2-ic { width:15px; height:15px; flex:none; }
+.gp2-vwarn span { flex:1; min-width:0; }
+.gp2-link { border:0; background:none; padding:0 2px; font-size:12px; font-weight:700; color:#92400e; text-decoration:underline; cursor:pointer; }
+
+/* edit strip: Enregistrer / Annuler */
+.gp2-vbar { display:inline-flex; align-items:center; gap:6px; padding:0 6px; height:32px; border:1px solid var(--orange); border-radius:var(--r-sm); background:var(--bg3); }
+.gp2-vbar .gp2-btn { margin:0; }
+.gp2-vtxt { display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:600; color:var(--orange); white-space:nowrap; }
+.gp2-vsave { background:var(--gds-color); color:#fff; border-color:transparent; }
+.gp2-vsave:disabled { opacity:.45; cursor:default; }
+
+/* options panel */
+.gp2-vpanel { width:300px; max-width:calc(100vw - 16px); padding:6px; }
+.gp2-vh { display:flex; flex-direction:column; gap:1px; padding:2px 4px 6px; font-size:12px; font-weight:700; color:var(--text); }
+.gp2-vh span { font-size:10px; font-weight:500; color:var(--text3); }
+.gp2-vopt { display:flex; align-items:center; gap:8px; width:100%; padding:6px; border:0; border-radius:var(--r-sm); background:none; text-align:left; cursor:pointer; color:var(--text); }
+.gp2-vopt.on { background:var(--bg3); }
+.gp2-vopt b { display:block; font-size:12px; }
+.gp2-vopt small { display:block; font-size:10px; color:var(--text3); }
+.gp2-vck { display:inline-flex; width:16px; height:16px; flex:none; color:var(--gds-color); }
+.gp2-vsub { margin:8px 4px 4px; font-size:10px; font-weight:700; text-transform:uppercase; color:var(--text3); }
+.gp2-vbase { display:flex; width:100%; }
+.gp2-vbase button { flex:1; padding:0 6px; height:28px; }
+.gp2-vs { width:100%; box-sizing:border-box; height:34px; padding:0 8px; margin-bottom:4px; font-size:16px; border:1px solid var(--border);
+  border-radius:var(--r-sm); background:var(--bg3); color:var(--text); }
+.gp2-vlist { max-height:30vh; overflow:auto; }
+.gp2-vcount { padding:2px 4px; font-size:10px; color:var(--text3); }
+.gp2-vi { display:flex; align-items:center; gap:6px; padding:3px 4px; border-bottom:1px solid var(--border); }
+.gp2-vn { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; color:var(--text); }
+.gp2-vq { flex:none; padding:0 6px; border-radius:8px; background:var(--orange); color:#fff; font-size:9.5px; font-weight:700; line-height:15px; }
+.gp2-vi .gp2-btn-sm { margin-bottom:0; flex:none; }
+.gp2-vedit-btn { margin:8px 4px 2px; }
+@media (max-width: 719px) {
+  .gp2-vpanel { position:fixed; left:8px; right:8px; top:auto; margin-top:36px; width:auto; max-width:none; }
+}
+
+/* phone name card */
+.gp2m-box.gp2m-sm { width:min(340px,100%); }
+.gp2-fwarn { margin-top:8px; padding:6px 10px; font-size:12px; color:#92400e; background:#fef3c7; border-radius:var(--r-sm); }
+.gp2m-ttl { overflow-wrap:anywhere; }
+.gp2-cl { display:flex; justify-content:space-between; gap:12px; padding:7px 2px; border-bottom:1px solid var(--border); font-size:13px; color:var(--text); }
+.gp2-cl span { color:var(--text3); }
+
+/* ── Terminer: confirmation warning + empty state (no active session) ── */
+.gp2-fdanger { display:flex; gap:8px; align-items:flex-start; margin-top:10px; padding:8px 10px; font-size:12.5px; line-height:1.4; color:#991b1b; background:#fee2e2; border-radius:var(--r-sm); }
+.gp2-fdanger .gp2-ic { flex:none; width:16px; height:16px; margin-top:1px; }
+.gp2-idlebox { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; min-height:55vh; padding:32px 16px; text-align:center; }
+.gp2-idlebox .gp2-idle-ic { width:56px; height:56px; stroke-width:1.5; color:var(--text3); }
+.gp2-idle-t { font-size:18px; font-weight:700; color:var(--text); }
+.gp2-idle-s { font-size:13px; color:var(--text3); max-width:320px; }
+.gp2-idle-btn { height:48px; min-width:min(260px,100%); padding:0 22px; margin-top:8px; font-size:15px; border-radius:var(--r); }
+.gp2-idle-btn .gp2-ic { width:18px; height:18px; }
+/* no session: only the connection dot and the Odoo / Libre switch stay in the toolbar; the table is replaced by the empty state */
+.gp2-idle .gp2-scroll { display:none; }
+.gp2-idle .gp2-bar-r > *:not(.gp2-bar-s):not(.gp2-seg) { display:none !important; }
+.gp2-idle .gp2-bar-s > *:not(.gp2-conn) { display:none !important; }
+.gp2-idle .gp2-warn { display:none !important; }
+
+/* ── Rapport (draft download): spinner while generating ── */
+.gp2-spin { animation:gp2spin .8s linear infinite; }
+@keyframes gp2spin { to { transform:rotate(360deg); } }
+.gp2-btn.gp2-busy { opacity:.7; cursor:progress; }
