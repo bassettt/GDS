@@ -23,6 +23,7 @@
   const CANCEL_ACTION = { method: "action_cancel", ctx: { open_cancel_delivery_wizard: true } };
 
   const REPORT_NAME = "sig_stock.stock_loading_report";
+  const REPORT_LANG = "fr";
   const SESSION_MSG = "Session expirée — reconnectez-vous puis réessayez";
 
   const STATE_LABEL = {
@@ -192,18 +193,28 @@
     return `<button type="button" class="gds-refresh-btn gds-tr-action-btn gds-tr-act-btn" data-tr-act="${act}" data-kind="${kind || ""}" data-pid="${pid}" title="${t}" aria-label="${t}">${icon}</button>`;
   }
 
-  function buttonsInner(pid, state) {
+  // Lien natif <a href download> — même principe que le bouton PDF des cartes « Bons de livraison » :
+  // aucun JS dans le clic, le navigateur télécharge directement (pas d'appel RPC préalable, pas de Blob en mémoire).
+  function pdfLinkHtml(pid, name, partner) {
+    const t = escHtml("Télécharger Bon de chargement VAN (PDF)");
+    // Préfixe de langue /fr/ inclus d'emblée : Odoo redirige sinon /report/... vers /fr/report/..., et cette
+  // redirection est renvoyée au navigateur (qui ouvre le lien Odoo au lieu de télécharger). Sans redirection → téléchargement direct.
+  const href = "/api/" + REPORT_LANG + "/report/pdf/" + REPORT_NAME + "/" + pid;
+    return `<a class="gds-refresh-btn gds-tr-action-btn gds-tr-act-btn gds-tr-pdf-link" data-kind="pdf" data-tr-pdf="${pid}" href="${href}" download="${escHtml(pdfFileName(partner, name))}" rel="noopener" title="${t}" aria-label="${t}">${ICON.pdf}</a>`;
+  }
+
+  function buttonsInner(pid, state, name, partner) {
     let h = "";
     const sa = STATE_ACTIONS[state];
     if (sa && can("tr_state")) h += btnHtml("state", pid, sa.label, ICON[sa.kind], sa.kind);
     if (CANCEL_STATES.includes(state) && can("tr_cancel")) h += btnHtml("cancel", pid, "Annuler le transfert", ICON.cancel, "cancel");
-    if (can("tr_pdf_bc")) h += btnHtml("pdf", pid, "Télécharger Bon de chargement VAN (PDF)", ICON.pdf, "pdf");
+    if (can("tr_pdf_bc")) h += pdfLinkHtml(pid, name, partner);
     return h;
   }
 
   // Utilisé par renderGdsTransferts (app.js) dans .gds-tr-action-cell
   function trActionsHtml(t) {
-    return `<span class="gds-tr-act" data-pid="${t.id}">${buttonsInner(t.id, t.state)}</span>`;
+    return `<span class="gds-tr-act" data-pid="${t.id}">${buttonsInner(t.id, t.state, t.name, t.partner_id ? t.partner_id[1] : "")}</span>`;
   }
 
   function applyRow(tr, rec) {
@@ -213,7 +224,7 @@
     const badge = tr.querySelector(".gds-tr-state");
     if (badge) { badge.textContent = st.label; badge.style.background = st.color + "20"; badge.style.color = st.color; }
     const box = tr.querySelector(".gds-tr-act");
-    if (box) box.innerHTML = buttonsInner(Number(tr.dataset.trPid), rec.state);
+    if (box) box.innerHTML = buttonsInner(Number(tr.dataset.trPid), rec.state, tr.dataset.trName || "", tr.dataset.trPartner || "");
   }
 
   // ── Verrouillage (anti double-clic) ───────────────────────
@@ -303,35 +314,6 @@
     return parts.join(" - ") + ".pdf";
   }
 
-  async function doPdf(tr, btn) {
-    if (!can("tr_pdf_bc")) return;
-    const pid = Number(tr.dataset.trPid), name = tr.dataset.trName || "";
-    const unlock = lock(tr, "pdf", btn); if (!unlock) return;
-    try {
-      let resp;
-      try {
-        resp = await fetch("/api/report/pdf/" + REPORT_NAME + "/" + pid, { credentials: "include" });
-      } catch (_) { throw new Error("Connexion impossible"); }
-      if (resp.status === 401 || resp.status === 403 || (resp.redirected && /\/web\/login/.test(resp.url))) throw new Error(SESSION_MSG);
-      const ct = (resp.headers.get("content-type") || "").toLowerCase();
-      if (!resp.ok) throw new Error("Rapport indisponible (HTTP " + resp.status + ")");
-      if (!ct.includes("application/pdf")) {
-        throw new Error(ct.includes("html") ? SESSION_MSG + " (réponse HTML reçue au lieu du PDF)" : "Réponse inattendue du serveur (pas un PDF)");
-      }
-      const blob = await resp.blob();
-      const head = await blob.slice(0, 5).text();
-      if (head !== "%PDF-") throw new Error("Fichier reçu invalide (pas un PDF)");
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = pdfFileName(tr.dataset.trPartner, name);
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
-      addNotif("✓ " + name + " — Bon de chargement téléchargé", "success");
-    } catch (e) {
-      addNotif("⚠ " + name + " : " + e.message, "error");
-    } finally { unlock(); }
-  }
-
   // ── Délégation d'événements (survit au re-rendu d'une ligne) ──
   document.addEventListener("click", e => {
     const btn = e.target.closest && e.target.closest("[data-tr-act]");
@@ -342,8 +324,18 @@
     const act = btn.dataset.trAct;
     if (act === "state") doState(tr, btn);
     else if (act === "cancel") doCancel(tr, btn);
-    else if (act === "pdf") doPdf(tr, btn);
   });
+
+  // Lien PDF : on laisse le navigateur télécharger (pas de preventDefault), on affiche seulement une info.
+  document.addEventListener("click", e => {
+    const a = e.target.closest && e.target.closest("a[data-tr-pdf]");
+    if (!a) return;
+    e.stopPropagation();   // empêche d'éventuels handlers de ligne d'intercepter le clic
+    if (typeof addNotif === "function") {
+      const tr = a.closest("tr[data-tr-pid]");
+      addNotif("⏳ " + (tr ? tr.dataset.trName : "") + " — Bon de chargement : téléchargement lancé (la génération peut prendre quelques secondes)", "info");
+    }
+  }, true);
 
   // ── Styles ────────────────────────────────────────────────
   const css = document.createElement("style");
@@ -352,6 +344,7 @@
     .gds-tr-act { display:inline-flex; gap:4px; align-items:center; }
     .gds-tr-table .gds-tr-act-btn { padding:3px 6px; line-height:0; justify-content:center;
       background:var(--bg3); color:var(--text2); }
+    a.gds-tr-pdf-link { display:inline-flex; align-items:center; text-decoration:none; cursor:pointer; }
     .gds-tr-act-btn svg { width:13px; height:13px; display:block; }
     .gds-tr-table .gds-tr-act-btn[data-kind="validate"] { color:#22c55e; }
     .gds-tr-table .gds-tr-act-btn[data-kind="confirm"],

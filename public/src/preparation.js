@@ -16,7 +16,7 @@
 //     { active: true|false, by, ts }   shared by all users. Node absent = active (existing warehouses keep working).
 //     Terminer (after the report is generated) wipes items + meta/charge and sets active=false in ONE atomic multi-path PATCH on the
 //     warehouse root; meta/mode and meta/view are never touched. active=false → every client shows the empty state.
-//     Nouvelle préparation: active=true + meta/charge/from = now (+ items wiped again, defensive), also ONE atomic PATCH.
+//     Nouvelle préparation: active=true + meta/charge/from = now, to = same day 23:59 (+ items wiped again, defensive), also ONE atomic PATCH.
 //
 // Out of scope (phase 2+): Chargement, Reste, print/PDF/XLSX, history,
 // finish/cancel.  See the "EXTENSION POINT" markers + GdsPrep2.ext / .on().
@@ -70,6 +70,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     refresh: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
     chevron: '<polyline points="6 9 12 15 18 9"/>',
     check:   '<polyline points="20 6 9 17 4 12"/>',
+    flag:    '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',
     x:       '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
     warn:    '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
     xcircle: '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>',
@@ -278,8 +279,8 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
       enterkeyhint="next" autocomplete="off" placeholder="${ph}" ${ro || dis ? "readonly" : ""} ${dis ? "tabindex=\"-1\"" : ""}>`;
     const cell = (k) => `<div class="gp2-ro gp2-dim" data-k="${k}">—</div>`;
     return `<div class="gp2-row${sz ? "" : " gp2-nosize"}" data-pid="${m.pid}" data-s="${esc(norm(m.name + " " + (m.full || "") + " " + m.code))}" data-nm="${esc(m.name)}">
-      <div class="gp2-name gp2-nmcol"><button type="button" class="gp2-truck" data-act="truck" data-pid="${m.pid}" title="Détail chargement" aria-label="Détail chargement" disabled>${ic("truck")}</button><button type="button" class="gp2-eye" data-act="roweye" aria-label="Masquer / afficher"></button><span class="gp2-nm" data-act="nmcard">${esc(m.name)}</span>
-        <span class="gp2-sub">${sz ? `<span class="gp2-sz">×${sz}</span>` : ""}<span class="gp2-who"></span><span class="gp2-stock"></span></span></div>
+      <div class="gp2-name gp2-nmcol"><button type="button" class="gp2-truck" data-act="truck" data-pid="${m.pid}" title="Détail chargement" aria-label="Détail chargement" disabled>${ic("truck")}</button><button type="button" class="gp2-truck gp2-hist" data-act="hist" data-pid="${m.pid}" title="Historique des modifications" aria-label="Historique des modifications" disabled>${ic("clock")}</button><button type="button" class="gp2-eye" data-act="roweye" aria-label="Masquer / afficher"></button><span class="gp2-nm" data-act="nmcard">${esc(m.name)}</span>
+        <span class="gp2-sub"><span class="gp2-who"></span><span class="gp2-sz">${sz ? `×${sz}` : ""}</span><span class="gp2-stock"></span></span></div>
       <div class="gp2-g gp2-g-prep">
         <label class="gp2-f gp2-cell">${inp("c", sz ? "0" : "—", !sz)}</label>
         <label class="gp2-f gp2-cell">${inp("u", "0")}</label></div>
@@ -387,6 +388,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     const it = item(pid), who = row.querySelector(".gp2-who");
     if (it.by && it.ts) { const d = new Date(it.ts); who.textContent = `${it.by} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; }
     else who.textContent = "";
+    const hb = row.querySelector(".gp2-hist"); if (hb) hb.disabled = !(it.by && it.ts);   // history button: active once the row was edited
     const nmc = row.querySelector(".gp2-nmcol");   // full name / editor / stock as tooltip (desktop); on phones the name opens a card
     if (nmc) nmc.title = [row.dataset.nm + (sz ? ` ×${sz}` : ""), who.textContent, st.textContent].filter(Boolean).join("\n");
     ext.rowExtras.forEach(x => { if (x.update) { try { x.update(pid, row); } catch (e) { console.error(e); } } });
@@ -454,7 +456,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     S.root && S.root.querySelectorAll(".gp2-in.gp2-err").forEach(i => { i.classList.remove("gp2-err"); i.title = ""; });
     paintStatus();
   }
-  function closeSessionModals() { closeCard(); closeTruck(); }   // the Terminer / Bons modals are closed by preparation-charge.js (event "session")
+  function closeSessionModals() { closeCard(); closeTruck(); closeHist(); }   // the Terminer / Bons modals are closed by preparation-charge.js (event "session")
 
   function paintSession() {
     const root = S.root && S.root.querySelector(".gp2-root"); if (!root) return;
@@ -485,7 +487,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     if (!sessionActive()) return;
     const by = userName();
     S.wiping = true;                                       // pending field saves wait (they are dropped on success, resumed on failure)
-    try { await fbPatch("", { "items": null, "meta/charge": null, "meta/session": { active: false, by, ts: { ".sv": "timestamp" } } }); }
+    try { await fbPatch("", { "items": null, "hist": null, "meta/charge": null, "meta/session": { active: false, by, ts: { ".sv": "timestamp" } } }); }
     finally { S.wiping = false; }
     S.items = {}; delete S.meta.charge; S.meta.session = { active: false, by, ts: Date.now() };
     syncSession();
@@ -493,14 +495,14 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
   async function startSession() {
     if (!canDo("prep_nouvelle") || sessionActive() || S.starting) return;
     S.starting = true; paintSession();
-    const by = userName(), from = nowLocalIso();
+    const by = userName(), from = nowLocalIso(), to = from.slice(0, 10) + "T23:59";   // défaut : maintenant → fin de la même journée (23:59)
     try {
       const r = await fetch(`${base()}/meta/session.json`); if (!r.ok) throw new Error("HTTP " + r.status);
       const cur = await r.json();
       if (cur && cur.active !== false) { S.meta.session = cur; syncSession(); notify(`Préparation déjà démarrée par ${cur.by || "un autre utilisateur"}`, "warning"); return; }
-      await fbPatch("", { "items": null, "meta/charge": { from, by, ts: { ".sv": "timestamp" } }, "meta/session": { active: true, by, ts: { ".sv": "timestamp" } } });
+      await fbPatch("", { "items": null, "hist": null, "meta/charge": { from, to, by, ts: { ".sv": "timestamp" } }, "meta/session": { active: true, by, ts: { ".sv": "timestamp" } } });
       const now = Date.now();
-      S.items = {}; S.meta.charge = { from, by, ts: now }; S.meta.session = { active: true, by, ts: now };
+      S.items = {}; S.meta.charge = { from, to, by, ts: now }; S.meta.session = { active: true, by, ts: now };
     } catch (e) { console.error("[Prep2] new session:", e); notify("Échec du démarrage de la préparation", "error"); }
     finally { S.starting = false; syncSession(); }
   }
@@ -723,7 +725,9 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     const val = f === "c" ? getC(pid) : getU(pid);
     S.inflight++; paintStatus();
     try {
-      await fbPatch(`/items/${pid}`, { [f]: val, ts: { ".sv": "timestamp" }, by: userName() });   // only the edited field
+      const by = userName(), ts = { ".sv": "timestamp" }, hk = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      await fbPatch("", { [`items/${pid}/${f}`]: val, [`items/${pid}/ts`]: ts, [`items/${pid}/by`]: by,   // only the edited field
+                          [`hist/${pid}/${hk}`]: { f, c: getC(pid), u: getU(pid), by, ts } });           // + one history entry
       S.saveErr = false;
       emit("saved", { pid, field: f, value: val });
     } catch (e) {
@@ -824,6 +828,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
       const a = b.dataset.act;
       if (a === "cat") { const sec = b.closest(".gp2-cat"), cat = sec.dataset.cat; S.collapsed[cat] = !S.collapsed[cat]; sec.classList.toggle("collapsed", S.collapsed[cat]); lsSet(`gp2_collapsed_${S.wh}`, S.collapsed); paintToggleAll(); }
       else if (a === "truck") { if (!b.disabled) showTruck(+b.dataset.pid); }
+      else if (a === "hist") { if (!b.disabled) showHist(+b.dataset.pid); }
       else if (a === "toggleall") setAllCollapsed(!allCollapsed());
       else if (a === "newprep") startSession();
       else if (a === "mode")  switchMode(b.dataset.m);
@@ -929,6 +934,34 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
       </tbody><tfoot><tr><td colspan="2">Total</td><td class="n">${C(tot)}</td><td class="n">${U(tot)}</td><td colspan="2"></td></tr></tfoot></table></div>`;
   }
   let truckPid = null;
+  // ── edit history of one product (who changed which quantity, when) ──
+  let histPid = null;
+  function closeHist() { histPid = null; byId("gp2Hist")?.remove(); }
+  async function showHist(pid) {
+    closeHist(); histPid = pid;
+    const nm = S.rows[pid]?.querySelector(".gp2-nm")?.textContent || pid;
+    const m = document.createElement("div"); m.id = "gp2Hist"; m.className = "gp2m";
+    m.innerHTML = `<div class="gp2m-box" role="dialog"><div class="gp2m-h"><span>Historique — ${esc(nm)}</span><button type="button" class="gp2m-x" data-mclose aria-label="Fermer">${ic("x")}</button></div><div class="gp2m-b"><div class="gp2m-none">…</div></div></div>`;
+    m.addEventListener("click", (e) => { if (e.target === m || e.target.closest("[data-mclose]")) closeHist(); });
+    document.body.appendChild(m);
+    let list = [];
+    try { const r = await fetch(`${base()}/hist/${pid}.json`); if (r.ok) { const d = await r.json(); list = Object.values(d || {}).filter(x => x && x.ts); } }
+    catch (e) { console.error("[Prep2] hist:", e); }
+    if (histPid !== pid || !byId("gp2Hist")) return;                  // closed / another product opened meanwhile
+    list.sort((a, b) => a.ts - b.ts);
+    const last = { c: 0, u: 0 }, p2 = (n) => String(n).padStart(2, "0"), today = new Date().toDateString();
+    const rows = list.map(e => {
+      const v = Number(e.f === "c" ? e.c : e.u) || 0, d = v - last[e.f]; last[e.f] = v;
+      const t = new Date(e.ts), hm = `${p2(t.getHours())}:${p2(t.getMinutes())}:${p2(t.getSeconds())}`;
+      const when = t.toDateString() === today ? hm : `${p2(t.getDate())}/${p2(t.getMonth() + 1)} ${hm}`;
+      return `<tr><td>${when}</td><td>${esc(e.by || "—")}</td><td>${e.f === "c" ? "Colisage" : "Unités"}</td><td class="n b">${fmt(v)}</td><td class="n">${d > 0 ? "+" : d < 0 ? "−" : ""}${d ? fmt(Math.abs(d)) : "0"}</td></tr>`;
+    }).reverse().join("");
+    const body = m.querySelector(".gp2m-b");
+    if (rows) body.innerHTML = `<div class="gp2m-wrap"><table class="gp2m-t"><thead><tr><th>Heure</th><th>Utilisateur</th><th>Champ</th><th class="n">Valeur</th><th class="n">Écart</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    else { const it = item(pid); body.innerHTML = it.by && it.ts ? `<div class="gp2-cl"><span>Dernière modification</span><b>${esc(it.by)} ${p2(new Date(it.ts).getHours())}:${p2(new Date(it.ts).getMinutes())}</b></div>` : `<div class="gp2m-none">Aucune modification</div>`; }
+  }
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeHist(); });
+
   function closeTruck() { truckPid = null; document.getElementById("gp2Modal")?.remove(); }
   function showTruck(pid) {
     truckPid = pid;

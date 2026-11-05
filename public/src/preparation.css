@@ -80,11 +80,16 @@
 .gp2-row { display:flex; align-items:stretch; width:100%; background:var(--bg2); border-bottom:1px solid var(--border); }
 .gp2-row.gp2-has { background:#f0fdf8; }
 .gp2-row.gp2-over { box-shadow:inset 3px 0 0 var(--orange); }
+/* hover highlight (mouse only — the name column inherits the row background) */
+@media (hover:hover) { .gp2-row:hover { background:var(--bg3); } .gp2-row.gp2-has:hover { background:#d8f5e8; } }
 .gp2-name { background:inherit; padding:0 6px 0 6px; display:flex; flex-direction:row; align-items:center; gap:5px; border-right:1px solid var(--border); }
 .gp2-nm { flex:1 1 auto; min-width:0; font-size:13px; font-weight:600; line-height:1.2; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .gp2-sub { flex:none; display:flex; align-items:baseline; white-space:nowrap; font-size:10px; color:var(--text3); }
 .gp2-sub:empty { display:none; }
-.gp2-sub > .gp2-who:not(:empty)::before, .gp2-sub > .gp2-stock:not(:empty)::before { content:"·"; margin:0 4px; }
+/* fixed "virtual" columns: editor name (left) | ×colisage (fixed width, always aligned) | stock */
+.gp2-who { flex:none; width:84px; padding-right:6px; box-sizing:border-box; overflow:hidden; text-overflow:ellipsis; text-align:right; }
+.gp2-sz { flex:none; width:36px; text-align:right; font-weight:600; color:var(--text2); font-variant-numeric:tabular-nums; }
+.gp2-sub > .gp2-stock:not(:empty)::before { content:"·"; margin:0 4px; }
 @media (max-width: 719px) { .gp2-who, .gp2-stock { display:none; } }   /* phone: only name + ×colisage on the line; editor + stock live in the name card */
 .gp2-stock { color:var(--text2); font-variant-numeric:tabular-nums; }
 .gp2-over .gp2-stock { color:var(--orange); font-weight:700; }

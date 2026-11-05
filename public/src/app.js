@@ -1672,9 +1672,10 @@ Object.entries(data.chargeData || {}).forEach(([pid, ch]) => {
     // تحديث الحقول النصية إن وُجدت
     const fromEl = document.getElementById("gdsPrepChargeFrom");
     const toEl   = document.getElementById("gdsPrepChargeTo");
+    const _endOfDayLocal = () => { const n=new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}T23:59`; };
     const _nowLocal = () => { const n=new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}-${String(n.getDate()).padStart(2,"0")}T${String(n.getHours()).padStart(2,"0")}:${String(n.getMinutes()).padStart(2,"0")}`; };
 if (fromEl) fromEl.value = _gdsPrepFmtDt(_gdsPrep.chargeFrom || _nowLocal());
-if (toEl)   toEl.value   = _gdsPrepFmtDt(_gdsPrep.chargeTo   || _nowLocal());
+if (toEl)   toEl.value   = _gdsPrepFmtDt(_gdsPrep.chargeTo   || _endOfDayLocal());
   } catch(e) { console.error("[GdsPrep] load:", e); }
 }
 
@@ -1739,7 +1740,7 @@ async function renderGdsPreparation() {
   const nowDt = new Date(); nowDt.setSeconds(0,0);
 const dtDefault = `${nowDt.getFullYear()}-${String(nowDt.getMonth()+1).padStart(2,"0")}-${String(nowDt.getDate()).padStart(2,"0")}T${String(nowDt.getHours()).padStart(2,"0")}:${String(nowDt.getMinutes()).padStart(2,"0")}`;
   const dtStored   = _gdsPrep.chargeFrom || dtDefault;
-const dtStoredTo = _gdsPrep.chargeTo   || dtDefault;
+const dtStoredTo = _gdsPrep.chargeTo   || `${dtDefault.slice(0,10)}T23:59`;
 
   el.innerHTML = `<div class="gds-refresh-bar" style="padding:8px 10px;flex-wrap:wrap;gap:6px;">
     ${hasData ? (

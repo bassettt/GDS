@@ -520,7 +520,7 @@
         <button type="button" class="gp2-btn gp2c-refbtn" id="gcRefreshBtn" data-perm="prep_charge_actualiser" data-gc="refresh" title="Actualiser le chargement depuis Odoo">Actualiser<span class="gp2c-sync" id="gcSync"></span></button>
         <button type="button" class="gp2-btn" data-gc="bons" id="gcBonsBtn">Bons</button>
         <button type="button" class="gp2-btn" data-perm="prep_rapport" data-gc="report" id="gcReportBtn" title="Rapport — télécharger un brouillon Excel (rien n'est effacé)" aria-label="Rapport — télécharger un brouillon Excel">${A.ic("filedown")} Rapport</button>
-        <button type="button" class="gp2-btn" data-perm="prep_terminer" data-gc="finish" id="gcFinishBtn" title="Terminer — télécharger le rapport Excel" aria-label="Terminer — télécharger le rapport Excel">${A.ic("download")} Terminer</button>
+        <button type="button" class="gp2-btn" data-perm="prep_terminer" data-gc="finish" id="gcFinishBtn" title="Terminer — télécharger le rapport Excel" aria-label="Terminer — télécharger le rapport Excel">${A.ic("flag")} Terminer</button>
         <span class="gp2c-msg" id="gcStatus" hidden></span>
         <div class="gp2c-alert" id="gcAlert" hidden></div>
         <div class="gp2c-toast" id="gcToast" hidden></div>
@@ -852,7 +852,7 @@
         ${data.ready ? "" : `<div class="gp2-fwarn">Chargement non actualisé : les colonnes Chargement et Reste seront vides.</div>`}
         ${ml.pt < 9 ? `<div class="gp2-fwarn">Impression de « Mouvement » : ${ml.R} lignes sur une seule page A4, police réduite à environ ${String(ml.pt).replace(".", ",")} pt.</div>` : ""}
         <div class="gp2-fdanger">${A.ic("warn")}<span>Après le téléchargement, <b>toutes les données de préparation seront supprimées pour tous les utilisateurs</b> : quantités saisies, période, bons exclus et bons hors date. Cette action est irréversible.</span></div></div>
-      <div class="gp2m-f"><button type="button" class="gp2-btn" data-gc="finclose">Annuler</button><button type="button" class="gp2-btn gp2-vsave" data-gc="finok">${A.ic("download")} Confirmer</button></div></div>`;
+      <div class="gp2m-f"><button type="button" class="gp2-btn" data-gc="finclose">Annuler</button><button type="button" class="gp2-btn gp2-vsave" data-gc="finok">${A.ic("check")} Confirmer</button></div></div>`;
     m.addEventListener("click", (e) => {
       if (e.target === m) { closeFinish(); return; }
       const b = e.target.closest("[data-gc]"); if (!b) return;
