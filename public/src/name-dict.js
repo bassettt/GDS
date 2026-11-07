@@ -237,8 +237,6 @@
     if (!v.trim()) { o.textContent = "—"; o.classList.remove("nd-same"); return; }
     const r = UI.fn ? UI.fn(v) : v; o.textContent = r; o.classList.toggle("nd-same", r === v);
   }
-  const customNames = () => { try { return (typeof _getProdNamesMap === "function" && _getProdNamesMap()) || {}; } catch (_) { return {}; } };
-
   function renderSample() {
     const el = $("ndSample"); if (!el) return;
     if (UI.catErr) { el.innerHTML = `<div class="nd-empty">Catalogue Odoo indisponible.</div>`; return; }
@@ -252,9 +250,8 @@
   // Deux produits dont l'abrégé devient identique (alors que leurs noms d'origine diffèrent) → alerte
   function dupGroups() {
     if (!UI.catalog) return null;
-    const fn = UI.fn || make(UI.draft), cust = customNames(), g = new Map();
+    const fn = UI.fn || make(UI.draft), g = new Map();
     UI.catalog.forEach((p) => {
-      if (cust[p.id] && cust[p.id].nom) return;                  // nom personnalisé prioritaire : non concerné
       const s = fn(p.full), k = s.toLowerCase();
       (g.get(k) || g.set(k, { s, items: [] }).get(k)).items.push(p);
     });
@@ -328,12 +325,12 @@
       <div class="nd-bar" style="margin-top:8px"><button type="button" class="nd-btn nd-pri" data-act="impapply" ${UI.imp.fatal || (!P.added.length && !P.updated.length && P.mode !== "replace") ? "disabled" : ""}>Appliquer au brouillon</button>
         <button type="button" class="nd-btn" data-act="impcancel">Annuler l'import</button></div></div>`;
   }
-  function applyImp() {
+  async function applyImp() {
     if (!UI.imp || UI.imp.fatal) return;
     const P = impPreview();
     if (P.mode === "replace") {
       if (!P.added.length) { status("Fichier sans règle valide : remplacement refusé", "err"); return; }
-      if (!confirm(`Remplacer les ${Object.keys(UI.draft.rules).length} règles actuelles par ${P.added.length} règles du fichier ?`)) return;
+      if (!(await appConfirm(`Remplacer les ${Object.keys(UI.draft.rules).length} règles actuelles par ${P.added.length} règles du fichier ?`, { title: "Remplacer les règles", okText: "Remplacer", danger: true }))) return;
       UI.draft.rules = {};
     }
     P.added.forEach((it) => { UI.draft.rules[newId()] = { from: it.from, to: it.to, on: true }; });
@@ -363,7 +360,7 @@
     try {
       const url = `${_FB_DB_URL}/${FB_KEY}.json`;
       const cur = await (await fetch(url, { cache: "no-store" })).json().catch(() => null);
-      if (cur && cur.ts && cur.ts !== UI.baseTs && !confirm(`Le dictionnaire a été modifié par ${cur.by || "un autre utilisateur"} depuis l'ouverture. Écraser ses modifications ?`)) { UI.saving = false; paintSave(); status("Enregistrement annulé"); return; }
+      if (cur && cur.ts && cur.ts !== UI.baseTs && !(await appConfirm(`Le dictionnaire a été modifié par ${cur.by || "un autre utilisateur"} depuis l'ouverture. Écraser ses modifications ?`, { title: "Conflit de modification", okText: "Écraser", danger: true }))) { UI.saving = false; paintSave(); status("Enregistrement annulé"); return; }
       const payload = { rules, opts: { stripRef: !!UI.draft.opts.stripRef, stripParens: !!UI.draft.opts.stripParens }, by: userName(), ts: Date.now() };
       const r = await fetch(url, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       if (!r.ok) throw new Error("HTTP " + r.status);
@@ -376,8 +373,8 @@
     }
   }
 
-  function cancel() {
-    if (isDirty() && !confirm("Abandonner les modifications non enregistrées ?")) return;
+  async function cancel() {
+    if (isDirty() && !(await appConfirm("Abandonner les modifications non enregistrées ?", { title: "Modifications non enregistrées", okText: "Abandonner", danger: true }))) return;
     UI.draft = null; UI.imp = null;
     if (typeof _closeSettingsModal === "function") _closeSettingsModal("modalNameDict");
   }
@@ -404,7 +401,7 @@
     m.addEventListener("focusout", (e) => {                       // re-trie le tableau seulement quand on quitte la zone d'édition
       const box = $("ndRules"); if (box && box.contains(e.target) && !box.contains(e.relatedTarget)) { renderRules(); }
     });
-    m.addEventListener("click", (e) => {
+    m.addEventListener("click", async (e) => {
       const b = e.target.closest && e.target.closest("[data-act]"); if (!b) return;
       const a = b.dataset.act;
       if (a === "add") {
@@ -414,7 +411,7 @@
         const row = b.closest(".nd-row"); if (row) { delete UI.draft.rules[row.dataset.id]; renderRules(); paintSave(); schedulePreview(); }
       } else if (a === "export") exportXlsx();
       else if (a === "reset") {
-        if (!confirm("Remplacer le brouillon par le dictionnaire par défaut ? (non enregistré tant que vous ne cliquez pas sur Enregistrer)")) return;
+        if (!(await appConfirm("Remplacer le brouillon par le dictionnaire par défaut ? (non enregistré tant que vous ne cliquez pas sur Enregistrer)", { title: "Dictionnaire par défaut", okText: "Remplacer" }))) return;
         const d = defaultData(); UI.draft = { rules: d.rules, opts: { ...d.opts } }; UI.imp = null; buildShell(); renderRules(); refreshPreview(); paintSave();
       } else if (a === "impapply") applyImp();
       else if (a === "impcancel") { UI.imp = null; renderImp(); }

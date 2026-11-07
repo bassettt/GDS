@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="fr" dir="ltr">
 <head>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
   <meta name="theme-color" content="#0f1117"/>
@@ -274,17 +273,7 @@
             <div class="settings-card-icon">⚙️</div>
             <div class="settings-card-text">
               <div class="settings-card-title">Comportement & Validation</div>
-              <div class="settings-card-desc">Rapport, débogage, règles de saisie</div>
-            </div>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;color:var(--text3)"><polyline points="9 18 15 12 9 6"/></svg>
-          </div>
-
-          <!-- Card: Impression Rapport PDF -->
-          <div class="settings-card" onclick="_openSettingsModal('modalRapport')">
-            <div class="settings-card-icon">📄</div>
-            <div class="settings-card-text">
-              <div class="settings-card-title">Impression Rapport PDF</div>
-              <div class="settings-card-desc">Colonnes affichées, mise en page, tailles de police</div>
+              <div class="settings-card-desc">Mode débogage (dépassement du stock)</div>
             </div>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;color:var(--text3)"><polyline points="9 18 15 12 9 6"/></svg>
           </div>
@@ -323,12 +312,12 @@
             </div>
           </div>
 
-          <!-- Card: Noms & Ordre des produits -->
+          <!-- Card: Ordre des produits -->
           <div class="settings-card" onclick="_openSettingsModal('modalProduitNames'); _initProduitNamesModal();">
             <div class="settings-card-icon">🏷️</div>
             <div class="settings-card-text">
-              <div class="settings-card-title">Noms & Ordre des produits</div>
-              <div class="settings-card-desc">Importer un fichier Excel pour personnaliser les noms et l'ordre</div>
+              <div class="settings-card-title">Ordre des produits</div>
+              <div class="settings-card-desc">Ordre d'affichage des produits (import Excel)</div>
             </div>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;color:var(--text3)"><polyline points="9 18 15 12 9 6"/></svg>
           </div>
@@ -456,10 +445,6 @@
                 <label class="toggle-label">Afficher colonne "Total U"</label>
                 <label class="toggle-switch"><input type="checkbox" id="toggleTotalU"><span class="toggle-slider"></span></label>
               </div>
-              <div class="toggle-row">
-                <label class="toggle-label">Afficher colonne "qty" (Préparation / Chargement / Reste)</label>
-                <label class="toggle-switch"><input type="checkbox" id="togglePrepQty"><span class="toggle-slider"></span></label>
-              </div>
               </div>
             <div style="display:flex;align-items:center;gap:10px;margin-top:8px;">
               <label style="font-size:11px;color:var(--text2)">Mise en page</label>
@@ -467,6 +452,14 @@
                 <option value="2">2 colonnes</option>
                 <option value="1">1 colonne</option>
               </select>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap;">
+              <label for="printModeDefault" style="font-size:11px;color:var(--text2)">Mode d'impression par défaut</label>
+              <select id="printModeDefault" style="font-size:11px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);cursor:pointer;">
+                <option value="gds">App</option>
+                <option value="odoo">Odoo</option>
+              </select>
+              <span style="font-size:10px;color:var(--text3);">Transferts — appliqué à tous (enregistré immédiatement)</span>
             </div>
             <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;">
               <div>
@@ -499,15 +492,6 @@
           <div class="smodal-body">
             <div style="margin-top:6px;">
               <div class="toggle-row">
-                <label class="toggle-label">Afficher le bouton de recherche dans la préparation</label>
-                <label class="toggle-switch"><input type="checkbox" id="togglePrepSearch" checked><span class="toggle-slider"></span></label>
-              </div>
-              <div class="toggle-row">
-                <label class="toggle-label">Rapport : exiger vérification complète avant affichage</label><!-- Card: Ordre des catégories -->
-          
-                <label class="toggle-switch"><input type="checkbox" id="toggleRapportCheck"><span class="toggle-slider"></span></label>
-              </div>
-              <div class="toggle-row">
                 <label class="toggle-label">Mode débogage : autoriser une quantité supérieure au stock</label>
                 <label class="toggle-switch"><input type="checkbox" id="toggleAllowOverstock"><span class="toggle-slider"></span></label>
               </div>
@@ -515,77 +499,6 @@
           </div>
           <div class="smodal-footer">
             <button class="gds-refresh-btn" style="background:var(--accent);" onclick="_closeSettingsModal('modalComportement')">Fermer</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Modal: Impression Rapport PDF -->
-      <div class="smodal-overlay" id="modalRapport">
-        <div class="smodal-box">
-          <div class="smodal-header">
-            <span class="smodal-title">📄 Impression Rapport PDF</span>
-            <button class="smodal-close" onclick="_closeSettingsModal('modalRapport')">✕</button>
-          </div>
-          <div class="smodal-body">
-            <p class="settings-hint" style="margin:0 0 8px;">Colonnes à afficher :</p>
-            <div style="margin-bottom:10px;">
-              <div class="toggle-row">
-                <label class="toggle-label">Prép Colis</label>
-                <label class="toggle-switch"><input type="checkbox" id="rptColPrepCarton" checked><span class="toggle-slider"></span></label>
-              </div>
-              <div class="toggle-row">
-                <label class="toggle-label">Prép U</label>
-                <label class="toggle-switch"><input type="checkbox" id="rptColPrepUnite" checked><span class="toggle-slider"></span></label>
-              </div>
-              <div class="toggle-row">
-                <label class="toggle-label">Charg Colis</label>
-                <label class="toggle-switch"><input type="checkbox" id="rptColChargCarton" checked><span class="toggle-slider"></span></label>
-              </div>
-              <div class="toggle-row">
-                <label class="toggle-label">Charg U</label>
-                <label class="toggle-switch"><input type="checkbox" id="rptColChargUnite" checked><span class="toggle-slider"></span></label>
-              </div>
-              <div class="toggle-row">
-                <label class="toggle-label">Reste Colis</label>
-                <label class="toggle-switch"><input type="checkbox" id="rptColResteCarton" checked><span class="toggle-slider"></span></label>
-              </div>
-              <div class="toggle-row">
-                <label class="toggle-label">Reste U</label>
-                <label class="toggle-switch"><input type="checkbox" id="rptColResteUnite" checked><span class="toggle-slider"></span></label>
-              </div>
-              <div class="toggle-row">
-                <label class="toggle-label">✓ Vérification</label>
-                <label class="toggle-switch"><input type="checkbox" id="rptColCheck" checked><span class="toggle-slider"></span></label>
-              </div>
-              <div class="toggle-row">
-                <label class="toggle-label">Écart</label>
-                <label class="toggle-switch"><input type="checkbox" id="rptColEcart" checked><span class="toggle-slider"></span></label>
-              </div>
-            </div>
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-              <label style="font-size:11px;color:var(--text2);">Mise en page</label>
-              <select id="rptColumns" style="font-size:11px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);cursor:pointer;">
-                <option value="1">1 colonne</option>
-                <option value="2">2 colonnes (suite)</option>
-              </select>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;">
-              <div>
-                <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:2px;">Taille produit (px)</label>
-                <input type="number" id="rptFontProduct" min="7" max="16" value="10" style="width:60px;font-size:11px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);"/>
-              </div>
-              <div>
-                <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:2px;">Taille quantités (px)</label>
-                <input type="number" id="rptFontQty" min="7" max="20" value="11" style="width:60px;font-size:11px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);"/>
-              </div>
-              <div>
-                <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:2px;">Hauteur ligne (px)</label>
-                <input type="number" id="rptRowPadding" min="0" max="8" value="3" style="width:60px;font-size:11px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text1);"/>
-              </div>
-            </div>
-          </div>
-          <div class="smodal-footer">
-            <button class="gds-refresh-btn" style="background:var(--accent);" onclick="_closeSettingsModal('modalRapport')">Fermer</button>
           </div>
         </div>
       </div>
@@ -665,15 +578,15 @@
         </div>
       </div>
 
-      <!-- Modal: Noms & Ordre des produits -->
+      <!-- Modal: Ordre des produits -->
       <div class="smodal-overlay" id="modalProduitNames">
         <div class="smodal-box">
           <div class="smodal-header">
-            <span class="smodal-title">🏷️ Noms & Ordre des produits</span>
+            <span class="smodal-title">🏷️ Ordre des produits</span>
             <button class="smodal-close" onclick="_closeSettingsModal('modalProduitNames')">✕</button>
           </div>
           <div class="smodal-body">
-            <p class="settings-hint">Téléchargez le modèle, modifiez les noms et l'ordre, puis importez le fichier.</p>
+            <p class="settings-hint">Téléchargez le modèle, modifiez l'ordre, puis importez le fichier.</p>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
               <button class="gds-refresh-btn" id="btnDownloadProdTemplate" style="background:var(--accent);" onclick="_downloadProdTemplate()">
                 ⬇ Télécharger le modèle
@@ -732,6 +645,7 @@
 
   <!-- Scripts — order matters -->
   <script src="/src/lib/xlsx.full.min.js"></script>
+<script src="/src/ui-dialog.js"></script>
 <script src="/src/storage.js"></script>
 <script src="/src/utils.js"></script>
 <script src="/src/renderer.js"></script>

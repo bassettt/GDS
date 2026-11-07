@@ -1,9 +1,8 @@
 // ============================================================
 // src/preparation.js — Preparation v2 (PHASE 1: saisie only)
 // ------------------------------------------------------------
-// Standalone module. Replaces the legacy tab by overriding the global
-// renderGdsPreparation() — legacy code stays untouched in app.js and is
-// reachable again with:  localStorage.setItem("gds_prep_v2", "0")
+// Standalone module. Provides the global renderGdsPreparation() used by
+// the Préparation tab (gdsShowTab in app.js).
 //
 // Firebase node:  wafa_gds_prep2_{warehouseId}
 //   meta  : { mode: "odoo"|"libre", modeBy, modeTs }
@@ -16,7 +15,7 @@
 //     { active: true|false, by, ts }   shared by all users. Node absent = active (existing warehouses keep working).
 //     Terminer (after the report is generated) wipes items + meta/charge and sets active=false in ONE atomic multi-path PATCH on the
 //     warehouse root; meta/mode and meta/view are never touched. active=false → every client shows the empty state.
-//     Nouvelle préparation: active=true + meta/charge/from = now, to = same day 23:59 (+ items wiped again, defensive), also ONE atomic PATCH.
+//     Nouvelle préparation: active=true + meta/charge/from = now, to = same day 23:59:59 (+ items wiped again, defensive), also ONE atomic PATCH.
 //
 // Out of scope (phase 2+): Chargement, Reste, print/PDF/XLSX, history,
 // finish/cancel.  See the "EXTENSION POINT" markers + GdsPrep2.ext / .on().
@@ -24,12 +23,9 @@
 (function () {
   "use strict";
 
-  const FLAG     = "gds_prep_v2";      // "0" → legacy tab, anything else → v2
   const DEBOUNCE = 500;                // ms, per edited field
   const MAX_VAL  = 999999;
   const CATALOG_TTL = 10 * 60 * 1000;  // re-fetch Odoo catalogue after 10 min
-
-  const legacyRender = window.renderGdsPreparation; // keep the old one
 
   // ── state ──────────────────────────────────────────────────
   const S = {
@@ -62,7 +58,6 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
   const base  = () => `${_FB_DB_URL}/wafa_gds_prep2_${envPart()}${S.wh}`;
   const userName = () => AppAuth.currentUser?.username || AppAuth.currentUser?.displayName || "inconnu";
   const notify = (m, t) => { try { if (typeof addNotif === "function") addNotif(m, t); else console.warn(m); } catch (_) {} };
-  const v2Enabled = () => { try { return localStorage.getItem(FLAG) !== "0"; } catch (_) { return true; } };
 
   // ── inline SVG icons (no emoji / text symbols in the UI) ───
   const ICONS = {
@@ -94,7 +89,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     if (!role || typeof _permCache === "undefined" || !_permCache) return undefined;
     return _decodePerm(_permCache["gds_preparation"]?.[role]);
   }
-  // Saisie: admin, or role holding prep_modifier (unconfigured role → allowed, like legacy)
+  // Saisie: admin, or role holding prep_modifier (unconfigured role → allowed)
   function canEnter() {
     if (isAdmin()) return true;
     const l = permList();
@@ -137,7 +132,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     if (pids.length) {
       const pk = await rpc("product.packaging", "search_read",
         [[["product_id", "in", pids]]], { fields: ["product_id", "qty"], limit: 20000 });
-      pk.forEach(x => { if (x.product_id && x.qty > 0) size[x.product_id[0]] = Math.round(x.qty); }); // last wins (as legacy)
+      pk.forEach(x => { if (x.product_id && x.qty > 0) size[x.product_id[0]] = Math.round(x.qty); }); // last wins
     }
     S.raw = prods; S.size = size; S.catalogAt = Date.now();
   }
@@ -255,7 +250,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
       const cat = p.categ_id ? p.categ_id[1] : "Autre";
       (byCat[cat] || (byCat[cat] = [])).push({
         pid: p.id, code: p.default_code || "",
-        name: _productDisplayName(p, { useCustom: true, short: true }),   // affichage : personnalisé > dictionnaire > Odoo
+        name: _productDisplayName(p, { short: true }),   // affichage : dictionnaire > Odoo
         full: _productOdooName(p),                                         // nom d'origine : la recherche couvre les deux
         order: _productCustomOrder(String(p.id)),
       });
@@ -277,12 +272,12 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     const sz = sizeOf(m.pid), ro = !canEnter();
     const inp = (f, ph, dis) => `<input class="gp2-in" data-pid="${m.pid}" data-f="${f}" type="text" inputmode="numeric" pattern="[0-9]*"
       enterkeyhint="next" autocomplete="off" placeholder="${ph}" ${ro || dis ? "readonly" : ""} ${dis ? "tabindex=\"-1\"" : ""}>`;
-    const cell = (k) => `<div class="gp2-ro gp2-dim" data-k="${k}">—</div>`;
+    const cell = (k) => `<div class="gp2-ro gp2-dim" data-k="${k}">0</div>`;
     return `<div class="gp2-row${sz ? "" : " gp2-nosize"}" data-pid="${m.pid}" data-s="${esc(norm(m.name + " " + (m.full || "") + " " + m.code))}" data-nm="${esc(m.name)}">
       <div class="gp2-name gp2-nmcol"><button type="button" class="gp2-truck" data-act="truck" data-pid="${m.pid}" title="Détail chargement" aria-label="Détail chargement" disabled>${ic("truck")}</button><button type="button" class="gp2-truck gp2-hist" data-act="hist" data-pid="${m.pid}" title="Historique des modifications" aria-label="Historique des modifications" disabled>${ic("clock")}</button><button type="button" class="gp2-eye" data-act="roweye" aria-label="Masquer / afficher"></button><span class="gp2-nm" data-act="nmcard">${esc(m.name)}</span>
         <span class="gp2-sub"><span class="gp2-who"></span><span class="gp2-sz">${sz ? `×${sz}` : ""}</span><span class="gp2-stock"></span></span></div>
       <div class="gp2-g gp2-g-prep">
-        <label class="gp2-f gp2-cell">${inp("c", sz ? "0" : "—", !sz)}</label>
+        <label class="gp2-f gp2-cell">${inp("c", "0", !sz)}</label>
         <label class="gp2-f gp2-cell">${inp("u", "0")}</label></div>
       <div class="gp2-g gp2-g-charge">${cell("chC")}${cell("chU")}</div>
       <div class="gp2-g gp2-g-reste">${cell("rsC")}${cell("rsU")}</div>
@@ -495,7 +490,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
   async function startSession() {
     if (!canDo("prep_nouvelle") || sessionActive() || S.starting) return;
     S.starting = true; paintSession();
-    const by = userName(), from = nowLocalIso(), to = from.slice(0, 10) + "T23:59";   // défaut : maintenant → fin de la même journée (23:59)
+    const by = userName(), from = nowLocalIso() + ":00", to = from.slice(0, 10) + "T23:59:59";   // défaut : maintenant → fin de la même journée (23:59:59)
     try {
       const r = await fetch(`${base()}/meta/session.json`); if (!r.ok) throw new Error("HTTP " + r.status);
       const cur = await r.json();
@@ -646,7 +641,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
   function cancelView() { S.draft = null; applyVisibility(); renderViewPanel(); }
   async function saveView() {
     if (!S.draft || !canView() || !viewDirty()) return;
-    if (!confirm("Appliquer cet affichage des produits pour tous les utilisateurs ?")) return;
+    if (!(await appConfirm("Appliquer cet affichage des produits pour tous les utilisateurs ?", { title: "Affichage des produits", okText: "Appliquer" }))) return;
     const d = S.draft, free = d.mode === "free", hn = free && Object.keys(d.hidden).length, sn = free && Object.keys(d.shown).length;
     const body = { mode: d.mode, base: free ? d.base : null, hidden: hn ? d.hidden : null, shown: sn ? d.shown : null, by: userName(), ts: { ".sv": "timestamp" } };
     const nv = { mode: d.mode, by: userName(), ts: Date.now() };
@@ -782,9 +777,38 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     if (nx) { nx.focus(); nx.select?.(); }
   }
 
+  // Excel-style arrow navigation between quantity cells. The cell list is rebuilt from the DOM on every key press.
+  function arrowNav(e) {
+    const k = e.key, inp = e.target;
+    if (k !== "ArrowDown" && k !== "ArrowUp" && k !== "ArrowLeft" && k !== "ArrowRight") return;
+    if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+    const row = inp.closest(".gp2-row"); if (!row || !S.root) return;
+    const navOk = (x) => !x.readOnly && !x.disabled && x.getAttribute("tabindex") !== "-1" && x.offsetParent !== null;
+    let nx = null;
+    if (k === "ArrowDown" || k === "ArrowUp") {
+      const rows = [...S.root.querySelectorAll(".gp2-row")].filter(r => r === row || r.offsetParent !== null);
+      const step = k === "ArrowDown" ? 1 : -1;
+      for (let i = rows.indexOf(row) + step; i >= 0 && i < rows.length; i += step) {
+        const c = [...rows[i].querySelectorAll(".gp2-in")].find(x => x.dataset.f === inp.dataset.f && navOk(x));
+        if (c) { nx = c; break; }
+      }
+    } else {
+      const fwd = k === "ArrowRight", len = inp.value.length, a = inp.selectionStart, b = inp.selectionEnd;
+      const all = a === 0 && b === len, atEdge = fwd ? (a === len && b === len) : (a === 0 && b === 0);
+      if (!all && !atEdge) return;
+      const cells = [...row.querySelectorAll(".gp2-in")].filter(x => x === inp || navOk(x));
+      nx = cells[cells.indexOf(inp) + (fwd ? 1 : -1)] || null;
+    }
+    if (!nx) return;
+    e.preventDefault();
+    onCommit(inp);
+    nx.focus(); nx.select?.();
+    nx.scrollIntoView?.({ block: "nearest" });
+  }
+
   async function switchMode(m) {
     if (!canSwitchMode() || m === mode()) return;
-    if (!confirm(`Passer en mode ${m === "libre" ? "Libre (sans stock)" : "Odoo (avec contrôle du stock)"} pour tous les utilisateurs ?`)) return;
+    if (!(await appConfirm(`Passer en mode ${m === "libre" ? "Libre (sans stock)" : "Odoo (avec contrôle du stock)"} pour tous les utilisateurs ?`, { title: "Changer le mode", okText: "Passer" }))) return;
     S.meta.mode = m; applyMode();
     try { await fbPatch("/meta", { mode: m, modeBy: userName(), modeTs: { ".sv": "timestamp" } }); }
     catch (e) { notify("Échec changement de mode", "error"); }
@@ -822,6 +846,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     root.addEventListener("keydown", (e) => {
       if (!e.target.classList?.contains("gp2-in")) return;
       if (e.key === "Enter") { e.preventDefault(); onCommit(e.target); focusNext(e.target, e.shiftKey); }
+      else arrowNav(e);
     });
     root.addEventListener("click", (e) => {
       const b = e.target.closest("[data-act]"); if (!b) return;
@@ -890,7 +915,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     const loaded = ready ? (cs.agg[pid] || 0) : 0, prep = totalOf(pid);
     const put = (k, v, neg) => {
       const el = row.querySelector(`[data-k="${k}"]`); if (!el) return;
-      el.textContent = ready && v ? fmt(v) : "—";
+      el.textContent = ready && v ? fmt(v) : "0";
       el.classList.toggle("gp2-dim", !(ready && v));
       el.classList.toggle("gp2-neg", !!(ready && neg && v < 0));
     };
@@ -899,7 +924,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     const tb = row.querySelector(".gp2-truck"); if (tb) tb.disabled = !(ready && loaded > 0);   // active only when included bons loaded this product
   }
 
-  // ── Détail chargement (read-only modal) — logic ported from legacy gdsPrepShowCharge ──
+  // ── Détail chargement (read-only modal) ──
   const hhmm = (d) => { if (!d) return "—"; const t = new Date(String(d).replace(" ", "T") + "Z"); return isNaN(t) ? String(d).slice(11, 16) : `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`; };
   const chL = () => { const c = window.GdsPrep2Charge; return c && c.labels ? c.labels() : { multi: false, byId: {} }; };
   const chTag = (id, L) => { const c = window.GdsPrep2Charge; return c && c.tag ? c.tag(id, L) : ""; };
@@ -912,7 +937,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
       const r = { van: String(pk.van || "—").replace(/^"|"$/g, ""), partner: String(pk.partner_id?.[1] || "—").replace(/^"|"$/g, ""), id: pk.id,
                   ref: String(pk.name || pk.id).replace(/^"|"$/g, ""), qty: m.qty_done || 0, date: hhmm(m.date) };
       const lb = L.byId[pk.id], lk = L.multi && lb ? `_${lb.day}_${lb.jum}` : "";      // multi-day: lines of different day / JUM are not merged
-      const key = `${r.qty}_${r.van}_${r.partner}_${r.date}${lk}`;                       // identical lines are merged (as legacy)
+      const key = `${r.qty}_${r.van}_${r.partner}_${r.date}${lk}`;                       // identical lines are merged
       if (!merged[key]) merged[key] = Object.assign({}, r, { refs: [r.ref], ids: [pk.id] });
       else { merged[key].qty += r.qty; if (!merged[key].refs.includes(r.ref)) { merged[key].refs.push(r.ref); merged[key].ids.push(pk.id); } }
     });
@@ -1041,11 +1066,10 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     }, 120);
   });
 
-  window.GdsPrep2 = { render, on, ext, api, state: S, enabled: v2Enabled };
+  window.GdsPrep2 = { render, on, ext, api, state: S };
 
-  // Take over the legacy entry point (legacy kept as renderGdsPreparationLegacy)
-  window.renderGdsPreparationLegacy = legacyRender;
+  // Entry point used by gdsShowTab (app.js)
   window.renderGdsPreparation = function () {
-    return v2Enabled() ? render() : legacyRender.apply(this, arguments);
+    return render();
   };
 })();

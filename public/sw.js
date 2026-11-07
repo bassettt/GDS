@@ -1,8 +1,9 @@
 // sw.js — Wafa PWA Service Worker
-const CACHE = "wafa-v4";
+const CACHE = "wafa-v5";
 const ASSETS = [
   "/",
   "/index.html",
+  "/src/ui-dialog.js",
   "/src/app.js",
   "/src/storage.js",
   "/src/utils.js",

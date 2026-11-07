@@ -146,21 +146,19 @@ const ROLE_PERMISSIONS = {
     { perm: "tr_state",  label: "Transferts — Bouton d'état (Marquer à faire / Vérifier / Valider)" },
     { perm: "tr_cancel", label: "Transferts — Annuler" },
     { perm: "tr_pdf_bc", label: "Transferts — Télécharger Bon de chargement (PDF)" },
+    { perm: "tr_pdf_gds",       label: "Transferts — Imprimer Bon de chargement GDS" },
+    { perm: "tr_print_switch",  label: "Transferts — Basculer l'impression App / Odoo" },
   ],
   gds_preparation: [
     { perm: "prep_nouvelle",          label: "Préparation — Nouvelle" },
     { perm: "prep_modifier",          label: "Préparation — Modifier" },
     { perm: "prep_terminer",          label: "Préparation — Terminer" },
-    { perm: "prep_annuler",           label: "Préparation — Annuler" },
     { perm: "prep_rapport",           label: "Préparation — Rapport" },
-    { perm: "prep_reprendre",         label: "Préparation — Reprendre" },
     { perm: "prep_charge_actualiser", label: "Préparation — Actualiser chargement" },
     { perm: "prep_depuis_a",          label: "Préparation — Depuis / À (dates)" },
-    { perm: "prep_bon_print",         label: "Préparation — Imprimer bon" },
     { perm: "prep_bon_toggle",        label: "Préparation — Activer/Désactiver bon" },
     { perm: "prep_hors_date",         label: "Préparation — Hors date" },
     { perm: "prep_hors_date_add",     label: "Préparation — Hors date (+)" },
-    { perm: "prep_quick_add",         label: "Préparation — Ajout rapide (+)" },
     { perm: "prep_overstock",         label: "Préparation — Autoriser dépasser le stock" },
     { perm: "prep_mode",              label: "Préparation — Changer de mode (Odoo / Libre)" },
     { perm: "prep_visibility",        label: "Préparation — Masquer / afficher les produits" },
@@ -181,7 +179,7 @@ const ROLE_PERMISSIONS = {
 };
 
 // Permissions OFF by default for non-admin roles (admin-only until explicitly granted)
-const PERM_DEFAULT_OFF = ["prep_mode", "prep_visibility", "tr_state", "tr_cancel"];
+const PERM_DEFAULT_OFF = ["prep_mode", "prep_visibility", "tr_state", "tr_cancel", "tr_print_switch"];
 
 const ROLE_SECTION_LABELS = {
   gds_stock:       "GDS — Stock",
@@ -610,12 +608,12 @@ function _addUserBadge() {
     document.getElementById("bmChangePwd").onclick = () => { menu.remove(); _showChangePasswordModal(); };
     const swEnv = document.getElementById("bmSwitchEnv");
     if (swEnv) swEnv.onclick = async () => {
-      if (!confirm("Fermer la session Odoo et choisir l'environnement (Officiel / Test) ?")) return;
+      if (!(await appConfirm("Fermer la session Odoo et choisir l'environnement (Officiel / Test) ?", { title: "Changer d'environnement" }))) return;
       await _odooDestroySession();   // les sessions Officiel et Test sont différentes
       location.reload();
     };
     document.getElementById("bmLogout").onclick = async () => {
-      if (confirm(`Se déconnecter (${AppAuth.currentUser.username}) ?`)) { appLogout(); await _odooDestroySession(); location.reload(); }
+      if (await appConfirm(`Se déconnecter (${AppAuth.currentUser.username}) ?`, { title: "Déconnexion", okText: "Se déconnecter" })) { appLogout(); await _odooDestroySession(); location.reload(); }
     };
     setTimeout(() => document.addEventListener("click", function h(e) {
       if (!menu.contains(e.target) && e.target !== badge) { menu.remove(); }
@@ -887,12 +885,12 @@ async function _addUserUI() {
 }
 
 async function _deleteUserUI(username) {
-  if (!confirm(`Supprimer l'utilisateur "${username}" ?`)) return;
+  if (!(await appConfirm(`Supprimer l'utilisateur "${username}" ?`, { title: "Supprimer l'utilisateur", okText: "Supprimer", danger: true }))) return;
   try {
     await deleteAppUser(username);
     renderUserManagementUI();
   } catch (e) {
-    alert(e.message);
+    await appAlert(e.message, { title: "Erreur" });
   }
 }
 

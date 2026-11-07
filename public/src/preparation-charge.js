@@ -8,14 +8,15 @@
 //
 // Firebase (same node as phase 1, so Training stays isolated via base()):
 //   wafa_gds_prep2_{training_}{wh}/meta/charge = {
-//     from: "YYYY-MM-DDTHH:mm" (local), to: same | absent,
+//     from: "YYYY-MM-DDTHH:mm:ss" (local), to: same (always written; legacy values without seconds stay valid: from → :00, to → :59),
+//     (legacy value without « to » = open-ended: still computed/displayed as before; the picker opens it with « À » = 23:59:59 of the start day)
 //     by, ts,
 //     excluded: { "<pickingId>": true }          // a bon is INCLUDED unless listed here (default = included)
 //     (legacy "included" node, if present, is ignored: never read, never written)
 //     ood:      { "<pickingId>": { ref, sd } }   // transferts hors date
 //   Changing from/to never clears excluded / ood: they stay until the user removes them.
 //   }
-// Raw Odoo moves are kept in memory only (like legacy): a toggle recomputes
+// Raw Odoo moves are kept in memory only: a toggle recomputes
 // instantly with no Odoo call; "Actualiser" re-fetches.
 // ============================================================
 (function () {
@@ -23,6 +24,7 @@
   const P = window.GdsPrep2;
   if (!P) return;
   const A = P.api, S = P.state;
+  const GSV = (inner) => `<svg class="gcal-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
   const SPECIAL = "— Chargé sans préparation —";
   // ── auto-refresh settings (edit here) ──────────────────────
   const AUTO_EVERY_MS = 3 * 60 * 1000;     // periodic refresh while the section is visible
@@ -53,12 +55,27 @@
   const cols = () => Object.assign({ charge: true, reste: true }, A.lsGet(colsKey(), {}));
 
   // ── helpers ────────────────────────────────────────────────
-  // local "YYYY-MM-DDTHH:mm" → UTC "YYYY-MM-DD HH:mm:ss" (same as legacy _isoLocalToOdoo)
-  function isoLocalToOdoo(iso) {
+  // Canonical local period value: "YYYY-MM-DDTHH:mm:ss". A value saved before seconds existed ("…THH:mm") stays valid:
+  // a start gets ":00", an end gets ":59" (so the end minute is fully included). Date-only: start 00:00:00, end 23:59:59.
+  function normIso(iso, isEnd) {
+    if (!iso) return "";
+    const [dp, tp = ""] = String(iso).split("T");
+    if (!tp) return `${dp}T${isEnd ? "23:59:59" : "00:00:00"}`;
+    const [h = "0", mi = "0", sec] = tp.split(":");
+    const ss = (sec == null || sec === "") ? (isEnd ? 59 : 0) : +sec;
+    const p = (n) => String(n || 0).padStart(2, "0");
+    return `${dp}T${p(+h)}:${p(+mi)}:${p(ss)}`;
+  }
+  const normFrom = (iso) => normIso(iso, false);
+  const normTo = (iso) => normIso(iso, true);
+  // « À » shown in the picker: a legacy period saved without « to » opens with 23:59:59 of the start day
+  const pickerTo = (ch) => ch.to ? normTo(ch.to) : (ch.from ? normTo(normFrom(ch.from).slice(0, 10)) : "");
+  // local "YYYY-MM-DDTHH:mm[:ss]" → UTC "YYYY-MM-DD HH:mm:ss" (second-accurate)
+  function isoLocalToOdoo(iso, isEnd) {
     if (!iso) return null;
-    const [dp, tp = "00:00"] = iso.split("T");
-    const [y, m, d] = dp.split("-"), [h, mi] = tp.split(":");
-    return new Date(+y, +m - 1, +d, +h, +mi).toISOString().replace("T", " ").slice(0, 19);
+    const [dp, tp] = normIso(iso, !!isEnd).split("T");
+    const [y, m, d] = dp.split("-"), [h, mi, sec] = tp.split(":");
+    return new Date(+y, +m - 1, +d, +h, +mi, +sec).toISOString().replace("T", " ").slice(0, 19);
   }
   function qtyTxt(n, sz) {                       // "3 C · 5 U", "−2 C", "0"
     const neg = n < 0, a = Math.round(Math.abs(n) * 100) / 100;
@@ -90,7 +107,7 @@
     C.agg = agg;
   }
 
-  // ── Odoo fetching (logic reused from legacy gdsPrepFetchCharge) ──
+  // ── Odoo fetching ──
   async function fetchPickings(ids, ood) {
     const rows = await A.rpc("stock.picking", "search_read", [[["id", "in", ids]]],
       { fields: ["id", "name", "partner_id", "date_done", "location_dest_id"], limit: Math.max(500, ids.length) });
@@ -120,8 +137,8 @@
     tagVans(moves, map);
     return { moves, map, truncated: moves.length >= LIM_OOD };
   }
-  // Nom affiché d'un produit « chargé sans préparation » : recalculé à la lecture pour suivre le dictionnaire (le nom personnalisé reste prioritaire)
-  const infoName = (i) => !i ? "" : (i.custom || !i.full || typeof NameDict === "undefined") ? i.name : NameDict.shortName(i.full);
+  // Nom affiché d'un produit « chargé sans préparation » : recalculé à la lecture pour suivre le dictionnaire
+  const infoName = (i) => !i ? "" : (!i.full || typeof NameDict === "undefined") ? i.name : NameDict.shortName(i.full);
   async function ensureInfo(moves) {             // names + colisage for products missing from the catalogue
     const cat = catalogIds();
     const need = [...new Set(moves.map(m => m.product_id?.[0]).filter(pid => pid && !cat.has(pid) && !C.info[pid]))];
@@ -131,7 +148,7 @@
         { fields: ["id", "name", "default_code", "categ_id"], limit: 500, context: { active_test: false } }),
       A.rpc("product.packaging", "search_read", [[["product_id", "in", need]]], { fields: ["product_id", "qty"], limit: 2000 }),
     ]);
-    prods.forEach(p => { C.info[p.id] = { name: _productDisplayName(p, { useCustom: true, short: true }) || `pid:${p.id}`, full: _productOdooName(p), custom: !!(_getProdNamesMap()[p.id]?.nom), code: p.default_code || "", pkg: 0 }; });
+    prods.forEach(p => { C.info[p.id] = { name: _productDisplayName(p, { short: true }) || `pid:${p.id}`, full: _productOdooName(p), code: p.default_code || "", pkg: 0 }; });
     pk.forEach(x => { const pid = x.product_id?.[0]; if (!pid) return; (C.info[pid] || (C.info[pid] = { name: `pid:${pid}`, code: "", pkg: 0 })).pkg = Math.round(x.qty) || 0; });
     need.forEach(pid => { if (!C.info[pid]) C.info[pid] = { name: `pid:${pid}`, code: "", pkg: 0 }; });
   }
@@ -164,7 +181,7 @@
         [[["location_id", "=", parent], ["usage", "=", "internal"]]], { fields: ["id"], limit: 200 })).map(l => l.id);
       if (!vanLocs.length) throw new Error("Aucun emplacement van trouvé");
 
-      const odooFrom = isoLocalToOdoo(ch.from), odooTo = isoLocalToOdoo(ch.to);
+      const odooFrom = isoLocalToOdoo(ch.from, false), odooTo = isoLocalToOdoo(ch.to, true);
       const moves = await A.rpc("stock.move.line", "search_read", [[
         ["location_id", "=", src], ["location_dest_id", "in", vanLocs], ["state", "=", "done"],
         ["date", ">=", odooFrom], ...(odooTo ? [["date", "<=", odooTo]] : []),
@@ -246,16 +263,16 @@
   async function saveRange() {
     const fEl = $("gcFrom"), tEl = $("gcTo"); if (!fEl || !tEl) return;
     if (!A.sessionActive()) return;
-    const from = fEl.value || null, to = tEl.value || null, cur = charge();
-    const revert = () => { fEl.value = cur.from || ""; tEl.value = cur.to || ""; };
+    const from = fEl.value ? normFrom(fEl.value) : null, to = tEl.value ? normTo(tEl.value) : null, cur = charge();
+    const revert = () => { fEl.value = normFrom(cur.from); tEl.value = pickerTo(cur); };
     const fail = (m) => { A.notify(m, "error"); setMsg(m, "err"); revert(); };
     if (!from) return fail("Date de début obligatoire");
-    if (to && to <= from) return fail("« À » doit être strictement après « Depuis »");
-    if (from === (cur.from || null) && to === (cur.to || null)) return;
+    if (!to) return fail("Date de fin obligatoire");
+    if (to <= from) return fail("« À » doit être strictement après « Depuis »");
+    if (from === (normFrom(cur.from) || null) && to === (normTo(cur.to) || null)) return;
     // The range may span several days. Changing it NEVER wipes the excluded list or the hors-date transfers.
-    const body = { from, to: to || null, by: A.userName(), ts: { ".sv": "timestamp" } };
-    const nc = Object.assign({}, cur, { from, by: A.userName(), ts: Date.now() });
-    if (to) nc.to = to; else delete nc.to;
+    const body = { from, to, by: A.userName(), ts: { ".sv": "timestamp" } };
+    const nc = Object.assign({}, cur, { from, to, by: A.userName(), ts: Date.now() });
     S.meta.charge = nc;
     resetCache(); C.wh = S.wh; recompute();
     if (extraSig() !== "") A.buildUI(); else repaintAll();
@@ -323,7 +340,7 @@
   async function clearOod() {
     if (!A.can("prep_hors_date") || !A.sessionActive()) return;
     const ids = Object.keys(oodMap()).map(Number); if (!ids.length) return;
-    if (!confirm(`Retirer les ${ids.length} bon(s) hors date de la liste pour tous les utilisateurs ?`)) return;
+    if (!(await appConfirm(`Retirer les ${ids.length} bon(s) hors date de la liste pour tous les utilisateurs ?`, { title: "Retirer les bons hors date", okText: "Retirer", danger: true }))) return;
     const before = extraSig(), dropped = dropOodLocal(ids);
     recompute();
     if (extraSig() !== before) A.buildUI(); else repaintAll();
@@ -341,8 +358,8 @@
   // ── display labels (multi-day range): day + JUM, display only — pk.name / excluded keys are never touched ──
   const ymd = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
   function parseLocal(iso) {
-    const [dp, tp = "00:00"] = String(iso).split("T"), [y, m, d] = dp.split("-"), [h, mi] = tp.split(":");
-    return new Date(+y, +m - 1, +d, +h || 0, +mi || 0);
+    const [dp, tp = "00:00"] = String(iso).split("T"), [y, m, d] = dp.split("-"), [h, mi, sc] = tp.split(":");
+    return new Date(+y, +m - 1, +d, +h || 0, +mi || 0, +sc || 0);
   }
   function isMulti() {                              // range covers more than one local calendar day
     const ch = charge(); if (!ch.from) return false;
@@ -363,7 +380,8 @@
   function rangeErr() {
     const f = $("gcFrom"), t = $("gcTo"); if (!f || !t) return "";
     if (!f.value) return "Date de début obligatoire";
-    if (t.value && t.value <= f.value) return "« À » doit être strictement après « Depuis »";
+    if (!t.value) return "Date de fin obligatoire";
+    if (t.value <= f.value) return "« À » doit être strictement après « Depuis »";
     return "";
   }
   function validateRange() {
@@ -384,12 +402,158 @@
     const p = $("gcRangePanel"), b = $("gcRangeBtn"); if (!p) return;
     syncInputs(true);                           // always start from the saved period
     C.rangeOpen = true; p.hidden = false; if (b) b.setAttribute("aria-expanded", "true");
-    validateRange(); placeRange(); $("gcFrom")?.focus();
+    const bd = $("gcRangeBd"); if (bd) bd.hidden = false;
+    rdLoad(); if (RD().dflt) rdCommit(); validateRange(); rdPaint(); placeRange(); rdFocusDay();
   }
   function closeRange() {                       // closing without « Appliquer » discards the draft: nothing saved, nothing fetched
-    const p = $("gcRangePanel"), b = $("gcRangeBtn");
-    C.rangeOpen = false; if (p) p.hidden = true; if (b) b.setAttribute("aria-expanded", "false");
+    const p = $("gcRangePanel"), b = $("gcRangeBtn"), bd = $("gcRangeBd");
+    C.rangeOpen = false; if (p) p.hidden = true; if (bd) bd.hidden = true; if (b) b.setAttribute("aria-expanded", "false");
     syncInputs(true);
+  }
+
+  // ── custom period picker: month calendar (Monday first) + time fields ──────────────
+  // The draft lives in C.rd. The hidden #gcFrom / #gcTo remain the single value carrier ("YYYY-MM-DDTHH:mm", local),
+  // so rangeErr / validateRange / saveRange / syncInputs (validation, save, fetch, remote guard) are unchanged.
+  const RD = () => C.rd || (C.rd = { fd: "", ft: "00:00:00", td: "", tt: "23:59:59", active: "from", note: "", dflt: false, vy: 0, vm: 0, fo: "" });
+  const SUF = (key) => key === "ft" ? ":00" : ":59";                           // typed HH:MM → start :00, end :59
+  const dstr = (y, m, d) => `${y}-${p2(m + 1)}-${p2(d)}`;                    // m is 0-based
+  const dparse = (str) => { const [y, m, d] = str.split("-").map(Number); return new Date(y, m - 1, d); };
+  const tmin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+  const tfmt = (n) => `${p2(Math.floor(n / 60))}:${p2(n % 60)}`;
+  const capFirst = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+
+  function rdLoad() {                           // draft ← saved period (read from the hidden carriers)
+    const r = RD(), f = $("gcFrom")?.value || "", t = $("gcTo")?.value || "";
+    const sp = (iso, dt) => iso ? [iso.slice(0, 10), iso.slice(11, 19)] : ["", dt];
+    [r.fd, r.ft] = sp(normFrom(f), "00:00:00"); [r.td, r.tt] = sp(normTo(t), "23:59:59");
+    r.active = "from"; r.note = ""; r.dflt = false;
+    if (!r.fd) {                                  // first use (no period yet): proposal = now → end of today (still needs « Appliquer »)
+      const n = new Date(); r.fd = ymd(n); r.ft = `${p2(n.getHours())}:${p2(n.getMinutes())}:00`; r.td = r.fd; r.tt = "23:59:59"; r.dflt = true;
+    }
+    const base = r.fd ? dparse(r.fd) : new Date();
+    r.vy = base.getFullYear(); r.vm = base.getMonth(); r.fo = r.fd || ymd(new Date());
+  }
+  function rdCommit() {                         // draft → hidden carriers → same validation as before
+    const r = RD(), f = $("gcFrom"), t = $("gcTo"); if (!f || !t) return;
+    r.note = "";
+    f.value = r.fd ? `${r.fd}T${r.ft}` : ""; t.value = r.td ? `${r.td}T${r.tt}` : "";
+    validateRange(); rdPaint();
+  }
+  function rdSummary() {
+    const r = RD(); if (!r.fd) return "Choisissez le premier jour";
+    const a = parseLocal(`${r.fd}T${r.ft}`), b = parseLocal(`${r.td}T${r.tt}`);
+    const sh = (d) => `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    let out = `${sh(a)} → ${sh(b)}`;
+    const mins = Math.round((b - a) / 60000);
+    if (mins > 0) {
+      const dd = Math.floor(mins / 1440), hh = Math.floor(mins % 1440 / 60), mm = mins % 60, parts = [];
+      if (dd) parts.push(`${dd} j`); if (hh) parts.push(`${hh} h`); if (!dd && mm) parts.push(`${mm} min`);
+      if (parts.length) out += " · " + parts.join(" ");
+    }
+    return out;
+  }
+  function rdPaint() {
+    const grid = $("gcalGrid"); if (!grid) return;
+    const r = RD(), today = ymd(new Date());
+    const hadFocus = grid.contains(document.activeElement);
+    $("gcalTitle").textContent = capFirst(new Date(r.vy, r.vm, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" }));
+    const lead = (new Date(r.vy, r.vm, 1).getDay() + 6) % 7;
+    const lo = r.fd, hi = r.td;
+    let h = "";
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(r.vy, r.vm, 1 - lead + i), sd = ymd(d), cls = ["gcal-d"];
+      if (d.getMonth() !== r.vm) cls.push("out");
+      if (sd === today) cls.push("today");
+      if (lo && sd >= lo && sd <= hi) { cls.push("in"); if (sd === lo) cls.push("st"); if (sd === hi) cls.push("en"); }
+      const sel = (lo && sd === lo) || (r.td && sd === r.td); if (sel) cls.push("sel");
+      const lbl = d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+      h += `<button type="button" class="${cls.join(" ")}" data-gc="rday" data-d="${sd}" tabindex="${sd === r.fo ? 0 : -1}" aria-label="${lbl}"${sel ? ' aria-pressed="true"' : ""}${sd === today ? ' aria-current="date"' : ""}><span>${d.getDate()}</span></button>`;
+    }
+    grid.innerHTML = h;
+    if (hadFocus) rdFocusDay();
+    // time fields (typing in a field is never overwritten while it has focus)
+    ["from", "to"].forEach(sd => {
+      const set = sd === "from" ? !!r.fd : !!r.td, inp = $("gcalT_" + sd); if (!inp) return;
+      if (document.activeElement !== inp) { inp.value = set ? (sd === "from" ? r.ft : r.tt).slice(0, 5) : ""; inp.removeAttribute("aria-invalid"); }
+      inp.disabled = !set;
+      document.querySelectorAll(`.gcal-t[data-side="${sd}"] .gcal-stp button`).forEach(b => { b.disabled = !set; });
+      const card = document.querySelector(`.gcal-t[data-side="${sd}"]`);
+      if (card) { card.classList.toggle("off", !set); card.classList.toggle("act", r.active === sd); }
+      const bd = card && card.querySelector(".gcal-bdg");
+      if (bd) {                                   // badge = live date + time (no seconds)
+        bd.setAttribute("aria-pressed", String(r.active === sd));
+        const v = bd.querySelector(".gcal-bv");
+        if (v) v.textContent = set ? `${r.fd && sd === "from" ? r.fd.slice(8, 10) + "/" + r.fd.slice(5, 7) : r.td.slice(8, 10) + "/" + r.td.slice(5, 7)} ${(sd === "from" ? r.ft : r.tt).slice(0, 5)}` : "";
+      }
+    });
+    const sum = $("gcalSum"); if (sum) sum.textContent = rdSummary();
+    const hint = $("gcalHint"); if (hint) { hint.hidden = r.active !== "to"; hint.textContent = "Choisissez le dernier jour"; }
+    const note = $("gcalNote"); if (note) { note.hidden = !r.note; note.textContent = r.note; }
+  }
+  function rdFocusDay() { const g = $("gcalGrid"); g?.querySelector('[tabindex="0"]')?.focus(); }
+  function rdGoto(sd, focus) {                  // move the roving focus (and the visible month) to a day
+    const r = RD(), d = dparse(sd);
+    r.fo = sd; r.vy = d.getFullYear(); r.vm = d.getMonth();
+    rdPaint(); if (focus) rdFocusDay();
+  }
+  function rdNav(dir) {                         // previous / next month, keeping the same day number when possible
+    const r = RD(), cur = dparse(r.fo), first = new Date(r.vy, r.vm + dir, 1);
+    const last = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    r.vy = first.getFullYear(); r.vm = first.getMonth();
+    r.fo = dstr(r.vy, r.vm, Math.min(cur.getDate(), last));
+    rdPaint();
+  }
+  function rdPick(sd) {
+    // Badge « Depuis » active (default): one click = that whole day (start = current time HH:mm, end = 23:59:59).
+    // Badge « À » active: the click only moves the end date (23:59:59), refused when before the start; then back to « Depuis ».
+    const r = RD(); r.fo = sd; r.note = "";
+    if (r.active === "to" && r.fd) {
+      if (sd < r.fd) { r.note = "La date « À » ne peut pas précéder « Depuis »"; rdPaint(); rdFocusDay(); return; }
+      r.td = sd; r.tt = "23:59:59"; r.active = "from";
+    } else {
+      const n = new Date();
+      r.fd = sd; r.ft = `${p2(n.getHours())}:${p2(n.getMinutes())}:00`; r.td = sd; r.tt = "23:59:59"; r.active = "from";
+    }
+    const d = dparse(sd); r.vy = d.getFullYear(); r.vm = d.getMonth();
+    rdCommit(); rdFocusDay();
+  }
+  function rdSide(side) { const r = RD(); r.active = side === "to" ? "to" : "from"; r.note = ""; rdPaint(); }
+  function rdStep(side, unit, dir) {            // ± 1 h / ± 5 min, clamped inside the day
+    const r = RD(), key = side === "from" ? "ft" : "tt";
+    if (side === "from" ? !r.fd : !r.td) return;
+    r[key] = tfmt(Math.max(0, Math.min(1439, tmin(r[key]) + (unit === "h" ? 60 : 5) * dir))) + SUF(key);
+    rdCommit();
+  }
+  function rdTimeInput(inp) {                   // typed HH:MM (also accepts 930 / 0930 / 9:30); invalid → previous value kept
+    const r = RD(), side = inp.dataset.side, key = side === "from" ? "ft" : "tt";
+    const v = inp.value.trim(); let m = /^(\d{1,2})[:h.](\d{1,2})$/.exec(v) || /^(\d{1,2})(\d{2})$/.exec(v);
+    if (!m || +m[1] > 23 || +m[2] > 59) { inp.setAttribute("aria-invalid", "true"); inp.value = r[key].slice(0, 5); return false; }
+    inp.removeAttribute("aria-invalid"); inp.value = `${p2(+m[1])}:${p2(+m[2])}`; r[key] = inp.value + SUF(key);
+    rdCommit(); return true;
+  }
+  function rdGridKey(e) {                       // arrows move by day / week, PageUp/PageDown by month, Home/End = week edges
+    const r = RD(), d = dparse(r.fo), mv = (n) => ymd(new Date(d.getFullYear(), d.getMonth(), d.getDate() + n));
+    const wk = (d.getDay() + 6) % 7;
+    let t = null;
+    if (e.key === "ArrowLeft") t = mv(-1); else if (e.key === "ArrowRight") t = mv(1);
+    else if (e.key === "ArrowUp") t = mv(-7); else if (e.key === "ArrowDown") t = mv(7);
+    else if (e.key === "Home") t = mv(-wk); else if (e.key === "End") t = mv(6 - wk);
+    else if (e.key === "PageUp" || e.key === "PageDown") {
+      const n = new Date(d.getFullYear(), d.getMonth() + (e.key === "PageUp" ? -1 : 1), 1);
+      t = dstr(n.getFullYear(), n.getMonth(), Math.min(d.getDate(), new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate()));
+    }
+    if (t) { e.preventDefault(); rdGoto(t, true); }
+  }
+  function rdTimeKey(e) {                       // Enter = validate the field and apply ; ↑/↓ = ± 1 h (caret before « : ») or ± 1 min
+    const inp = e.target;
+    if (e.key === "Enter") { e.preventDefault(); if (rdTimeInput(inp)) applyRange(); }
+    else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault(); if (!rdTimeInput(inp)) return;
+      const hours = (inp.selectionStart ?? 0) <= 2, caret = inp.selectionStart;
+      const r = RD(), key = inp.dataset.side === "from" ? "ft" : "tt";
+      r[key] = tfmt(Math.max(0, Math.min(1439, tmin(r[key]) + (hours ? 60 : 1) * (e.key === "ArrowUp" ? 1 : -1)))) + SUF(key);
+      inp.value = r[key].slice(0, 5); rdCommit(); try { inp.setSelectionRange(caret, caret); } catch (_) {}
+    }
   }
   async function applyRange() {
     if (!validateRange()) return;
@@ -477,12 +641,12 @@
       const sz = A.sizeOf(pid), loaded = C.agg[pid] || 0, prep = A.totalOf(pid);
       const el = row.querySelector(key === "charge" ? ".gp2c-ch b" : ".gp2c-re b"); if (!el) return;
       if (key === "charge") {
-        el.textContent = loaded ? qtyTxt(loaded, sz) : "—";
+        el.textContent = loaded ? qtyTxt(loaded, sz) : "0";
         // product loaded from Odoo but not in the catalogue → lives under SPECIAL; hide while nothing is loaded/prepared
         row.classList.toggle("gp2-ghost", row.closest(".gp2-cat")?.dataset.cat === SPECIAL && !loaded && !prep);
       } else {
         const reste = prep - loaded;
-        el.textContent = (!prep && !loaded) ? "—" : qtyTxt(reste, sz);
+        el.textContent = (!prep && !loaded) ? "0" : qtyTxt(reste, sz);
         el.parentElement.classList.toggle("gp2c-neg", reste < 0);
         el.parentElement.classList.toggle("gp2c-zero", reste === 0 && (prep || loaded) > 0);
       }
@@ -510,11 +674,35 @@
       <div class="gp2c-bar">
         <div class="gc-range" data-perm="prep_depuis_a">
           <button type="button" class="gp2-btn gp2c-rbtn" id="gcRangeBtn" data-gc="rangemenu" aria-haspopup="dialog" aria-expanded="false">${A.ic("calendar")}<span class="gp2c-rtxt" id="gcRangeTxt"></span><i class="gp2c-dot" id="gcRangeDot" hidden></i></button>
-          <div class="gp2-panel gp2c-rpanel" id="gcRangePanel" role="dialog" aria-label="Période" hidden>
-            <label class="gp2c-rf"><span class="gp2c-lbl">Depuis</span><input id="gcFrom" class="gp2c-dt" type="datetime-local" step="60" value="${A.esc(ch.from || "")}"></label>
-            <label class="gp2c-rf"><span class="gp2c-lbl">À</span><input id="gcTo" class="gp2c-dt" type="datetime-local" step="60" value="${A.esc(ch.to || "")}"></label>
+          <div class="gcal-bd" id="gcRangeBd" data-gc="rangeclose" hidden></div>
+          <div class="gp2-panel gp2c-rpanel gcal" id="gcRangePanel" role="dialog" aria-label="Période" hidden>
+            <input id="gcFrom" type="hidden" value="${A.esc(normFrom(ch.from))}"><input id="gcTo" type="hidden" value="${A.esc(pickerTo(ch))}">
+            <div class="gcal-head">
+              <button type="button" class="gcal-nav" data-gc="rnav" data-dir="-1" title="Mois précédent" aria-label="Mois précédent">${GSV('<polyline points="15 18 9 12 15 6"/>')}</button>
+              <span class="gcal-title" id="gcalTitle" aria-live="polite"></span>
+              <button type="button" class="gcal-nav" data-gc="rnav" data-dir="1" title="Mois suivant" aria-label="Mois suivant">${GSV('<polyline points="9 18 15 12 9 6"/>')}</button>
+            </div>
+            <div class="gcal-wd" aria-hidden="true"><span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span></div>
+            <div class="gcal-grid" id="gcalGrid" role="group" aria-label="Calendrier"></div>
+            <div class="gcal-times">
+              ${["from", "to"].map(sd => `<div class="gcal-t" data-side="${sd}">
+                <button type="button" class="gcal-bdg" data-gc="rside" data-side="${sd}" aria-pressed="${sd === "from"}" title="${sd === "from" ? "Le prochain jour choisi fixe la journée entière" : "Le prochain jour choisi fixe seulement la date de fin"}"><b>${sd === "from" ? "Depuis" : "À"}</b><span class="gcal-bv"></span></button>
+                <div class="gcal-trow">
+                  <div class="gcal-stp" title="Heures"><button type="button" data-gc="rtstep" data-side="${sd}" data-u="h" data-dir="1" aria-label="Heure +1">${GSV('<polyline points="18 15 12 9 6 15"/>')}</button><button type="button" data-gc="rtstep" data-side="${sd}" data-u="h" data-dir="-1" aria-label="Heure −1">${GSV('<polyline points="6 9 12 15 18 9"/>')}</button></div>
+                  <input class="gcal-tin" id="gcalT_${sd}" data-gc="rtime" data-side="${sd}" type="text" inputmode="numeric" maxlength="5" autocomplete="off" placeholder="HH:MM" aria-label="${sd === "from" ? "Heure de début" : "Heure de fin"} (HH:MM)">
+                  <div class="gcal-stp" title="Minutes"><button type="button" data-gc="rtstep" data-side="${sd}" data-u="m" data-dir="1" aria-label="Minutes +5">${GSV('<polyline points="18 15 12 9 6 15"/>')}</button><button type="button" data-gc="rtstep" data-side="${sd}" data-u="m" data-dir="-1" aria-label="Minutes −5">${GSV('<polyline points="6 9 12 15 18 9"/>')}</button></div>
+                </div>
+              </div>`).join("")}
+            </div>
+            <div class="gcal-sum" id="gcalSum" aria-live="polite"></div>
+            <div class="gcal-hint" id="gcalHint" hidden></div>
+            <div class="gp2c-rerr" id="gcalNote" role="alert" hidden></div>
             <div class="gp2c-rerr" id="gcRangeErr" role="alert" hidden></div>
-            <div class="gp2c-ract"><button type="button" class="gp2-btn gp2c-rapply" id="gcRangeApply" data-gc="rangeapply">Appliquer</button></div>
+            <div class="gcal-act">
+              <span class="gcal-sp"></span>
+              <button type="button" class="gp2-btn" data-gc="rcancel">Annuler</button>
+              <button type="button" class="gp2-btn gp2c-rapply" id="gcRangeApply" data-gc="rangeapply">Appliquer</button>
+            </div>
           </div>
         </div>
         <button type="button" class="gp2-btn gp2c-refbtn" id="gcRefreshBtn" data-perm="prep_charge_actualiser" data-gc="refresh" title="Actualiser le chargement depuis Odoo">Actualiser<span class="gp2c-sync" id="gcSync"></span></button>
@@ -614,32 +802,31 @@
   function syncInputs(force) {
     if (C.rangeOpen && !force) return;          // the user is editing a draft in the popover: a remote update must not overwrite it
     const f = $("gcFrom"), t = $("gcTo"), ch = charge();
-    if (f && (force || document.activeElement !== f)) f.value = ch.from || "";
-    if (t && (force || document.activeElement !== t)) t.value = ch.to || "";
+    if (f && (force || document.activeElement !== f)) f.value = normFrom(ch.from);
+    if (t && (force || document.activeElement !== t)) t.value = pickerTo(ch);
   }
 
   // ── Terminer: Excel report (download only — nothing is cleared or locked) ──
-  // preparation.js and the legacy app.js export are not reusable as-is: the legacy _gdsPrepExportXlsx builds an HTML print report, not a workbook.
-  // What is reused from it: grouping by category, UI category order (_sortCats) and product order (_productCustomOrder) — both already in the DOM order.
+  // Grouping by category, UI category order (_sortCats) and product order (_productCustomOrder) — both already in the DOM order.
   // The bundled SheetJS (0.18.5 community) cannot write cell styles nor frozen panes, so the workbook is written by a minimal OOXML writer (store-only zip).
   // Colisage (carton size) is NOT exported in any sheet.
   const X_HDR = ["Catégorie", "Produit", "Prép. Colis", "Prép. U", "Charg. Colis", "Charg. U", "Reste Colis", "Reste U"];     // sheet 1 « Tout »
   const X_W = [24, 40, 11, 11, 11, 11, 11, 11];
   const M_HDR = ["Produit", "Reste Colis", "Reste U"];                      // sheet 2 « Mouvement »: two blocks side by side
   const M_W = [32, 8, 8, 2, 32, 8, 8];                                      // [Produit | Colis | U] [gap] [Produit | Colis | U]
-  const M_ROW_H = 13, M_TITLE_H = 20, M_HEAD_H = 26;                       // points (font 10)
+  const M_ROW_H = 13, M_TITLE_H = 36, M_HEAD_H = 26;                       // points (font 10); the title takes two lines
   const PAGE = { marginIn: 0.4, headIn: 0.2, a4PortraitH: 11.69, paperSize: 9 };   // A4, narrow margins
   const M_AVAIL_H = (PAGE.a4PortraitH - 2 * PAGE.marginIn) * 72;           // printable height (pt) of the portrait page
-  const ST = { def: 0, head: 1, cat: 2, txt: 3, num: 4, neg: 5, lab: 6, val: 7, title: 8 };      // cellXfs indexes (see X_STYLES)
+  const ST = { def: 0, head: 1, cat: 2, txt: 3, num: 4, neg: 5, lab: 6, val: 7, title: 8, title2: 9, title3: 10, valw: 11 };      // cellXfs indexes (see X_STYLES)
   const xEsc = (s) => String(s == null ? "" : s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const colL = (i) => { let n = i + 1, s = ""; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
   const X_STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-<fonts count="5"><font><sz val="10"/><name val="Calibri"/></font><font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><b/><sz val="10"/><name val="Calibri"/></font><font><b/><sz val="10"/><color rgb="FFC00000"/><name val="Calibri"/></font><font><b/><sz val="13"/><name val="Calibri"/></font></fonts>
+<fonts count="7"><font><sz val="10"/><name val="Calibri"/></font><font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><b/><sz val="10"/><name val="Calibri"/></font><font><b/><sz val="10"/><color rgb="FFC00000"/><name val="Calibri"/></font><font><b/><sz val="13"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="9"/><name val="Calibri"/></font></fonts>
 <fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F2937"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1A6B3A"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF3F4F6"/><bgColor indexed="64"/></patternFill></fill></fills>
 <borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"><color rgb="FFD1D5DB"/></left><right style="thin"><color rgb="FFD1D5DB"/></right><top style="thin"><color rgb="FFD1D5DB"/></top><bottom style="thin"><color rgb="FFD1D5DB"/></bottom><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="9">
+<cellXfs count="12">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
 <xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
@@ -648,7 +835,10 @@
 <xf numFmtId="1" fontId="3" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
 <xf numFmtId="0" fontId="2" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
-<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="5" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="6" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
+<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>
 </cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`;
 
   function xCell(r, c, cell) {
@@ -751,13 +941,16 @@
     const d = i.d, stamp = `${p2(d.getDate())}-${p2(d.getMonth() + 1)}-${d.getFullYear()}_${p2(d.getHours())}${p2(d.getMinutes())}`;
     return `${i.training ? "training_" : ""}preparation_${clean}_${stamp}${draft ? "_brouillon" : ""}.xlsx`;
   }
-  const numC = (v, st) => (v ? { v, s: st || ST.num } : { s: ST.num });           // zeros left empty
+  // mov = the product has a movement: zero is written as a real number 0; without movement a zero stays an empty cell.
+  const numC = (v, st, mov) => (mov ? { v: Number(v) || 0, s: st || ST.num } : (v ? { v, s: st || ST.num } : { s: ST.num }));
   function tableRows(data) {                                         // sheet 1: category title row + product rows (all products)
     const rows = [];
     data.cats.forEach(c => {
       if (!c.items.length) return;
       rows.push({ cat: true, cells: [{ v: c.cat, s: ST.cat }, ...X_HDR.slice(1).map(() => ({ s: ST.cat }))] });
-      c.items.forEach(i => rows.push({ cells: [{ v: c.cat, s: ST.txt }, { v: i.name, s: ST.txt }, numC(i.pc), numC(i.pu), numC(i.lc), numC(i.lu), numC(i.rc, i.rc < 0 ? ST.neg : ST.num), numC(i.ru, i.ru < 0 ? ST.neg : ST.num)] }));
+      c.items.forEach(i => {       // Prép.: 0 when there is a movement. Chargement / Reste: real values when the load is known (0 when there is a movement), otherwise always empty
+        const ld = (v, st) => (data.ready ? numC(v, st, i.mov) : { s: ST.num });
+        rows.push({ cells: [{ v: c.cat, s: ST.txt }, { v: i.name, s: ST.txt }, numC(i.pc, null, i.mov), numC(i.pu, null, i.mov), ld(i.lc), ld(i.lu), ld(i.rc, i.rc < 0 ? ST.neg : ST.num), ld(i.ru, i.ru < 0 ? ST.neg : ST.num)] }); });
     });
     return rows;
   }
@@ -783,23 +976,29 @@
     const head = X_HDR.map(h => ({ v: h, s: ST.head })), lab = (v) => ({ v, s: ST.lab }), val = (v) => ({ v, s: ST.val });
     // ── sheet 1 « Tout »
     const b = tableRows(data), hr = 4, nc = X_HDR.length, merges1 = [];
+    const bonsTxt = i.bons.list.join(", ") || "—", bonsLong = bonsTxt.length > 100;       // a long bons list would be cut at the right edge of the page: wrap it inside B:H
+    const bonsVal = bonsLong ? { v: bonsTxt, s: ST.valw } : val(bonsTxt);
     const info1 = [      // full header block (single-line values overflow to the right, so the bons list is never cut)
       [lab("Date / heure"), val(i.at + (draft ? " — Brouillon" : "")), lab("Utilisateur"), lab(""), val(i.user)],
       [lab("Entrepôt"), val(i.wh), lab("Mode"), lab(""), val(i.mode)],
       [lab("Période"), val(rangeTxt(i))],
-      [lab(`Bons inclus (${i.bons.list.length}/${i.bons.total})`), val(i.bons.list.join(", ") || "—")],
+      [lab(`Bons inclus (${i.bons.list.length}/${i.bons.total})`), bonsVal],
     ];
+    if (bonsLong) merges1.push("B4:H4");
     b.forEach((r, k) => { if (r.cat) merges1.push(`A${hr + 2 + k}:${colL(nc - 1)}${hr + 2 + k}`); });
     const rows1 = [...info1, head, ...b.map(r => r.cells)];
-    const s1 = { name: "Tout", rows: rows1, widths: X_W, freeze: hr + 1, filter: `A${hr + 1}:${colL(nc - 1)}${rows1.length}`, merges: merges1, ht: { [hr]: 26 },
+    const s1 = { name: "Tout", rows: rows1, widths: X_W, freeze: hr + 1, filter: `A${hr + 1}:${colL(nc - 1)}${rows1.length}`, merges: merges1, ht: bonsLong ? { 3: Math.ceil(bonsTxt.length / 100) * 13 + 2, [hr]: 26 } : { [hr]: 26 },
       print: { orient: "landscape", fitW: 1, fitH: 0, titleRows: [hr + 1, hr + 1] } };      // A4 landscape, 1 page wide, as many pages as needed, header row repeated
     // ── sheet 2 « Mouvement »: Reste only, two blocks side by side, ONE A4 portrait page
     const L = mouvementLayout(data), merges2 = ["A1:G1"], hd = M_HDR.map(h => ({ v: h, s: ST.head }));
-    const rows2 = [[{ v: `Mouvement${draft ? " (Brouillon)" : ""} — ${i.wh} — ${i.at} — ${i.mode} — ${rangeTxt(i)}`, s: ST.title }], [...hd, undefined, ...hd]];
+    const tl1 = `Mouvement${draft ? " (Brouillon)" : ""} — ${i.wh}`, tl2 = `${i.at} — ${i.mode} — ${rangeTxt(i)}`, tlen = Math.max(tl1.length, tl2.length);
+    const tst = tlen <= 82 ? ST.title : tlen <= 98 ? ST.title2 : ST.title3;      // long texts: smaller font, never cut
+    const rows2 = [[{ v: tl1 + "\n" + tl2, s: tst }], [...hd, undefined, ...hd]];
     const cellsOf = (e, off, r1) => {
       if (!e) return [undefined, undefined, undefined];
       if (e.t === "cat") { merges2.push(`${colL(off)}${r1}:${colL(off + 2)}${r1}`); return [{ v: e.name, s: ST.cat }, { s: ST.cat }, { s: ST.cat }]; }
-      const x = e.i; return [{ v: x.name, s: ST.txt }, numC(x.rc, x.rc < 0 ? ST.neg : ST.num), numC(x.ru, x.ru < 0 ? ST.neg : ST.num)];
+      const x = e.i, rs = (v) => (data.ready ? numC(v, v < 0 ? ST.neg : ST.num, true) : { s: ST.num });      // every product here has a movement: explicit 0 for Reste, empty when the load is unknown
+      return [{ v: x.name, s: ST.txt }, rs(x.rc), rs(x.ru)];
     };
     for (let k = 0; k < L.R; k++) { const r1 = rows2.length + 1; rows2.push([...cellsOf(L.left[k], 0, r1), undefined, ...cellsOf(L.right[k], 4, r1)]); }
     const s2 = { name: "Mouvement", rows: rows2, widths: M_W, freeze: 2, filter: null, merges: merges2, rowH: M_ROW_H, ht: { 0: M_TITLE_H, 1: M_HEAD_H },
@@ -938,11 +1137,18 @@
       else if (a === "colsmenu") { const p = $("gcColsPanel"); p.hidden = !p.hidden; }
       else if (a === "rangemenu") { if (C.rangeOpen) closeRange(); else openRange(); }
       else if (a === "rangeapply") applyRange();
+      else if (a === "rday") rdPick(b.dataset.d);
+      else if (a === "rnav") rdNav(+b.dataset.dir);
+      else if (a === "rtstep") rdStep(b.dataset.side, b.dataset.u, +b.dataset.dir);
+      else if (a === "rside") rdSide(b.dataset.side);
+      else if (a === "rcancel") { closeRange(); $("gcRangeBtn")?.focus(); }
+      else if (a === "rangeclose") closeRange();
     });
     root.addEventListener("input", (e) => { if (e.target.id === "gcFrom" || e.target.id === "gcTo") validateRange(); });
     root.addEventListener("change", (e) => {
       const t = e.target;
       if (t.dataset?.gc === "col") { const c = cols(); c[t.dataset.col] = t.checked; A.lsSet(colsKey(), c); applyCols(); }
+      else if (t.dataset?.gc === "rtime") rdTimeInput(t);
     });
     root.addEventListener("focusout", () => setTimeout(() => {          // deferred rebuild (new product) once the worker leaves the field
       if (C.pendingBuild && !isTyping()) { C.pendingBuild = false; A.buildUI(); }
@@ -950,10 +1156,14 @@
     root.addEventListener("keydown", (e) => {
       if (e.target.id === "gcOodRef" && e.key === "Enter") { e.preventDefault(); addOod(); }
       else if ((e.target.id === "gcFrom" || e.target.id === "gcTo") && e.key === "Enter") { e.preventDefault(); applyRange(); }
+      else if (e.target.classList?.contains("gcal-d")) rdGridKey(e);
+      else if (e.target.dataset?.gc === "rtime") rdTimeKey(e);
     });
     document.addEventListener("click", (e) => {
       const p = $("gcColsPanel"); if (p && !p.hidden && !e.target.closest(".gp2-menu")) p.hidden = true;
-      if (C.rangeOpen && !e.target.closest(".gc-range")) closeRange();          // outside click = cancel
+      // outside click = cancel. composedPath: the calendar re-renders on click, so e.target may already be detached.
+      const inRange = (e.composedPath ? e.composedPath() : [e.target]).some(n => n && n.classList && n.classList.contains("gc-range"));
+      if (C.rangeOpen && !inRange) closeRange();
     });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape" && C.rangeOpen) { closeRange(); $("gcRangeBtn")?.focus(); } });
   }
@@ -970,7 +1180,7 @@
     if (!changed.some(k => k === "all" || k === "meta" || k === "charge")) return;
     ensureWh(); syncInputs();
     const ch = charge();
-    if (C.loaded && (ch.from !== C.from || (ch.to || null) !== C.to)) {            // period changed elsewhere → cache is obsolete
+    if (C.loaded && (normFrom(ch.from) !== normFrom(C.from) || (normTo(ch.to) || null) !== (normTo(C.to) || null))) {            // period changed elsewhere → cache is obsolete
       const before = extraSig(); resetCache(); C.wh = S.wh;
       recompute(); rebuildOrRepaint(!!before);
       fetchCharge({ auto: true });                                                     // d) range changed by someone else
