@@ -668,6 +668,13 @@
     if (cell.v == null || cell.v === "") return `<c r="${ref}"${s}/>`;
     return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xEsc(cell.v)}</t></is></c>`;
   }
+  const SHEET_PWD = "aze123";      // sheet protection password (both sheets)
+  function xPwdHash(pw) {           // legacy Excel sheet-protection hash (16-bit), stored in <sheetProtection password="…">
+    let h = 0;
+    for (let k = 0; k < pw.length; k++) { const v = pw.charCodeAt(k) << (k + 1); h ^= (v & 0x7fff) | (v >> 15); }
+    h ^= pw.length; h ^= 0xCE4B;
+    return (h & 0xffff).toString(16).toUpperCase();
+  }
   function xSheet(sh) {
     const rows = sh.rows.map((row, ri) => { const h = (sh.ht && sh.ht[ri]) || sh.rowH; return `<row r="${ri + 1}"${h ? ` ht="${h}" customHeight="1"` : ""}>${row.map((cell, ci) => xCell(ri, ci, cell)).join("")}</row>`; }).join("");
     const n = sh.freeze, last = sh.rows.length, nc = sh.widths.length, pr = sh.print, m = PAGE.marginIn;
@@ -677,7 +684,7 @@
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${colL(nc - 1)}${last}"/>
 <sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ySplit="${n}" topLeftCell="A${n + 1}" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A${n + 1}" sqref="A${n + 1}"/></sheetView></sheetViews>
 <sheetFormatPr defaultRowHeight="${sh.rowH || 15}"${sh.rowH ? ' customHeight="1"' : ""}/><cols>${sh.widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join("")}</cols>
-<sheetData>${rows}</sheetData>${sh.filter ? `<autoFilter ref="${sh.filter}"/>` : ""}${sh.merges && sh.merges.length ? `<mergeCells count="${sh.merges.length}">${sh.merges.map(x => `<mergeCell ref="${x}"/>`).join("")}</mergeCells>` : ""}
+<sheetData>${rows}</sheetData><sheetProtection password="${xPwdHash(SHEET_PWD)}" sheet="1" objects="1" scenarios="1" autoFilter="0"/>${sh.filter ? `<autoFilter ref="${sh.filter}"/>` : ""}${sh.merges && sh.merges.length ? `<mergeCells count="${sh.merges.length}">${sh.merges.map(x => `<mergeCell ref="${x}"/>`).join("")}</mergeCells>` : ""}
 <printOptions horizontalCentered="1"/><pageMargins left="${m}" right="${m}" top="${m}" bottom="${m}" header="${PAGE.headIn}" footer="${PAGE.headIn}"/><pageSetup paperSize="${PAGE.paperSize}" orientation="${pr.orient}" fitToWidth="${pr.fitW}" fitToHeight="${pr.fitH}"/></worksheet>`;
   }
   const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
@@ -807,7 +814,7 @@
     if (bonsLong) merges1.push("B4:H4");
     b.forEach((r, k) => { if (r.cat) merges1.push(`A${hr + 2 + k}:${colL(nc - 1)}${hr + 2 + k}`); });
     const rows1 = [...info1, head, ...b.map(r => r.cells)];
-    const s1 = { name: "Tout", rows: rows1, widths: X_W, freeze: hr + 1, filter: `A${hr + 1}:${colL(nc - 1)}${rows1.length}`, merges: merges1, ht: bonsLong ? { 3: Math.ceil(bonsTxt.length / 100) * 13 + 2, [hr]: 26 } : { [hr]: 26 },
+    const s1 = { name: "Mouvement", rows: rows1, widths: X_W, freeze: hr + 1, filter: `A${hr + 1}:${colL(nc - 1)}${rows1.length}`, merges: merges1, ht: bonsLong ? { 3: Math.ceil(bonsTxt.length / 100) * 13 + 2, [hr]: 26 } : { [hr]: 26 },
       print: { orient: "landscape", fitW: 1, fitH: 0, titleRows: [hr + 1, hr + 1] } };      // A4 landscape, 1 page wide, as many pages as needed, header row repeated
     // ── sheet 2 « Mouvement »: Reste only, two blocks side by side, ONE A4 portrait page
     const L = mouvementLayout(data), merges2 = ["A1:G1"], hd = M_HDR.map(h => ({ v: h, s: ST.head }));
@@ -821,7 +828,7 @@
       return [{ v: x.name, s: ST.txt }, rs(x.rc), rs(x.ru)];
     };
     for (let k = 0; k < L.R; k++) { const r1 = rows2.length + 1; rows2.push([...cellsOf(L.left[k], 0, r1), undefined, ...cellsOf(L.right[k], 4, r1)]); }
-    const s2 = { name: "Mouvement", rows: rows2, widths: M_W, freeze: 2, filter: null, merges: merges2, rowH: M_ROW_H, ht: { 0: M_TITLE_H, 1: M_HEAD_H },
+    const s2 = { name: "Reste", rows: rows2, widths: M_W, freeze: 2, filter: null, merges: merges2, rowH: M_ROW_H, ht: { 0: M_TITLE_H, 1: M_HEAD_H },
       print: { orient: "portrait", fitW: 1, fitH: 1 } };                                      // fitToPage: 1 wide × 1 tall; no autoFilter (two independent blocks)
     return [s1, s2];
   }
@@ -834,6 +841,7 @@
     sheets.forEach((sh, idx) => {
       const ws = XLSX.utils.aoa_to_sheet(sh.rows.map(r => r.map(c => (c ? c.v : null))));
       ws["!cols"] = sh.widths.map(w => ({ wch: w }));
+      ws["!protect"] = { password: xPwdHash(SHEET_PWD), sheet: true, objects: true, scenarios: true, autoFilter: false };
       if (sh.filter) ws["!autofilter"] = { ref: sh.filter };
       if (sh.merges && sh.merges.length) ws["!merges"] = sh.merges.map(m => XLSX.utils.decode_range(m));
       ws["!margins"] = { left: PAGE.marginIn, right: PAGE.marginIn, top: PAGE.marginIn, bottom: PAGE.marginIn, header: PAGE.headIn, footer: PAGE.headIn };
