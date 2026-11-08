@@ -253,97 +253,11 @@
 .gp2c-refbtn .gp2c-sync.err { color:var(--red); }
 .gp2c-msg:not([hidden]) { flex:1 1 100%; }
 
-/* period button + popover */
+/* period button (the calendar itself is the shared AppDatePicker: style.css .adp-*) */
 .gc-range { position:relative; }
 .gp2c-rbtn { gap:6px; white-space:nowrap; }
 .gp2c-rtxt { font-size:11px; font-weight:600; }
 .gp2c-dot { width:7px; height:7px; border-radius:50%; background:var(--orange); flex:none; }
-.gp2c-rpanel { display:flex; flex-direction:column; gap:8px; width:260px; min-width:0; }
-.gp2c-rf { display:flex; flex-direction:column; gap:3px; }
-.gp2c-rpanel .gp2c-dt { width:100%; height:36px; box-sizing:border-box; }
-.gp2c-rerr { font-size:11px; font-weight:600; color:var(--red); }
-.gp2c-ract { display:flex; justify-content:flex-end; }
-.gp2c-rapply { background:var(--gds-color); color:#fff; border-color:transparent; }
-.gp2c-rapply:disabled { opacity:.45; cursor:default; }
-
-/* phone: popover spans the full width right under the toolbar */
-@media (max-width: 719px) {
-  .gc-range { position:static; }
-  .gp2c-rpanel { left:0; right:0; top:100%; width:auto; border-radius:0 0 var(--r) var(--r); }
-}
-/* ============================================================
-   Period picker — custom calendar + time (colors only through the app variables → follows any theme)
-   ============================================================ */
-.gp2c-rpanel.gcal { width:304px; max-height:none; overflow:visible; gap:10px; padding:12px; z-index:60;
-  box-shadow:0 12px 32px rgba(15,23,42,.22); }
-.gcal[hidden], .gcal-bd[hidden] { display:none !important; }
-.gcal-ic { width:14px; height:14px; flex:none; display:block; }
-
-.gcal-head { display:flex; align-items:center; justify-content:space-between; gap:6px; }
-.gcal-title { font-size:13px; font-weight:700; color:var(--text); }
-.gcal-nav { width:28px; height:28px; padding:0; display:inline-flex; align-items:center; justify-content:center; color:var(--text2);
-  background:var(--bg3); border:1px solid var(--border); border-radius:50%; cursor:pointer; }
-.gcal-nav:hover { color:var(--gds-color); border-color:var(--gds-color); }
-
-.gcal-wd, .gcal-grid { display:grid; grid-template-columns:repeat(7, 1fr); }
-.gcal-wd span { font-size:10px; font-weight:700; color:var(--text3); text-align:center; }
-.gcal-wd { margin-bottom:-4px; }
-.gcal-d { position:relative; height:34px; padding:0; border:0; background:none; color:var(--text); font-size:12px; font-weight:600;
-  display:flex; align-items:center; justify-content:center; cursor:pointer; outline:none; -webkit-tap-highlight-color:transparent; }
-.gcal-d::before { content:""; position:absolute; top:3px; bottom:3px; left:0; right:0; background:transparent; }
-.gcal-d.in::before { background:rgba(16,185,129,.16); background:color-mix(in srgb, var(--gds-color) 16%, transparent); }
-.gcal-d.in.st::before { left:50%; }
-.gcal-d.in.en::before { right:50%; }
-.gcal-d.in.st.en::before { background:transparent; }
-.gcal-d span { position:relative; width:30px; height:30px; border-radius:50%; box-sizing:border-box; display:flex; align-items:center; justify-content:center; }
-.gcal-d.out { color:var(--text3); }
-.gcal-d.today span { border:1px solid var(--gds-color); }
-.gcal-d:hover span { background:var(--bg3); }
-.gcal-d.sel span, .gcal-d.sel:hover span { background:var(--gds-color); border-color:var(--gds-color); color:#fff; }
-.gcal-d:focus-visible span { box-shadow:0 0 0 2px var(--bg2), 0 0 0 4px var(--gds-color); }
-
-.gcal-times { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.gcal-t { display:flex; flex-direction:column; gap:4px; padding:6px 8px; background:var(--bg3); border:1px solid var(--border); border-radius:var(--r); }
-.gcal-t.off .gcal-trow { opacity:.55; }
-.gcal-t.act { border-color:var(--gds-color); box-shadow:0 0 0 2px rgba(16,185,129,.18); }
-.gcal-bdg { display:flex; align-items:baseline; justify-content:space-between; gap:6px; width:100%; padding:3px 7px; font-size:11px; color:var(--text2);
-  background:var(--bg2); border:1px solid var(--border); border-radius:6px; cursor:pointer; text-align:left; }
-.gcal-bdg b { font-weight:700; color:inherit; }
-.gcal-bv { font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
-.gcal-t.act .gcal-bdg { background:var(--gds-color); border-color:var(--gds-color); color:#fff; }
-.gcal-trow { display:flex; align-items:center; gap:4px; }
-.gcal-tin { flex:1 1 auto; width:100%; min-width:0; height:30px; padding:0 2px; text-align:center; font-size:15px; font-weight:700;
-  font-variant-numeric:tabular-nums; color:var(--text); background:var(--bg2); border:1px solid var(--border); border-radius:var(--r-sm); }
-.gcal-tin::placeholder { font-size:11px; font-weight:600; color:var(--text3); }
-.gcal-tin:focus { outline:none; border-color:var(--gds-color); box-shadow:0 0 0 3px rgba(16,185,129,.18); }
-.gcal-tin[aria-invalid="true"] { border-color:var(--red); }
-.gcal-stp { display:flex; flex-direction:column; gap:2px; flex:none; }
-.gcal-stp button { width:22px; height:14px; padding:0; display:flex; align-items:center; justify-content:center; color:var(--text2);
-  background:var(--bg2); border:1px solid var(--border); border-radius:4px; cursor:pointer; }
-.gcal-stp button:hover:not(:disabled) { color:var(--gds-color); border-color:var(--gds-color); }
-.gcal-stp button:disabled, .gcal-tin:disabled { cursor:default; opacity:.5; }
-.gcal-stp .gcal-ic { width:10px; height:10px; }
-
-.gcal-sum { font-size:12px; font-weight:700; color:var(--text); text-align:center; font-variant-numeric:tabular-nums; }
-.gcal-hint { margin-top:-6px; font-size:11px; font-weight:600; color:var(--gds-color); text-align:center; }
-.gcal-act { display:flex; align-items:center; gap:6px; }
-.gcal-sp { flex:1; }
-.gcal-bd { display:none; }
-
-/* phone: bottom sheet, full width */
-@media (max-width: 719px) {
-  .gcal-bd { display:block; position:fixed; inset:0; z-index:58; background:rgba(15,23,42,.45); }
-  .gp2c-rpanel.gcal { position:fixed; left:0; right:0; top:auto; bottom:0; width:auto; max-height:92vh; overflow:auto; z-index:59;
-    border-radius:16px 16px 0 0; padding:14px 14px max(14px, env(safe-area-inset-bottom)); animation:gcalUp .18s ease-out; }
-  .gcal-d { height:40px; }
-  .gcal-d span { width:34px; height:34px; }
-  .gcal-stp button { width:30px; height:19px; }
-  .gcal-tin { height:40px; font-size:17px; }
-  .gcal-nav { width:34px; height:34px; }
-  .gcal-act .gp2-btn { height:38px; }
-}
-@keyframes gcalUp { from { transform:translateY(24px); opacity:.6; } to { transform:none; opacity:1; } }
-@media (prefers-reduced-motion: reduce) { .gp2c-rpanel.gcal { animation:none; } }
 
 /* wide: short search, buttons wrap on the same line */
 @media (min-width: 720px) {
@@ -431,3 +345,72 @@
 .gp2-spin { animation:gp2spin .8s linear infinite; }
 @keyframes gp2spin { to { transform:rotate(360deg); } }
 .gp2-btn.gp2-busy { opacity:.7; cursor:progress; }
+
+/* ============================================================
+   PHONE ONLY (≤719px) — full product names + one group at a time (no horizontal scroll)
+   Desktop (≥720px) is untouched: everything below lives in this media query,
+   except .gp2-pnav which is hidden by default.
+   ============================================================ */
+.gp2-pnav { display:none; }
+@media (max-width: 719px) {
+  .gp2-root { --gp2-nmw:48%; }
+  .gp2-scroll { overflow-x:hidden; }
+  .gp2-sheet { width:100%; min-width:0; }
+  .gp2-cat-h { width:100%; }
+
+  /* left: product column (fixed share, no sticky-left) */
+  .gp2-nmcol { position:static; flex:0 0 var(--gp2-nmw); width:var(--gp2-nmw); min-width:0; }
+  .gp2-hn { font-size:10.5px; }
+  .gp2-name { flex-wrap:wrap; align-content:center; align-items:center; gap:3px 4px; padding:4px 6px; }
+  .gp2-nm { order:1; flex:1 1 100%; font-size:12px; line-height:1.25; white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; }
+  .gp2-sub { order:2; }
+  .gp2-truck, .gp2-eye { order:3; width:24px; height:20px; }
+  .gp2-truck .gp2-ic { width:12px; height:12px; }
+  .gp2-eye .gp2-ic { width:12px; height:12px; }
+
+  /* right: a single group at a time */
+  .gp2-g { flex:1 1 0; min-width:0; }
+  .gp2-g-prep, .gp2-g-charge, .gp2-g-reste { --cw:auto; }
+  .gp2-root:not(.gp2-ph-prep) .gp2-g-prep,
+  .gp2-root:not(.gp2-ph-charge) .gp2-g-charge,
+  .gp2-root:not(.gp2-ph-reste) .gp2-g-reste { display:none; }
+  .gp2-f, .gp2-ro { flex:1 1 0; width:auto; min-width:0; align-self:stretch; align-items:center; }
+  .gp2-ro { justify-content:center; font-size:13px; }
+  .gp2-in { height:34px; font-size:13px; }
+
+  /* header: group title replaced by the ‹ Title › switcher */
+  .gp2-gt { visibility:hidden; }
+  .gp2-gs { width:100%; }
+  .gp2-gs span { flex:1 1 0; width:auto; font-size:10.5px; }
+  .gp2-pnav { display:flex; position:absolute; top:0; right:0; left:var(--gp2-nmw); height:24px; z-index:10;
+    align-items:center; justify-content:space-between; color:#fff; background:var(--gds-color); }
+  .gp2-ph-charge .gp2-pnav { background:var(--orange); }
+  .gp2-ph-reste .gp2-pnav { background:var(--accent); }
+  .gp2-pn-b { width:38px; height:24px; padding:0; border:0; background:transparent; color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  .gp2-pn-b:disabled { opacity:.35; cursor:default; }
+  .gp2-pn-t { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; }
+}
+
+/* phone: toolbar toggle (button in the search row). Collapsed = search + refresh buttons only. */
+.gp2-barbtn { display:none; }
+@media (max-width: 719px) {
+  .gp2-head { touch-action:pan-y; }
+  .gp2-barbtn { display:inline-flex; width:34px; padding:0; flex:none; }
+  .gp2-bar-min .gp2-barbtn svg { transform:rotate(180deg); }
+  .gp2-bar-min .gp2-bar-r > .gp2-seg,
+  .gp2-bar-min .gp2-bar-r > .gp2-menu,
+  .gp2-bar-min .gp2-bar-r > .gp2-vbar,
+  .gp2-bar-min .gp2-ext > .gp2-menu,
+  .gp2-bar-min .gp2-ext > .gp2c-panel,
+  .gp2-bar-min .gp2c-bar > *:not(#gcRefreshBtn):not(.gp2c-alert) { display:none !important; }
+  /* collapsed: search + refresh buttons share one line */
+  .gp2-bar-min .gp2-bar-s { flex:1 1 0; min-width:0; }
+  .gp2-bar-min .gp2-search { min-width:70px; }
+  .gp2-bar-min .gp2-status, .gp2-bar-min #gcRefreshBtn .gp2c-sync { display:none; }
+}
+
+/* phone: the open category goes first, all closed ones stay together below it (visual order only — DOM and logic untouched) */
+@media (max-width: 719px) {
+  .gp2-list { display:flex; flex-direction:column; }
+  .gp2-root:not(.gp2-searching) .gp2-cat:not(.collapsed) { order:-1; }
+}

@@ -24,7 +24,6 @@
   const P = window.GdsPrep2;
   if (!P) return;
   const A = P.api, S = P.state;
-  const GSV = (inner) => `<svg class="gcal-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
   const SPECIAL = "— Chargé sans préparation —";
   // ── auto-refresh settings (edit here) ──────────────────────
   const AUTO_EVERY_MS = 3 * 60 * 1000;     // periodic refresh while the section is visible
@@ -390,176 +389,26 @@
     if (a) a.disabled = !!m;
     return !m;
   }
-  function placeRange() {                       // desktop: flip to the right edge if the panel would leave the screen (mobile is full-width via CSS)
-    const p = $("gcRangePanel"); if (!p) return;
-    p.style.left = ""; p.style.right = "";
-    if (window.matchMedia("(min-width:720px)").matches) {
-      const r = p.getBoundingClientRect();
-      if (r.right > window.innerWidth - 8) { p.style.left = "auto"; p.style.right = "0"; }
-    }
-  }
+  // The calendar itself (grid, month nav, « Depuis » / « À » badges, time fields, summary, bottom sheet…) is the shared
+  // AppDatePicker (src/ui-datepicker.js, mode "range"). The hidden #gcFrom / #gcTo remain the single value carrier
+  // ("YYYY-MM-DDTHH:mm:ss", local), so rangeErr / validateRange / saveRange / syncInputs (validation, save, fetch, remote guard) are unchanged.
   function openRange() {
-    const p = $("gcRangePanel"), b = $("gcRangeBtn"); if (!p) return;
+    const b = $("gcRangeBtn"); if (!b || !window.AppDatePicker) return;
     syncInputs(true);                           // always start from the saved period
-    C.rangeOpen = true; p.hidden = false; if (b) b.setAttribute("aria-expanded", "true");
-    const bd = $("gcRangeBd"); if (bd) bd.hidden = false;
-    rdLoad(); if (RD().dflt) rdCommit(); validateRange(); rdPaint(); placeRange(); rdFocusDay();
-  }
-  function closeRange() {                       // closing without « Appliquer » discards the draft: nothing saved, nothing fetched
-    const p = $("gcRangePanel"), b = $("gcRangeBtn"), bd = $("gcRangeBd");
-    C.rangeOpen = false; if (p) p.hidden = true; if (bd) bd.hidden = true; if (b) b.setAttribute("aria-expanded", "false");
-    syncInputs(true);
-  }
-
-  // ── custom period picker: month calendar (Monday first) + time fields ──────────────
-  // The draft lives in C.rd. The hidden #gcFrom / #gcTo remain the single value carrier ("YYYY-MM-DDTHH:mm", local),
-  // so rangeErr / validateRange / saveRange / syncInputs (validation, save, fetch, remote guard) are unchanged.
-  const RD = () => C.rd || (C.rd = { fd: "", ft: "00:00:00", td: "", tt: "23:59:59", active: "from", note: "", dflt: false, vy: 0, vm: 0, fo: "" });
-  const SUF = (key) => key === "ft" ? ":00" : ":59";                           // typed HH:MM → start :00, end :59
-  const dstr = (y, m, d) => `${y}-${p2(m + 1)}-${p2(d)}`;                    // m is 0-based
-  const dparse = (str) => { const [y, m, d] = str.split("-").map(Number); return new Date(y, m - 1, d); };
-  const tmin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
-  const tfmt = (n) => `${p2(Math.floor(n / 60))}:${p2(n % 60)}`;
-  const capFirst = (x) => x.charAt(0).toUpperCase() + x.slice(1);
-
-  function rdLoad() {                           // draft ← saved period (read from the hidden carriers)
-    const r = RD(), f = $("gcFrom")?.value || "", t = $("gcTo")?.value || "";
-    const sp = (iso, dt) => iso ? [iso.slice(0, 10), iso.slice(11, 19)] : ["", dt];
-    [r.fd, r.ft] = sp(normFrom(f), "00:00:00"); [r.td, r.tt] = sp(normTo(t), "23:59:59");
-    r.active = "from"; r.note = ""; r.dflt = false;
-    if (!r.fd) {                                  // first use (no period yet): proposal = now → end of today (still needs « Appliquer »)
-      const n = new Date(); r.fd = ymd(n); r.ft = `${p2(n.getHours())}:${p2(n.getMinutes())}:00`; r.td = r.fd; r.tt = "23:59:59"; r.dflt = true;
-    }
-    const base = r.fd ? dparse(r.fd) : new Date();
-    r.vy = base.getFullYear(); r.vm = base.getMonth(); r.fo = r.fd || ymd(new Date());
-  }
-  function rdCommit() {                         // draft → hidden carriers → same validation as before
-    const r = RD(), f = $("gcFrom"), t = $("gcTo"); if (!f || !t) return;
-    r.note = "";
-    f.value = r.fd ? `${r.fd}T${r.ft}` : ""; t.value = r.td ? `${r.td}T${r.tt}` : "";
-    validateRange(); rdPaint();
-  }
-  function rdSummary() {
-    const r = RD(); if (!r.fd) return "Choisissez le premier jour";
-    const a = parseLocal(`${r.fd}T${r.ft}`), b = parseLocal(`${r.td}T${r.tt}`);
-    const sh = (d) => `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
-    let out = `${sh(a)} → ${sh(b)}`;
-    const mins = Math.round((b - a) / 60000);
-    if (mins > 0) {
-      const dd = Math.floor(mins / 1440), hh = Math.floor(mins % 1440 / 60), mm = mins % 60, parts = [];
-      if (dd) parts.push(`${dd} j`); if (hh) parts.push(`${hh} h`); if (!dd && mm) parts.push(`${mm} min`);
-      if (parts.length) out += " · " + parts.join(" ");
-    }
-    return out;
-  }
-  function rdPaint() {
-    const grid = $("gcalGrid"); if (!grid) return;
-    const r = RD(), today = ymd(new Date());
-    const hadFocus = grid.contains(document.activeElement);
-    $("gcalTitle").textContent = capFirst(new Date(r.vy, r.vm, 1).toLocaleDateString("fr-FR", { month: "long", year: "numeric" }));
-    const lead = (new Date(r.vy, r.vm, 1).getDay() + 6) % 7;
-    const lo = r.fd, hi = r.td;
-    let h = "";
-    for (let i = 0; i < 42; i++) {
-      const d = new Date(r.vy, r.vm, 1 - lead + i), sd = ymd(d), cls = ["gcal-d"];
-      if (d.getMonth() !== r.vm) cls.push("out");
-      if (sd === today) cls.push("today");
-      if (lo && sd >= lo && sd <= hi) { cls.push("in"); if (sd === lo) cls.push("st"); if (sd === hi) cls.push("en"); }
-      const sel = (lo && sd === lo) || (r.td && sd === r.td); if (sel) cls.push("sel");
-      const lbl = d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-      h += `<button type="button" class="${cls.join(" ")}" data-gc="rday" data-d="${sd}" tabindex="${sd === r.fo ? 0 : -1}" aria-label="${lbl}"${sel ? ' aria-pressed="true"' : ""}${sd === today ? ' aria-current="date"' : ""}><span>${d.getDate()}</span></button>`;
-    }
-    grid.innerHTML = h;
-    if (hadFocus) rdFocusDay();
-    // time fields (typing in a field is never overwritten while it has focus)
-    ["from", "to"].forEach(sd => {
-      const set = sd === "from" ? !!r.fd : !!r.td, inp = $("gcalT_" + sd); if (!inp) return;
-      if (document.activeElement !== inp) { inp.value = set ? (sd === "from" ? r.ft : r.tt).slice(0, 5) : ""; inp.removeAttribute("aria-invalid"); }
-      inp.disabled = !set;
-      document.querySelectorAll(`.gcal-t[data-side="${sd}"] .gcal-stp button`).forEach(b => { b.disabled = !set; });
-      const card = document.querySelector(`.gcal-t[data-side="${sd}"]`);
-      if (card) { card.classList.toggle("off", !set); card.classList.toggle("act", r.active === sd); }
-      const bd = card && card.querySelector(".gcal-bdg");
-      if (bd) {                                   // badge = live date + time (no seconds)
-        bd.setAttribute("aria-pressed", String(r.active === sd));
-        const v = bd.querySelector(".gcal-bv");
-        if (v) v.textContent = set ? `${r.fd && sd === "from" ? r.fd.slice(8, 10) + "/" + r.fd.slice(5, 7) : r.td.slice(8, 10) + "/" + r.td.slice(5, 7)} ${(sd === "from" ? r.ft : r.tt).slice(0, 5)}` : "";
-      }
+    AppDatePicker.open(b, {
+      mode: "range", withTime: true,
+      value: { from: $("gcFrom")?.value || "", to: $("gcTo")?.value || "" },
+      onApply: applyRange,
+      onClose: () => { C.rangeOpen = false; syncInputs(true); },   // closing without « Appliquer » discards the draft: nothing saved, nothing fetched
     });
-    const sum = $("gcalSum"); if (sum) sum.textContent = rdSummary();
-    const hint = $("gcalHint"); if (hint) { hint.hidden = r.active !== "to"; hint.textContent = "Choisissez le dernier jour"; }
-    const note = $("gcalNote"); if (note) { note.hidden = !r.note; note.textContent = r.note; }
+    C.rangeOpen = AppDatePicker.isOpen();
   }
-  function rdFocusDay() { const g = $("gcalGrid"); g?.querySelector('[tabindex="0"]')?.focus(); }
-  function rdGoto(sd, focus) {                  // move the roving focus (and the visible month) to a day
-    const r = RD(), d = dparse(sd);
-    r.fo = sd; r.vy = d.getFullYear(); r.vm = d.getMonth();
-    rdPaint(); if (focus) rdFocusDay();
-  }
-  function rdNav(dir) {                         // previous / next month, keeping the same day number when possible
-    const r = RD(), cur = dparse(r.fo), first = new Date(r.vy, r.vm + dir, 1);
-    const last = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
-    r.vy = first.getFullYear(); r.vm = first.getMonth();
-    r.fo = dstr(r.vy, r.vm, Math.min(cur.getDate(), last));
-    rdPaint();
-  }
-  function rdPick(sd) {
-    // Badge « Depuis » active (default): one click = that whole day (start = current time HH:mm, end = 23:59:59).
-    // Badge « À » active: the click only moves the end date (23:59:59), refused when before the start; then back to « Depuis ».
-    const r = RD(); r.fo = sd; r.note = "";
-    if (r.active === "to" && r.fd) {
-      if (sd < r.fd) { r.note = "La date « À » ne peut pas précéder « Depuis »"; rdPaint(); rdFocusDay(); return; }
-      r.td = sd; r.tt = "23:59:59"; r.active = "from";
-    } else {
-      const n = new Date();
-      r.fd = sd; r.ft = `${p2(n.getHours())}:${p2(n.getMinutes())}:00`; r.td = sd; r.tt = "23:59:59"; r.active = "from";
-    }
-    const d = dparse(sd); r.vy = d.getFullYear(); r.vm = d.getMonth();
-    rdCommit(); rdFocusDay();
-  }
-  function rdSide(side) { const r = RD(); r.active = side === "to" ? "to" : "from"; r.note = ""; rdPaint(); }
-  function rdStep(side, unit, dir) {            // ± 1 h / ± 5 min, clamped inside the day
-    const r = RD(), key = side === "from" ? "ft" : "tt";
-    if (side === "from" ? !r.fd : !r.td) return;
-    r[key] = tfmt(Math.max(0, Math.min(1439, tmin(r[key]) + (unit === "h" ? 60 : 5) * dir))) + SUF(key);
-    rdCommit();
-  }
-  function rdTimeInput(inp) {                   // typed HH:MM (also accepts 930 / 0930 / 9:30); invalid → previous value kept
-    const r = RD(), side = inp.dataset.side, key = side === "from" ? "ft" : "tt";
-    const v = inp.value.trim(); let m = /^(\d{1,2})[:h.](\d{1,2})$/.exec(v) || /^(\d{1,2})(\d{2})$/.exec(v);
-    if (!m || +m[1] > 23 || +m[2] > 59) { inp.setAttribute("aria-invalid", "true"); inp.value = r[key].slice(0, 5); return false; }
-    inp.removeAttribute("aria-invalid"); inp.value = `${p2(+m[1])}:${p2(+m[2])}`; r[key] = inp.value + SUF(key);
-    rdCommit(); return true;
-  }
-  function rdGridKey(e) {                       // arrows move by day / week, PageUp/PageDown by month, Home/End = week edges
-    const r = RD(), d = dparse(r.fo), mv = (n) => ymd(new Date(d.getFullYear(), d.getMonth(), d.getDate() + n));
-    const wk = (d.getDay() + 6) % 7;
-    let t = null;
-    if (e.key === "ArrowLeft") t = mv(-1); else if (e.key === "ArrowRight") t = mv(1);
-    else if (e.key === "ArrowUp") t = mv(-7); else if (e.key === "ArrowDown") t = mv(7);
-    else if (e.key === "Home") t = mv(-wk); else if (e.key === "End") t = mv(6 - wk);
-    else if (e.key === "PageUp" || e.key === "PageDown") {
-      const n = new Date(d.getFullYear(), d.getMonth() + (e.key === "PageUp" ? -1 : 1), 1);
-      t = dstr(n.getFullYear(), n.getMonth(), Math.min(d.getDate(), new Date(n.getFullYear(), n.getMonth() + 1, 0).getDate()));
-    }
-    if (t) { e.preventDefault(); rdGoto(t, true); }
-  }
-  function rdTimeKey(e) {                       // Enter = validate the field and apply ; ↑/↓ = ± 1 h (caret before « : ») or ± 1 min
-    const inp = e.target;
-    if (e.key === "Enter") { e.preventDefault(); if (rdTimeInput(inp)) applyRange(); }
-    else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-      e.preventDefault(); if (!rdTimeInput(inp)) return;
-      const hours = (inp.selectionStart ?? 0) <= 2, caret = inp.selectionStart;
-      const r = RD(), key = inp.dataset.side === "from" ? "ft" : "tt";
-      r[key] = tfmt(Math.max(0, Math.min(1439, tmin(r[key]) + (hours ? 60 : 1) * (e.key === "ArrowUp" ? 1 : -1)))) + SUF(key);
-      inp.value = r[key].slice(0, 5); rdCommit(); try { inp.setSelectionRange(caret, caret); } catch (_) {}
-    }
-  }
-  async function applyRange() {
+  function closeRange() { if (window.AppDatePicker) AppDatePicker.close(); }
+  function applyRange(v) {                      // « Appliquer »: draft → carriers → same validation / save / refetch as before; the picker then closes (carriers re-synced)
+    const f = $("gcFrom"), t = $("gcTo"); if (!f || !t) return;
+    f.value = v.from; t.value = v.to;
     if (!validateRange()) return;
-    const pr = saveRange();                     // unchanged logic: validates, saves the shared period, then refetches
-    closeRange();
-    await pr;
+    return saveRange();                         // unchanged logic: validates, saves the shared period, then refetches
   }
   function vanKey(pk) {                             // same key as the jumlage detection: van name without "(n)"
     const clean = (v) => String(v || "").replace(/^"|"$/g, "").replace(/\s*\(\d+\)\s*$/, "").trim().toLowerCase();
@@ -674,36 +523,7 @@
       <div class="gp2c-bar">
         <div class="gc-range" data-perm="prep_depuis_a">
           <button type="button" class="gp2-btn gp2c-rbtn" id="gcRangeBtn" data-gc="rangemenu" aria-haspopup="dialog" aria-expanded="false">${A.ic("calendar")}<span class="gp2c-rtxt" id="gcRangeTxt"></span><i class="gp2c-dot" id="gcRangeDot" hidden></i></button>
-          <div class="gcal-bd" id="gcRangeBd" data-gc="rangeclose" hidden></div>
-          <div class="gp2-panel gp2c-rpanel gcal" id="gcRangePanel" role="dialog" aria-label="Période" hidden>
-            <input id="gcFrom" type="hidden" value="${A.esc(normFrom(ch.from))}"><input id="gcTo" type="hidden" value="${A.esc(pickerTo(ch))}">
-            <div class="gcal-head">
-              <button type="button" class="gcal-nav" data-gc="rnav" data-dir="-1" title="Mois précédent" aria-label="Mois précédent">${GSV('<polyline points="15 18 9 12 15 6"/>')}</button>
-              <span class="gcal-title" id="gcalTitle" aria-live="polite"></span>
-              <button type="button" class="gcal-nav" data-gc="rnav" data-dir="1" title="Mois suivant" aria-label="Mois suivant">${GSV('<polyline points="9 18 15 12 9 6"/>')}</button>
-            </div>
-            <div class="gcal-wd" aria-hidden="true"><span>L</span><span>M</span><span>M</span><span>J</span><span>V</span><span>S</span><span>D</span></div>
-            <div class="gcal-grid" id="gcalGrid" role="group" aria-label="Calendrier"></div>
-            <div class="gcal-times">
-              ${["from", "to"].map(sd => `<div class="gcal-t" data-side="${sd}">
-                <button type="button" class="gcal-bdg" data-gc="rside" data-side="${sd}" aria-pressed="${sd === "from"}" title="${sd === "from" ? "Le prochain jour choisi fixe la journée entière" : "Le prochain jour choisi fixe seulement la date de fin"}"><b>${sd === "from" ? "Depuis" : "À"}</b><span class="gcal-bv"></span></button>
-                <div class="gcal-trow">
-                  <div class="gcal-stp" title="Heures"><button type="button" data-gc="rtstep" data-side="${sd}" data-u="h" data-dir="1" aria-label="Heure +1">${GSV('<polyline points="18 15 12 9 6 15"/>')}</button><button type="button" data-gc="rtstep" data-side="${sd}" data-u="h" data-dir="-1" aria-label="Heure −1">${GSV('<polyline points="6 9 12 15 18 9"/>')}</button></div>
-                  <input class="gcal-tin" id="gcalT_${sd}" data-gc="rtime" data-side="${sd}" type="text" inputmode="numeric" maxlength="5" autocomplete="off" placeholder="HH:MM" aria-label="${sd === "from" ? "Heure de début" : "Heure de fin"} (HH:MM)">
-                  <div class="gcal-stp" title="Minutes"><button type="button" data-gc="rtstep" data-side="${sd}" data-u="m" data-dir="1" aria-label="Minutes +5">${GSV('<polyline points="18 15 12 9 6 15"/>')}</button><button type="button" data-gc="rtstep" data-side="${sd}" data-u="m" data-dir="-1" aria-label="Minutes −5">${GSV('<polyline points="6 9 12 15 18 9"/>')}</button></div>
-                </div>
-              </div>`).join("")}
-            </div>
-            <div class="gcal-sum" id="gcalSum" aria-live="polite"></div>
-            <div class="gcal-hint" id="gcalHint" hidden></div>
-            <div class="gp2c-rerr" id="gcalNote" role="alert" hidden></div>
-            <div class="gp2c-rerr" id="gcRangeErr" role="alert" hidden></div>
-            <div class="gcal-act">
-              <span class="gcal-sp"></span>
-              <button type="button" class="gp2-btn" data-gc="rcancel">Annuler</button>
-              <button type="button" class="gp2-btn gp2c-rapply" id="gcRangeApply" data-gc="rangeapply">Appliquer</button>
-            </div>
-          </div>
+          <input id="gcFrom" type="hidden" value="${A.esc(normFrom(ch.from))}"><input id="gcTo" type="hidden" value="${A.esc(pickerTo(ch))}">
         </div>
         <button type="button" class="gp2-btn gp2c-refbtn" id="gcRefreshBtn" data-perm="prep_charge_actualiser" data-gc="refresh" title="Actualiser le chargement depuis Odoo">Actualiser<span class="gp2c-sync" id="gcSync"></span></button>
         <button type="button" class="gp2-btn" data-gc="bons" id="gcBonsBtn">Bons</button>
@@ -1136,19 +956,11 @@
       else if (a === "oodlist") openOodModal();
       else if (a === "colsmenu") { const p = $("gcColsPanel"); p.hidden = !p.hidden; }
       else if (a === "rangemenu") { if (C.rangeOpen) closeRange(); else openRange(); }
-      else if (a === "rangeapply") applyRange();
-      else if (a === "rday") rdPick(b.dataset.d);
-      else if (a === "rnav") rdNav(+b.dataset.dir);
-      else if (a === "rtstep") rdStep(b.dataset.side, b.dataset.u, +b.dataset.dir);
-      else if (a === "rside") rdSide(b.dataset.side);
-      else if (a === "rcancel") { closeRange(); $("gcRangeBtn")?.focus(); }
-      else if (a === "rangeclose") closeRange();
     });
     root.addEventListener("input", (e) => { if (e.target.id === "gcFrom" || e.target.id === "gcTo") validateRange(); });
     root.addEventListener("change", (e) => {
       const t = e.target;
       if (t.dataset?.gc === "col") { const c = cols(); c[t.dataset.col] = t.checked; A.lsSet(colsKey(), c); applyCols(); }
-      else if (t.dataset?.gc === "rtime") rdTimeInput(t);
     });
     root.addEventListener("focusout", () => setTimeout(() => {          // deferred rebuild (new product) once the worker leaves the field
       if (C.pendingBuild && !isTyping()) { C.pendingBuild = false; A.buildUI(); }
@@ -1156,20 +968,14 @@
     root.addEventListener("keydown", (e) => {
       if (e.target.id === "gcOodRef" && e.key === "Enter") { e.preventDefault(); addOod(); }
       else if ((e.target.id === "gcFrom" || e.target.id === "gcTo") && e.key === "Enter") { e.preventDefault(); applyRange(); }
-      else if (e.target.classList?.contains("gcal-d")) rdGridKey(e);
-      else if (e.target.dataset?.gc === "rtime") rdTimeKey(e);
     });
     document.addEventListener("click", (e) => {
       const p = $("gcColsPanel"); if (p && !p.hidden && !e.target.closest(".gp2-menu")) p.hidden = true;
-      // outside click = cancel. composedPath: the calendar re-renders on click, so e.target may already be detached.
-      const inRange = (e.composedPath ? e.composedPath() : [e.target]).some(n => n && n.classList && n.classList.contains("gc-range"));
-      if (C.rangeOpen && !inRange) closeRange();
     });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && C.rangeOpen) { closeRange(); $("gcRangeBtn")?.focus(); } });
   }
 
   P.on("built", () => {
-    ensureWh(); bind(); recompute(); applyCols(); C.rangeOpen = false;      // a rebuilt UI always starts with the popover closed
+    closeRange(); ensureWh(); bind(); recompute(); applyCols(); C.rangeOpen = false;      // a rebuilt UI always starts with the popover closed
     const pnl = $("gcPanel"); if (pnl) pnl.hidden = !C.panelOpen;
     const row = $("gcOodRow"); if (row) row.hidden = !C.oodRow;
     repaintAll(); fitBar(); setTimeout(fitBar, 300); paintReportBtn();

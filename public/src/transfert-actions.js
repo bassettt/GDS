@@ -92,9 +92,9 @@
       if (!r.ok) throw new Error("HTTP " + r.status);
       _defaultMode = m; _defaultAt = Date.now();
       refreshAllRows(); syncSwitch();
-      if (typeof addNotif === "function") addNotif("Mode d'impression par défaut : " + (m === "gds" ? "App" : "Odoo") + " ✓", "success");
+      if (typeof addNotif === "function") addNotif("Mode d'impression par défaut : " + (m === "gds" ? "App" : "Odoo"), "success");
     } catch (e) {
-      if (typeof addNotif === "function") addNotif("⚠ Mode d'impression par défaut non enregistré : " + e.message, "error");
+      if (typeof addNotif === "function") addNotif("Mode d'impression par défaut non enregistré : " + e.message, "error");
       const sel = document.getElementById("printModeDefault"); if (sel) sel.value = _defaultMode;
     }
   }

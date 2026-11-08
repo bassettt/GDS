@@ -248,8 +248,8 @@
 
           <!-- Card: Permissions par rôle -->
           <div id="rolePermissionsContainer" style="display:none">
-            <div class="settings-card" onclick="_openSettingsModal('modalPermissions')">
-              <div class="settings-card-icon">🔐</div>
+            <div class="settings-card" onclick="_openSettingsModal('modalPermissions'); renderRolePermissionsUI();">
+              <div class="settings-card-icon" data-icon="shield" data-size="20"></div>
               <div class="settings-card-text">
                 <div class="settings-card-title">Permissions par rôle</div>
                 <div class="settings-card-desc">Gérer les boutons visibles par rôle</div>
@@ -260,7 +260,7 @@
 
           <!-- Card: Impression Chargement GDS -->
           <div class="settings-card" onclick="_openSettingsModal('modalChargement')">
-            <div class="settings-card-icon">🖨️</div>
+            <div class="settings-card-icon" data-icon="printer" data-size="20"></div>
             <div class="settings-card-text">
               <div class="settings-card-title">Impression Chargement GDS</div>
               <div class="settings-card-desc">Colonnes, mise en page, tailles de police</div>
@@ -270,7 +270,7 @@
 
           <!-- Card: Comportement & Validation -->
           <div class="settings-card" onclick="_openSettingsModal('modalComportement')">
-            <div class="settings-card-icon">⚙️</div>
+            <div class="settings-card-icon" data-icon="settings" data-size="20"></div>
             <div class="settings-card-text">
               <div class="settings-card-title">Comportement & Validation</div>
               <div class="settings-card-desc">Mode débogage (dépassement du stock)</div>
@@ -281,7 +281,7 @@
           <!-- Card: Gestion des utilisateurs -->
           <div id="userManagementContainer" style="display:none">
             <div class="settings-card" onclick="_openSettingsModal('modalUsers')">
-              <div class="settings-card-icon">👥</div>
+              <div class="settings-card-icon" data-icon="users" data-size="20"></div>
               <div class="settings-card-text">
                 <div class="settings-card-title">Gestion des utilisateurs</div>
                 <div class="settings-card-desc">Créer, modifier ou supprimer des utilisateurs</div>
@@ -291,11 +291,11 @@
           </div>
 
           <!-- Card: Stock Final -->
-          <div class="settings-card" onclick="_openSettingsModal('modalStockFinal'); setTimeout(()=>{ sfRenderDistributeursList(sfGetDistributeurs()); const sel=document.getElementById('sfColumnsPerRow'); if(sel) sel.value=localStorage.getItem('sf_columns_per_row')||'1'; },0);">
-            <div class="settings-card-icon">📦</div>
+          <div class="settings-card" onclick="_openSettingsModal('modalStockFinal'); setTimeout(()=>{ sfOpenSettings(); const sel=document.getElementById('sfColumnsPerRow'); if(sel) sel.value=localStorage.getItem('sf_columns_per_row')||'1'; },0);">
+            <div class="settings-card-icon" data-icon="box" data-size="20"></div>
             <div class="settings-card-text">
               <div class="settings-card-title">Stock Final</div>
-              <div class="settings-card-desc">Importer la liste des distributeurs (NOM / ID)</div>
+              <div class="settings-card-desc">Distributeurs : synchro Odoo, ordre, masquage, import (NOM / ID)</div>
             </div>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;color:var(--text3)"><polyline points="9 18 15 12 9 6"/></svg>
           </div>
@@ -303,7 +303,7 @@
           <!-- Card: Entrepôts -->
           <div id="warehouseSettingsContainer" style="display:none">
             <div class="settings-card" onclick="_openSettingsModal('modalWarehouse'); renderWarehouseSettingsUI();">
-              <div class="settings-card-icon">🏭</div>
+              <div class="settings-card-icon" data-icon="warehouse" data-size="20"></div>
               <div class="settings-card-text">
                 <div class="settings-card-title">Entrepôts</div>
                 <div class="settings-card-desc">Stock GDS et source préparation par entrepôt</div>
@@ -314,7 +314,7 @@
 
           <!-- Card: Ordre des produits -->
           <div class="settings-card" onclick="_openSettingsModal('modalProduitNames'); _initProduitNamesModal();">
-            <div class="settings-card-icon">🏷️</div>
+            <div class="settings-card-icon" data-icon="tag" data-size="20"></div>
             <div class="settings-card-text">
               <div class="settings-card-title">Ordre des produits</div>
               <div class="settings-card-desc">Ordre d'affichage des produits (import Excel)</div>
@@ -336,7 +336,7 @@
 
           <!-- Card: Ordre des catégories -->
           <div class="settings-card" onclick="_openSettingsModal('modalCategories')">
-            <div class="settings-card-icon">📋</div>
+            <div class="settings-card-icon" data-icon="clipboard" data-size="20"></div>
             <div class="settings-card-text">
               <div class="settings-card-title">Ordre des catégories</div>
               <div class="settings-card-desc">Réordonner les catégories par glisser-déposer</div>
@@ -366,7 +366,7 @@
         .toggle-slider:before { content:"";position:absolute;width:14px;height:14px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s; }
         .toggle-switch input:checked + .toggle-slider { background:var(--accent,#1a6b3a); }
         .toggle-switch input:checked + .toggle-slider:before { transform:translateX(16px); }
-        .settings-card-icon { font-size:20px;width:32px;text-align:center;flex-shrink:0; }
+        .settings-card-icon { width:32px;display:flex;align-items:center;justify-content:center;flex-shrink:0; }
         .settings-card-text { flex:1; }
         .settings-card-title { font-size:13px;font-weight:600;color:var(--text1); }
         .settings-card-desc  { font-size:11px;color:var(--text3);margin-top:2px; }
@@ -384,11 +384,13 @@
           display:flex;align-items:center;justify-content:space-between;
           padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0;
         }
-        .smodal-title { font-size:14px;font-weight:700;color:var(--text1); }
+        .smodal-title { font-size:14px;font-weight:700;color:var(--text1);display:inline-flex;align-items:center;gap:8px;min-width:0; }
         .smodal-close {
           background:none;border:none;cursor:pointer;color:var(--text3);
-          font-size:18px;padding:0 4px;line-height:1;
+          font-size:18px;padding:4px;line-height:1;border-radius:6px;
+          display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
         }
+        .smodal-close:hover { background:var(--bg3);color:var(--text2); }
         .smodal-body {
           flex:1;overflow-y:auto;padding:16px;-webkit-overflow-scrolling:touch;
         }
@@ -402,8 +404,8 @@
       <div class="smodal-overlay" id="modalWarehouse">
         <div class="smodal-box">
           <div class="smodal-header">
-            <span class="smodal-title">🏭 Entrepôts</span>
-            <button class="smodal-close" onclick="_closeSettingsModal('modalWarehouse')">✕</button>
+            <span class="smodal-title"><span class="ui-ic" data-icon="warehouse" data-size="16"></span>Entrepôts</span>
+            <button class="smodal-close" onclick="_closeSettingsModal('modalWarehouse')" aria-label="Fermer"><span class="ui-ic" data-icon="x" data-size="18"></span></button>
           </div>
           <div class="smodal-body">
             <div id="warehouseSettingsSection">Chargement…</div>
@@ -416,17 +418,17 @@
 
       <!-- Modal: Permissions par rôle -->
       <div class="smodal-overlay" id="modalPermissions">
-        <div class="smodal-box">
+        <div class="smodal-box rp-box">
           <div class="smodal-header">
-            <span class="smodal-title">🔐 Permissions par rôle</span>
-            <button class="smodal-close" onclick="_closeSettingsModal('modalPermissions')">✕</button>
+            <span class="smodal-title"><span class="ui-ic" data-icon="shield" data-size="16"></span>Permissions par rôle</span>
+            <button type="button" id="permStatus" class="rp-status" data-state="idle" aria-live="polite" disabled></button>
+            <button class="smodal-close" onclick="_closeSettingsModal('modalPermissions')" aria-label="Fermer"><span class="ui-ic" data-icon="x" data-size="18"></span></button>
           </div>
           <div class="smodal-body">
-            <p class="settings-hint">Décochez un bouton pour le masquer pour ce rôle.</p>
-            <div id="rolePermissionsSection" style="margin-top:8px;"></div>
+            <div id="rolePermissionsSection"></div>
           </div>
           <div class="smodal-footer">
-            <button class="gds-refresh-btn" onclick="renderRolePermissionsUI()">Actualiser</button>
+            <button class="gds-refresh-btn" onclick="renderRolePermissionsUI()"><span class="ui-ic" data-icon="refresh" data-size="13"></span> Actualiser</button>
             <button class="gds-refresh-btn" style="background:var(--accent);" onclick="_closeSettingsModal('modalPermissions')">Fermer</button>
           </div>
         </div>
@@ -436,8 +438,8 @@
       <div class="smodal-overlay" id="modalChargement">
         <div class="smodal-box">
           <div class="smodal-header">
-            <span class="smodal-title">🖨️ Impression Chargement GDS</span>
-            <button class="smodal-close" onclick="_closeSettingsModal('modalChargement')">✕</button>
+            <span class="smodal-title"><span class="ui-ic" data-icon="printer" data-size="16"></span>Impression Chargement GDS</span>
+            <button class="smodal-close" onclick="_closeSettingsModal('modalChargement')" aria-label="Fermer"><span class="ui-ic" data-icon="x" data-size="18"></span></button>
           </div>
           <div class="smodal-body">
             <div style="margin-top:6px;">
@@ -486,8 +488,8 @@
       <div class="smodal-overlay" id="modalComportement">
         <div class="smodal-box">
           <div class="smodal-header">
-            <span class="smodal-title">⚙️ Comportement & Validation</span>
-            <button class="smodal-close" onclick="_closeSettingsModal('modalComportement')">✕</button>
+            <span class="smodal-title"><span class="ui-ic" data-icon="settings" data-size="16"></span>Comportement & Validation</span>
+            <button class="smodal-close" onclick="_closeSettingsModal('modalComportement')" aria-label="Fermer"><span class="ui-ic" data-icon="x" data-size="18"></span></button>
           </div>
           <div class="smodal-body">
             <div style="margin-top:6px;">
@@ -507,8 +509,8 @@
       <div class="smodal-overlay" id="modalUsers">
         <div class="smodal-box">
           <div class="smodal-header">
-            <span class="smodal-title">👥 Gestion des utilisateurs</span>
-            <button class="smodal-close" onclick="_closeSettingsModal('modalUsers')">✕</button>
+            <span class="smodal-title"><span class="ui-ic" data-icon="users" data-size="16"></span>Gestion des utilisateurs</span>
+            <button class="smodal-close" onclick="_closeSettingsModal('modalUsers')" aria-label="Fermer"><span class="ui-ic" data-icon="x" data-size="18"></span></button>
           </div>
           <div class="smodal-body">
             <div id="userManagementSection" style="margin-top:8px;"></div>
@@ -524,17 +526,27 @@
       <div class="smodal-overlay" id="modalStockFinal">
         <div class="smodal-box">
           <div class="smodal-header">
-            <span class="smodal-title">📦 Stock Final — Distributeurs</span>
-            <button class="smodal-close" onclick="_closeSettingsModal('modalStockFinal')">✕</button>
+            <span class="smodal-title"><span class="ui-ic" data-icon="box" data-size="16"></span>Stock Final — Distributeurs</span>
+            <button class="smodal-close" onclick="_closeSettingsModal('modalStockFinal')" aria-label="Fermer"><span class="ui-ic" data-icon="x" data-size="18"></span></button>
           </div>
           <div class="smodal-body">
             <p class="settings-hint" style="margin:0 0 10px;">Importez un fichier Excel avec les colonnes <b>NOM</b> et <b>ID</b>.</p>
             <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
-              <label style="display:inline-block;padding:7px 14px;background:var(--accent);color:#fff;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">
-                📂 Importer Excel
+              <label style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;background:var(--accent);color:#fff;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">
+                <span class="ui-ic" data-icon="folder" data-size="14"></span> Importer Excel
                 <input type="file" id="sfImportFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="setTimeout(()=>sfImportDistributeurs(this),0)"/>
               </label>
               <button class="gds-refresh-btn" onclick="setTimeout(()=>sfAddDistributeurRow(),0)" style="font-size:12px;">+ Ajouter manuellement</button>
+              <button class="gds-refresh-btn" id="sfSyncBtn" onclick="sfSyncFromOdoo()" style="font-size:12px;display:inline-flex;align-items:center;gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                Synchroniser depuis Odoo
+              </button>
+            </div>
+            <div class="sfd-add" id="sfAddForm" style="display:none;">
+              <input id="sfAddNom" class="sfd-nom" placeholder="NOM" autocomplete="off" aria-label="Nom" onkeydown="if(event.key==='Enter')sfConfirmAddDist()"/>
+              <input id="sfAddId" class="sfd-nom sfd-add-id" placeholder="ID" autocomplete="off" inputmode="numeric" aria-label="ID" onkeydown="if(event.key==='Enter')sfConfirmAddDist()"/>
+              <button type="button" class="sfd-ib sfd-ib--ok" onclick="sfConfirmAddDist()" title="Ajouter" aria-label="Ajouter"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg></button>
+              <button type="button" class="sfd-ib" onclick="sfCancelAddDist()" title="Annuler" aria-label="Annuler"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
             <div id="sfImportStatus" style="margin-bottom:8px;font-size:11px;color:var(--text2);min-height:16px;"></div>
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
@@ -549,8 +561,8 @@
             <div id="sfDistributeursList"></div>
           </div>
           <div class="smodal-footer">
-            <button class="gds-refresh-btn" style="background:#ef4444;color:#fff;" onclick="sfClearDistributeurs()">🗑 Effacer tout</button>
-            <button class="gds-refresh-btn" style="background:var(--accent);" onclick="_closeSettingsModal('modalStockFinal'); if(document.getElementById('gdsStockFinalContent')?.style.display !== 'none') renderGdsStockFinal();">Fermer</button>
+            <button class="gds-refresh-btn" style="background:#ef4444;color:#fff;" onclick="sfClearDistributeurs()"><span class="ui-ic" data-icon="trash" data-size="14"></span> Effacer tout</button>
+            <button class="gds-refresh-btn" style="background:var(--accent);" onclick="_closeSettingsModal('modalStockFinal'); if(document.getElementById('gdsStockFinalContent')?.style.display !== 'none') sfRenderFromCache();">Fermer</button>
           </div>
         </div>
       </div>
@@ -559,8 +571,8 @@
       <div class="smodal-overlay" id="modalCategories">
         <div class="smodal-box">
           <div class="smodal-header">
-            <span class="smodal-title">📋 Ordre des catégories</span>
-            <button class="smodal-close" onclick="_closeSettingsModal('modalCategories')">✕</button>
+            <span class="smodal-title"><span class="ui-ic" data-icon="clipboard" data-size="16"></span>Ordre des catégories</span>
+            <button class="smodal-close" onclick="_closeSettingsModal('modalCategories')" aria-label="Fermer"><span class="ui-ic" data-icon="x" data-size="18"></span></button>
           </div>
           <div class="smodal-body">
             <p class="settings-hint">Faites glisser pour réordonner. S'applique à Stock, Vans, Préparation et impressions PDF.</p>
@@ -582,21 +594,21 @@
       <div class="smodal-overlay" id="modalProduitNames">
         <div class="smodal-box">
           <div class="smodal-header">
-            <span class="smodal-title">🏷️ Ordre des produits</span>
-            <button class="smodal-close" onclick="_closeSettingsModal('modalProduitNames')">✕</button>
+            <span class="smodal-title"><span class="ui-ic" data-icon="tag" data-size="16"></span>Ordre des produits</span>
+            <button class="smodal-close" onclick="_closeSettingsModal('modalProduitNames')" aria-label="Fermer"><span class="ui-ic" data-icon="x" data-size="18"></span></button>
           </div>
           <div class="smodal-body">
             <p class="settings-hint">Téléchargez le modèle, modifiez l'ordre, puis importez le fichier.</p>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
               <button class="gds-refresh-btn" id="btnDownloadProdTemplate" style="background:var(--accent);" onclick="_downloadProdTemplate()">
-                ⬇ Télécharger le modèle
+                <span class="ui-ic" data-icon="download" data-size="14"></span> Télécharger le modèle
               </button>
               <label class="gds-refresh-btn" style="cursor:pointer;">
-                ⬆ Importer Excel
+                <span class="ui-ic" data-icon="upload" data-size="14"></span> Importer Excel
                 <input type="file" id="inputProdNamesFile" accept=".xlsx,.xls" style="display:none;" onchange="_onProdNamesFileImport(this)">
               </label>
               <button class="gds-refresh-btn" style="background:var(--red);" onclick="_resetProdNames()">
-                ✕ Réinitialiser
+                <span class="ui-ic" data-icon="reset" data-size="14"></span> Réinitialiser
               </button>
             </div>
             <div id="prodNamesStatus" style="font-size:11px;color:var(--text2);margin-bottom:8px;"></div>
@@ -645,10 +657,12 @@
 
   <!-- Scripts — order matters -->
   <script src="/src/lib/xlsx.full.min.js"></script>
+<script src="/src/ui-datepicker.js"></script>
 <script src="/src/ui-dialog.js"></script>
 <script src="/src/storage.js"></script>
 <script src="/src/utils.js"></script>
 <script src="/src/renderer.js"></script>
+<script src="/src/ui-icons.js"></script>
 <script src="/src/auth.js"></script>
 <script src="/src/name-dict.js"></script>
 <script src="/src/app.js"></script>

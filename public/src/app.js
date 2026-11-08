@@ -1,3 +1,6 @@
+// Nom de produit abrégé (dictionnaire) — fonction hissée + globale: utilisable partout, affichage/export uniquement
+function _sfPn(n) { try { return (typeof NameDict !== "undefined" && n != null) ? NameDict.shortName(String(n)) : n; } catch (_) { return n; } }
+window._sfPn = _sfPn;
 // ============================================================
 // src/app.js — Wafa PWA v1.0
 // ORCHESTRATION: state + events + RPC calls (direct, no SW proxy)
@@ -505,7 +508,6 @@ async function renderGdsTransferts() {
       .gds-tr-ref-short { display:none; }
       .gds-tr-action-cell { display:flex; gap:4px; align-items:center; }
       .gds-tr-action-btn  { padding:2px 8px; }
-      .gds-tr-date-input.flatpickr-input:not(.flatpickr-mobile) { display:none !important; }
       @media (max-width:600px) {
         .gds-tr-action-cell { flex-direction:column; gap:2px; }
         .gds-tr-action-btn  { padding:2px 4px; font-size:11px; }
@@ -614,7 +616,8 @@ async function gdsShowPickingDetail(pickingId, pickingName) {
     });
 
     moves.forEach(m => {
-      const name = m.product_id?.[1] || m.product_tmpl_id?.[1] || "—";
+      const rawName = m.product_id?.[1] || m.product_tmpl_id?.[1] || "—";
+      const name = rawName === "—" ? rawName : (_sfPn(String(rawName).replace(/^\[.*?\]\s*/, "")) || rawName);   // nom abrégé (dictionnaire), sans [REF]
       const pid = m.product_id?.[0];
       const qty = m.product_uom_qty || 0;
       const pkgQty = pkgMap[pid] || 0;
@@ -646,38 +649,18 @@ function _gdsTrSetDate(val) {
   renderGdsTransferts();
 }
 
-function _gdsTrInitDatePicker(currentVal) {
-  function _load(cb) {
-    if (window.flatpickr) { cb(); return; }
-    const link = document.createElement("link");
-    link.rel = "stylesheet";
-    link.href = "https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css";
-    document.head.appendChild(link);
-    const s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/flatpickr";
-    s.onload = cb;
-    document.head.appendChild(s);
-  }
-  _load(() => {
-    const el = document.getElementById("gdsTrDateInput");
-    if (!el || el._flatpickr) return;
-    flatpickr(el, {
-      dateFormat: "d/m/Y",
-      allowInput: false,
-      locale: { firstDayOfWeek: 1 },
-      defaultDate: currentVal ? (() => {
-        const [y,m,d] = currentVal.split("-");
-        return new Date(+y, +m-1, +d);
-      })() : null,
-      onChange: ([date]) => {
-        if (!date) return;
-        const y = date.getFullYear();
-        const m = String(date.getMonth()+1).padStart(2,"0");
-        const d = String(date.getDate()).padStart(2,"0");
-        _gdsTrSetDate(`${y}-${m}-${d}`);
-      }
-    });
+function _gdsTrInitDatePicker() {
+  // The date field is a readonly text input showing d/m/Y; clicking it opens the shared AppDatePicker (mode "day").
+  // The value stays "YYYY-MM-DD" in _gdsTransfertsFilters.date (_gdsTrSetDate), the display is rebuilt by renderGdsTransferts.
+  const el = document.getElementById("gdsTrDateInput");
+  if (!el || el._adpBound) return;
+  el._adpBound = true;
+  const open = () => AppDatePicker.open(el, {
+    mode: "day", value: _gdsTransfertsFilters.date || "",
+    onApply: (v) => _gdsTrSetDate(v)
   });
+  el.addEventListener("click", open);
+  el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") { e.preventDefault(); open(); } });
 }
 function _gdsTrSetLimit(val) {
   const n = Math.min(500, Math.max(1, parseInt(val) || 100));
@@ -1088,7 +1071,8 @@ async function gdsShowTab(tab) {
   } else if (tab === "stockfinal") {
     if (sfEl) sfEl.style.display = "";
     btnSF?.classList.add("gds-tab--active");
-    if (typeof sfRenderFromCache === "function") sfRenderFromCache();
+    if (typeof sfOnOpenTab === "function") sfOnOpenTab().catch(e => console.warn("sfOnOpenTab:", e));
+    else if (typeof sfRenderFromCache === "function") sfRenderFromCache();
   }
 }
 
@@ -1106,10 +1090,10 @@ function exportStockFinalXlsx(vendorLabel, lines) {
     aoa.push(["Article", "CDN", "Quantité"]);
     filtered.forEach(l => {
       const cdn = l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "";
-      aoa.push([l.name, cdn, l.qty]);
+      aoa.push([_sfPn(l.name), cdn, l.qty]);
     });
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    const maxLen = Math.max(7, ...filtered.map(l => l.name.length));
+    const maxLen = Math.max(7, ...filtered.map(l => String(_sfPn(l.name)).length));
     ws["!cols"] = [{ wch: Math.min(maxLen * 1.05, 80) }, { wch: 10 }, { wch: 12 }];
     ws["!merges"] = [{ s:{r:0,c:0}, e:{r:0,c:2} }];
     XLSX.utils.book_append_sheet(wb, ws, "Stock Final");
@@ -1118,7 +1102,7 @@ function exportStockFinalXlsx(vendorLabel, lines) {
     let csv = `"${title} (${today})"\n\nArticle,CDN,Quantité\n`;
     filtered.forEach(l => {
       const cdn = l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "";
-      csv += `"${l.name}",${cdn},${l.qty}\n`;
+      csv += `"${_sfPn(l.name)}",${cdn},${l.qty}\n`;
     });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"}));
@@ -1152,7 +1136,7 @@ function exportStockFinalPdf(vendorLabel, lines) {
       head: [["Article", "CDN", "Quantité"]],
       body: filtered.map(l => {
         const cdn = l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "";
-        return [l.name, cdn, l.qty];
+        return [_sfPn(l.name), cdn, l.qty];
       }),
       styles: { fontSize: 8, cellPadding: 2 },
       headStyles: { fillColor: [26, 107, 58] },
@@ -1372,7 +1356,7 @@ async function _onProdNamesFileImport(input) {
 
     input.value = "";
     const count = Object.keys(map).length;
-    if (statusEl) statusEl.textContent = `✓ ${count} produits importés`;
+    if (statusEl) uiStatus(statusEl, "ok", `${count} produits importés`);
     _initProduitNamesModal();
     addNotif(`Ordre des produits mis à jour (${count})`, "success");
   } catch(e) {
@@ -1574,7 +1558,7 @@ async function renderWarehouseSettingsUI() {
 
     html += `
       <div style="margin-bottom:14px;padding:12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;">
-        <div style="font-size:12px;font-weight:700;color:var(--text1);margin-bottom:10px;">🏭 ${wh.name}</div>
+        <div style="font-size:12px;font-weight:700;color:var(--text1);margin-bottom:10px;display:flex;align-items:center;gap:6px;">${icon("warehouse", 14)}<span>${wh.name}</span></div>
         <div style="display:flex;flex-direction:column;gap:8px;">
           <div>
             <div style="font-size:10px;font-weight:600;color:var(--text2);margin-bottom:4px;">Stock GDS (emplacement affiché)</div>
@@ -1661,7 +1645,7 @@ async function _saveWarehouseSettings(whId) {
     // تحديث الـ cache المحلي فوراً
     if (!AppAuth.warehouseSettings) AppAuth.warehouseSettings = {};
     AppAuth.warehouseSettings[whId] = data;
-    if (msg) { msg.textContent = "Sauvegardé ✓"; setTimeout(() => msg.textContent = "", 2000); }
+    if (msg) { uiStatus(msg, "ok", "Sauvegardé"); setTimeout(() => msg.textContent = "", 2000); }
   } catch(e) {
     if (msg) { msg.style.color = "#f87171"; msg.textContent = "Erreur: " + e.message; }
   }
@@ -1696,8 +1680,8 @@ s.vendors        = (s.vendors||[]).filter(v => v.name.trim());
       })
     });
   } catch(e) { console.warn("Firebase save failed:", e); }
-  if (saveMsg) { saveMsg.textContent="Sauvegardé ✓"; saveMsg.className="save-msg ok"; setTimeout(()=>{ saveMsg.textContent=""; }, 2000); }
-  addNotif("Paramètres sauvegardés ✓", "success");
+  if (saveMsg) { uiStatus(saveMsg, "ok", "Sauvegardé"); saveMsg.className="save-msg ok"; setTimeout(()=>{ saveMsg.textContent=""; }, 2000); }
+  addNotif("Paramètres sauvegardés", "success");
 }
 
 
@@ -1751,7 +1735,7 @@ if (isAdmin()) {
   if (rpc) rpc.style.display = "";
   if (typeof NameDict !== "undefined") NameDict.initSettings();
   renderUserManagementUI();
-  renderRolePermissionsUI();
+  // Permissions par rôle : chargées à l'ouverture de la fenêtre (carte) et via Actualiser
 }
   document.getElementById("btnBack")?.addEventListener("click", () => {
   document.getElementById("viewSettings").style.display = "none";
@@ -1788,27 +1772,557 @@ async function _rpc_call(baseUrl, payload) {
   return json.result;
 }
 
-// ── Stock Final — Gestion distributeurs ──────────────────────
-function _sfDistKey() {
-  const whId = _getWarehouseId() || "default";
-  return `sf_distributeurs_${whId}`;
+// ── Stock Final — Distributeurs (cloud, par entrepôt) ────────
+// Nœud Firebase: sf_dists2_{whId} = { "<id>": { nom, ordre, hidden, src: "odoo"|"manual", onom? }, _meta: { lastSync, migrated } }
+// • Firebase = source de vérité. localStorage = cache seulement (relu depuis Firebase à l'ouverture de l'onglet et des paramètres).
+// • Toute modification = PATCH sur les clés touchées uniquement (jamais de PUT de la liste entière).
+// • Les id sont toujours des String (comparaisons et clés).
+// • onom = dernier nom vu dans Odoo: renomme seulement si Odoo a changé, sans écraser une édition manuelle faite entre-temps.
+const SF_D2_PREFIX = "sf_dists2_";
+const SF_SYNC_TTL  = 24 * 3600 * 1000;           // synchro auto si la dernière a plus de 24 h
+const _sfD2 = new Map();                          // whId -> { map, meta }
+const _sfD2Inflight = new Map();
+const _sfSyncInflight = new Map();
+const _sfAutoDone = new Set();                    // entrepôts déjà auto-synchronisés dans cette session
+let _sfPending = 0;                               // écritures cloud en cours
+let _sfDragId = null;
+
+const _sfWh    = () => String(_getWarehouseId() || "default");
+const _sfD2Url = (whId) => `${_FB_DB_URL}/${SF_D2_PREFIX}${whId}.json`;
+const _sfIdOk  = (id) => !!id && id[0] !== "_" && !/[.$#\[\]\/\u0000-\u001f]/.test(id);   // clé Firebase valide
+const _sfCmp   = (a, b) => (a.ordre - b.ordre) || String(a.nom).localeCompare(String(b.nom), "fr", { sensitivity: "base" });
+const _sfTabVisible = () => { const el = document.getElementById("gdsStockFinalContent"); return !!el && el.style.display !== "none"; };
+const _sfSettingsOpen = () => !!document.getElementById("modalStockFinal")?.classList.contains("open");
+const _sfNotify = (m, t) => { try { addNotif(m, t || "info"); } catch (_) {} };
+
+// ── Normalisation / cache local ──────────────────────────────
+function _sfD2Norm(raw) {
+  const map = {}; let meta = {};
+  if (raw && typeof raw === "object") {
+    const ents = Array.isArray(raw) ? raw.map((v, i) => [String(i), v]) : Object.entries(raw);
+    ents.forEach(([k, v]) => {
+      if (k === "_meta") { if (v && typeof v === "object") meta = v; return; }
+      if (!v || typeof v !== "object") return;
+      map[String(k)] = {
+        nom: String(v.nom == null ? "" : v.nom),
+        ordre: Number.isFinite(+v.ordre) ? +v.ordre : 0,
+        hidden: v.hidden === true,
+        src: v.src === "odoo" ? "odoo" : "manual",
+        onom: v.onom == null ? undefined : String(v.onom),
+      };
+    });
+  }
+  return { map, meta };
+}
+function _sfD2State(whId) {
+  whId = String(whId || _sfWh());
+  let st = _sfD2.get(whId);
+  if (!st) {
+    let raw = null;
+    try { raw = JSON.parse(localStorage.getItem(SF_D2_PREFIX + whId) || "null"); } catch (_) {}
+    st = _sfD2Norm(raw);
+    _sfD2.set(whId, st);
+  }
+  return st;
+}
+function _sfD2Persist(whId, st) {
+  try { localStorage.setItem(SF_D2_PREFIX + whId, JSON.stringify(Object.assign({}, st.map, { _meta: st.meta }))); } catch (_) {}
+}
+
+// Liste triée (ordre puis nom). withHidden=false => seulement les visibles.
+function _sfD2List(whId, withHidden) {
+  const st = _sfD2State(whId);
+  return Object.keys(st.map)
+    .map(id => Object.assign({ id }, st.map[id]))
+    .filter(d => withHidden || !d.hidden)
+    .sort(_sfCmp);
+}
+// ── Préférences LOCALES (cet appareil uniquement, jamais envoyées au cloud, prioritaires) ──
+// localStorage "sf_local_prefs_<whId>" = { order: { id: n }, hidden: { id: true|false } }
+const SF_LOCAL_PREFIX = "sf_local_prefs_";
+function _sfLocalPrefs(whId) {
+  whId = String(whId || _sfWh());
+  let lp = null;
+  try { lp = JSON.parse(localStorage.getItem(SF_LOCAL_PREFIX + whId) || "null"); } catch (_) {}
+  if (!lp || typeof lp !== "object") lp = {};
+  return { order: (lp.order && typeof lp.order === "object") ? lp.order : {}, hidden: (lp.hidden && typeof lp.hidden === "object") ? lp.hidden : {} };
+}
+function _sfLocalSave(lp, whId) {
+  whId = String(whId || _sfWh());
+  try {
+    if (!Object.keys(lp.order).length && !Object.keys(lp.hidden).length) localStorage.removeItem(SF_LOCAL_PREFIX + whId);
+    else localStorage.setItem(SF_LOCAL_PREFIX + whId, JSON.stringify(lp));
+  } catch (_) {}
+}
+// Liste effective: valeurs locales prioritaires sur le cloud (ordre + masquage)
+function _sfEffList(whId) {
+  const lp = _sfLocalPrefs(whId);
+  return _sfD2List(whId, true).map(d => Object.assign({}, d, {
+    cloudHidden: d.hidden,
+    ordre:  Number.isFinite(+lp.order[d.id]) && lp.order[d.id] !== null ? +lp.order[d.id] : d.ordre,
+    hidden: lp.hidden[d.id] != null ? !!lp.hidden[d.id] : d.hidden,
+    localHid: lp.hidden[d.id] != null,
+  })).sort(_sfCmp);
 }
 window.sfGetDistributeurs = function sfGetDistributeurs() {
-  try { return JSON.parse(localStorage.getItem(_sfDistKey()) || "[]"); } catch { return []; }
-}
-window.sfSaveDistributeurs = function sfSaveDistributeurs(list) {
-  localStorage.setItem(_sfDistKey(), JSON.stringify(list));
-  fetch(`${_FB_DB_URL}/${_sfDistKey()}.json`, {
-    method: "PUT",
+  return _sfEffList(null).filter(d => !d.hidden).map(d => ({ id: d.id, nom: d.nom }));
+};
+// Nom de produit: toujours la forme abrégée (dictionnaire), affichage/export uniquement
+
+
+// ── Écriture: PATCH multi-chemins + application locale ───────
+async function _sfD2Send(whId, patch) {
+  const r = await fetch(_sfD2Url(whId), {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(list),
-  }).catch(e => console.warn("SF distributeurs sync failed:", e));
+    body: JSON.stringify(patch),
+  });
+  if (!r.ok) throw new Error("HTTP " + r.status);
 }
-window.sfClearDistributeurs = function sfClearDistributeurs() {
-  sfSaveDistributeurs([]);
-  document.getElementById("sfImportStatus").textContent = "Liste effacée.";
-  sfRenderDistributeursList([]);
+function _sfD2ApplyLocal(st, patch) {
+  Object.keys(patch).forEach(k => {
+    const v = patch[k], parts = k.split("/");
+    if (parts[0] === "_meta") { if (parts[1]) st.meta[parts[1]] = v; return; }
+    if (parts.length === 1) {
+      if (v === null) delete st.map[k];
+      else st.map[k] = Object.assign({}, v);
+    } else if (st.map[parts[0]]) {
+      st.map[parts[0]][parts[1]] = v;
+    }
+  });
 }
+async function _sfD2Commit(patch, whId) {
+  whId = String(whId || _sfWh());
+  if (!Object.keys(patch).length) return true;
+  const st = _sfD2State(whId);
+  _sfD2ApplyLocal(st, patch);
+  _sfD2Persist(whId, st);
+  _sfPending++;
+  try { await _sfD2Send(whId, patch); return true; }
+  catch (e) { console.warn("SF dists2 sync failed:", e); _sfNotify("Échec de la sauvegarde cloud des distributeurs", "error"); return false; }
+  finally { _sfPending--; }
+}
+
+// ── Lecture cloud (+ migration unique depuis l'ancienne liste) ─
+async function _sfD2Migrate(whId, st) {
+  let legacy = null;
+  try {
+    const r = await fetch(`${_FB_DB_URL}/sf_distributeurs_${whId}.json`, { cache: "no-store" });
+    if (r.ok) legacy = await r.json();
+  } catch (_) {}
+  if (!legacy) { try { legacy = JSON.parse(localStorage.getItem(`sf_distributeurs_${whId}`) || "null"); } catch (_) {} }
+  const seen = new Set();
+  const rows = (Array.isArray(legacy) ? legacy : Object.values(legacy || {}))
+    .map(x => { const id = String(x && x.id != null ? x.id : "").trim(); const nom = String(x && x.nom != null ? x.nom : "").trim(); return { id, nom: nom || id }; })
+    .filter(x => _sfIdOk(x.id) && !seen.has(x.id) && seen.add(x.id))
+    .sort((a, b) => a.nom.localeCompare(b.nom, "fr", { sensitivity: "base" }));
+  if (!rows.length) return;
+  const patch = {};
+  rows.forEach((x, i) => { patch[x.id] = { nom: x.nom, ordre: i + 1, hidden: false, src: "manual" }; });
+  patch["_meta/migrated"] = true;
+  _sfD2ApplyLocal(st, patch);                    // l'ancienne liste n'est jamais supprimée
+  try { await _sfD2Send(whId, patch); } catch (e) { console.warn("SF dists2 migration failed:", e); }
+}
+function _sfD2Load(whId) {
+  whId = String(whId || _sfWh());
+  if (_sfD2Inflight.has(whId)) return _sfD2Inflight.get(whId);
+  const p = (async () => {
+    const r = await fetch(_sfD2Url(whId), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const st = _sfD2Norm(await r.json());
+    if (!Object.keys(st.map).length && !st.meta.migrated) await _sfD2Migrate(whId, st);
+    _sfD2.set(whId, st);
+    _sfD2Persist(whId, st);
+    return st;
+  })().finally(() => _sfD2Inflight.delete(whId));
+  _sfD2Inflight.set(whId, p);
+  return p;
+}
+
+// ── Temps réel (SSE, même principe que le dictionnaire de noms) ─
+let _sfEs = null, _sfEsWh = null, _sfEsT = null;
+function _sfD2Listen(whId) {
+  whId = String(whId || _sfWh());
+  if (typeof EventSource === "undefined" || (_sfEs && _sfEsWh === whId)) return;
+  try { if (_sfEs) _sfEs.close(); } catch (_) {}
+  try {
+    const es = new EventSource(_sfD2Url(whId));
+    let first = true;
+    const kick = () => { if (first) { first = false; return; } clearTimeout(_sfEsT); _sfEsT = setTimeout(_sfD2Remote, 300); };
+    es.addEventListener("put", kick);
+    es.addEventListener("patch", kick);
+    _sfEs = es; _sfEsWh = whId;
+  } catch (_) {}
+}
+async function _sfD2Remote() {
+  if (_sfPending || _sfDragId) { clearTimeout(_sfEsT); _sfEsT = setTimeout(_sfD2Remote, 400); return; }   // attendre la fin de nos propres écritures
+  const whId = _sfEsWh;
+  try { await _sfD2Load(whId); } catch (_) { return; }
+  if (whId !== _sfWh()) return;
+  if (_sfTabVisible()) sfRenderFromCache();
+  _sfSettingsRefresh(false);
+}
+
+// ── Liaison entrepôt ↔ tournées (à définir après l'exploration) ─
+// Termes de domaine Odoo ajoutés à la requête planning.planning (en plus de: 3 derniers mois + LIVREUR).
+// Liaison validée: planning.planning.warehouse_id = entrepôt actif. null => synchro Odoo désactivée (aucune écriture).
+function _sfWhDomain(whId) {
+  const id = parseInt(whId, 10);
+  return Number.isFinite(id) ? [["warehouse_id", "=", id]] : null;
+}
+
+// ── Synchro Odoo: ajoute seulement les nouveaux ──────────────
+async function _sfOdooDists(whId) {
+  const extra = _sfWhDomain(whId);
+  if (!extra) return null;
+  const since = new Date();
+  since.setMonth(since.getMonth() - 3);
+  const domain = [["date_start", ">=", since.toISOString().slice(0, 10)], ["user_id.name", "ilike", "LIVREUR"]].concat(extra);
+  const res = await _rpc_call(ODOO_BASE, {
+    model: "planning.planning", method: "search_read",
+    args: [domain], kwargs: { fields: ["user_id"], limit: 2000 },
+  }) || [];
+  const seen = {};
+  res.forEach(p => { if (p.user_id) seen[String(p.user_id[0])] = p.user_id[1]; });
+  return Object.keys(seen)
+    .map(id => ({ id, nom: _cleanPartnerName(seen[id]) }))
+    .sort((a, b) => a.nom.localeCompare(b.nom, "fr", { sensitivity: "base" }));
+}
+async function _sfSyncRun(whId) {
+  if (!_sfWhDomain(whId)) return { status: "blocked" };
+  let list;
+  try { list = await _sfOdooDists(whId); }
+  catch (e) { return { status: "error", msg: (e && e.message) || String(e) }; }
+  let st;
+  try { st = await _sfD2Load(whId); }
+  catch (e) { return { status: "error", msg: "Firebase indisponible" }; }
+  const patch = {};
+  let added = 0, renamed = 0;
+  let last = Object.keys(st.map).reduce((m, k) => Math.max(m, st.map[k].ordre), 0);
+  list.forEach(d => {
+    const cur = st.map[d.id];
+    if (!cur) {
+      patch[d.id] = { nom: d.nom, ordre: ++last, hidden: false, src: "odoo", onom: d.nom };
+      added++;
+    } else if (cur.src === "odoo") {
+      if (cur.onom === undefined) patch[d.id + "/onom"] = d.nom;
+      else if (cur.onom !== d.nom) { patch[d.id + "/onom"] = d.nom; patch[d.id + "/nom"] = d.nom; renamed++; }
+    }
+  });
+  patch["_meta/lastSync"] = Date.now();
+  if (!(await _sfD2Commit(patch, whId))) return { status: "error", msg: "Échec de l'écriture Firebase" };
+  return { status: "ok", added, renamed, total: list.length };
+}
+function _sfSync(whId) {
+  whId = String(whId || _sfWh());
+  if (_sfSyncInflight.has(whId)) return _sfSyncInflight.get(whId);
+  const p = _sfSyncRun(whId).finally(() => _sfSyncInflight.delete(whId));
+  _sfSyncInflight.set(whId, p);
+  return p;
+}
+
+// ── Ouverture de l'onglet Stock Final ────────────────────────
+window.sfOnOpenTab = async function sfOnOpenTab() {
+  const whId = _sfWh();
+  sfRenderFromCache();                           // affichage immédiat depuis le cache
+  _sfD2Listen(whId);
+  try { await _sfD2Load(whId); }
+  catch (e) { console.warn("SF dists2 load failed:", e); return; }
+  if (_sfWh() !== whId) return;
+  if (_sfTabVisible()) sfRenderFromCache();
+  // synchro auto légère: une fois par session et par entrepôt, si la dernière a plus de 24 h
+  if (_sfAutoDone.has(whId)) return;
+  _sfAutoDone.add(whId);
+  if (!_sfWhDomain(whId)) return;
+  if (Date.now() - (+_sfD2State(whId).meta.lastSync || 0) < SF_SYNC_TTL) return;
+  const r = await _sfSync(whId);
+  if (r.status === "ok" && (r.added || r.renamed) && _sfWh() === whId && _sfTabVisible()) sfRenderFromCache();
+};
+
+// ── Paramètres > Stock Final ─────────────────────────────────
+const _SFD_P = {
+  grip:  '<circle cx="9" cy="6" r="1.3" fill="currentColor"/><circle cx="15" cy="6" r="1.3" fill="currentColor"/><circle cx="9" cy="12" r="1.3" fill="currentColor"/><circle cx="15" cy="12" r="1.3" fill="currentColor"/><circle cx="9" cy="18" r="1.3" fill="currentColor"/><circle cx="15" cy="18" r="1.3" fill="currentColor"/>',
+  up:    '<polyline points="18 15 12 9 6 15"/>',
+  down:  '<polyline points="6 9 12 15 18 9"/>',
+  eye:   '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+  eyeoff:'<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>',
+  trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
+};
+const _sfdIc = (n, s) => _sfSvg(_SFD_P[n], s || 14);
+const _sfStatus = (t, kind) => { const el = document.getElementById("sfImportStatus"); if (el) uiStatus(el, kind, t); };
+
+window.sfOpenSettings = async function sfOpenSettings() {
+  const whId = _sfWh();
+  sfRenderDistributeursList();                   // cache d'abord
+  _sfD2Listen(whId);
+  try { await _sfD2Load(whId); }
+  catch (e) { console.warn("SF dists2 load failed:", e); _sfStatus("Cloud indisponible — cache local affiché."); return; }
+  if (_sfWh() === whId) sfRenderDistributeursList();
+};
+
+// rafraîchit la liste des paramètres si ouverts (sans casser une saisie ou un glisser en cours)
+function _sfSettingsRefresh(force) {
+  if (!_sfSettingsOpen()) return;
+  const box = document.getElementById("sfDistributeursList");
+  if (!force && box && (box.contains(document.activeElement) && document.activeElement.tagName === "INPUT")) return;
+  sfRenderDistributeursList();
+}
+function _sfAfterChange() {
+  _sfSettingsRefresh(true);
+  if (_sfTabVisible()) sfRenderFromCache();
+}
+
+window.sfRenderDistributeursList = function sfRenderDistributeursList() {
+  const container = document.getElementById("sfDistributeursList");
+  if (!container) return;
+  _sfBindSettings(container);
+  const list = _sfD2List(null, true);
+  if (!list.length) {
+    container.innerHTML = `<div class="sfd-empty">Aucun distributeur.</div>`;
+    return;
+  }
+  const nHidden = list.filter(d => d.hidden).length;
+  container.innerHTML = `<div class="sfd-count">${list.length} distributeur(s)${nHidden ? ` · ${nHidden} masqué(s)` : ""}</div>` +
+    list.map((d, i) => `
+    <div class="sfd-row${d.hidden ? " sfd-row--hidden" : ""}" data-id="${escHtml(d.id)}">
+      <span class="sfd-grip" draggable="true" title="Glisser pour réordonner" aria-label="Glisser pour réordonner">${_sfdIc("grip", 16)}</span>
+      <span class="sfd-mv">
+        <button type="button" class="sfd-ib" data-act="up" title="Monter" aria-label="Monter"${i === 0 ? " disabled" : ""}>${_sfdIc("up", 14)}</button>
+        <button type="button" class="sfd-ib" data-act="down" title="Descendre" aria-label="Descendre"${i === list.length - 1 ? " disabled" : ""}>${_sfdIc("down", 14)}</button>
+      </span>
+      <input class="sfd-num" data-act="num" type="number" inputmode="numeric" min="1" max="${list.length}" value="${i + 1}" title="Position" aria-label="Position"/>
+      <input class="sfd-nom sf-row-nom" data-act="nom" value="${escHtml(d.nom)}" aria-label="Nom"/>
+      <span class="sfd-id" title="ID">${escHtml(d.id)}</span>
+      <button type="button" class="sfd-ib" data-act="eye" title="${d.hidden ? "Afficher" : "Masquer"}" aria-label="${d.hidden ? "Afficher" : "Masquer"}">${_sfdIc(d.hidden ? "eyeoff" : "eye", 16)}</button>
+      <button type="button" class="sfd-ib sfd-ib--del" data-act="del" title="Supprimer (réapparaît à la synchro s'il existe encore dans Odoo)" aria-label="Supprimer">${_sfdIc("trash", 15)}</button>
+    </div>`).join("");
+};
+
+// réordonne: place `id` avant/après `targetId`; n'écrit que les ordre modifiés, en un seul PATCH
+async function _sfReorder(id, targetId, after) {
+  if (id === targetId) return;
+  const ids = _sfD2List(null, true).map(d => d.id).filter(x => x !== id);
+  const ti = ids.indexOf(targetId);
+  if (ti < 0) return;
+  ids.splice(ti + (after ? 1 : 0), 0, id);
+  const st = _sfD2State();
+  const patch = {};
+  ids.forEach((x, i) => { if (st.map[x] && st.map[x].ordre !== i + 1) patch[x + "/ordre"] = i + 1; });
+  if (!Object.keys(patch).length) return;
+  await _sfD2Commit(patch);
+  _sfAfterChange();
+}
+function _sfClearDragMarks(container) {
+  container.querySelectorAll(".sfd-over-top,.sfd-over-bottom,.sfd-row--drag").forEach(n => n.classList.remove("sfd-over-top", "sfd-over-bottom", "sfd-row--drag"));
+}
+function _sfBindSettings(container) {
+  if (container._sfBound) return;
+  container._sfBound = true;
+
+  container.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-act]");
+    const row = e.target.closest(".sfd-row");
+    if (!b || !row || b.disabled || b.tagName === "INPUT") return;
+    const id = row.dataset.id, st = _sfD2State(), cur = st.map[id];
+    if (!cur) return;
+    switch (b.dataset.act) {
+      case "up":
+      case "down": {
+        const ids = _sfD2List(null, true).map(d => d.id);
+        const i = ids.indexOf(id), j = b.dataset.act === "up" ? i - 1 : i + 1;
+        if (j < 0 || j >= ids.length) return;
+        await _sfReorder(id, ids[j], b.dataset.act === "down");
+        break;
+      }
+      case "eye":
+        await _sfD2Commit({ [id + "/hidden"]: !cur.hidden });
+        _sfAfterChange();
+        break;
+      case "del":
+        await _sfD2Commit({ [id]: null });
+        _sfAfterChange();
+        break;
+    }
+  });
+
+  container.addEventListener("change", async (e) => {
+    const num = e.target.closest('input[data-act="num"]');
+    if (num) {
+      const nrow = num.closest(".sfd-row");
+      if (nrow) await _sfMoveTo(nrow.dataset.id, parseInt(num.value, 10));
+      return;
+    }
+    const inp = e.target.closest('input[data-act="nom"]');
+    const row = e.target.closest(".sfd-row");
+    if (!inp || !row) return;
+    const id = row.dataset.id, cur = _sfD2State().map[id];
+    const val = inp.value.trim();
+    if (!cur || !val) { if (cur) inp.value = cur.nom; return; }     // nom vide refusé
+    if (val === cur.nom) return;
+    await _sfD2Commit({ [id + "/nom"]: val });
+    if (_sfTabVisible()) sfRenderFromCache();
+  });
+  container.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.matches('input[data-act="nom"], input[data-act="num"]')) e.target.blur();
+  });
+
+  // Glisser-déposer (poignée) — sur mobile: boutons ↑ ↓
+  container.addEventListener("dragstart", (e) => {
+    const g = e.target.closest && e.target.closest(".sfd-grip");
+    const row = g && g.closest(".sfd-row");
+    if (!row) { e.preventDefault(); return; }
+    _sfDragId = row.dataset.id;
+    row.classList.add("sfd-row--drag");
+    try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", _sfDragId); e.dataTransfer.setDragImage(row, 12, 12); } catch (_) {}
+  });
+  container.addEventListener("dragover", (e) => {
+    if (!_sfDragId) return;
+    const row = e.target.closest(".sfd-row");
+    if (!row) return;
+    e.preventDefault();
+    try { e.dataTransfer.dropEffect = "move"; } catch (_) {}
+    const r = row.getBoundingClientRect();
+    const after = e.clientY > r.top + r.height / 2;
+    container.querySelectorAll(".sfd-over-top,.sfd-over-bottom").forEach(n => n.classList.remove("sfd-over-top", "sfd-over-bottom"));
+    if (row.dataset.id !== _sfDragId) row.classList.add(after ? "sfd-over-bottom" : "sfd-over-top");
+  });
+  container.addEventListener("drop", async (e) => {
+    if (!_sfDragId) return;
+    e.preventDefault();
+    const row = e.target.closest(".sfd-row");
+    const id = _sfDragId;
+    _sfDragId = null;
+    if (row) {
+      const r = row.getBoundingClientRect();
+      await _sfReorder(id, row.dataset.id, e.clientY > r.top + r.height / 2);
+    }
+    _sfClearDragMarks(container);
+  });
+  container.addEventListener("dragend", () => { _sfDragId = null; _sfClearDragMarks(container); });
+}
+
+// place `id` à la position `pos` (1 = premier) — ordre cloud, un seul PATCH
+async function _sfMoveTo(id, pos) {
+  const ids = _sfD2List(null, true).map(d => d.id);
+  if (!ids.includes(id)) return;
+  if (!Number.isFinite(pos)) { _sfSettingsRefresh(true); return; }
+  pos = Math.max(1, Math.min(ids.length, pos));
+  const rest = ids.filter(x => x !== id);
+  rest.splice(pos - 1, 0, id);
+  const st = _sfD2State(), patch = {};
+  rest.forEach((x, i) => { if (st.map[x] && st.map[x].ordre !== i + 1) patch[x + "/ordre"] = i + 1; });
+  if (Object.keys(patch).length) await _sfD2Commit(patch);
+  _sfAfterChange();
+}
+
+// ── Bouton ⚙ de la barre: ordre / masquage LOCAUX (tous les utilisateurs, non synchronisés) ──
+function _sfEnsureLocalModal() {
+  let ov = document.getElementById("modalSfLocal");
+  if (ov) return ov;
+  ov = document.createElement("div");
+  ov.className = "smodal-overlay";
+  ov.id = "modalSfLocal";
+  ov.innerHTML = `<div class="smodal-box" role="dialog" aria-modal="true" aria-labelledby="sfLocalTitle" tabindex="-1">
+    <div class="smodal-header">
+      <span class="smodal-title" id="sfLocalTitle">Ordre et affichage</span>
+      <button type="button" class="smodal-close" data-act="close" aria-label="Fermer">${_sfSvg(_SF_P.close, 16)}</button>
+    </div>
+    <div class="smodal-body">
+      <p class="settings-hint" style="margin:0 0 8px;">Cet appareil uniquement — non synchronisé, prioritaire sur les réglages partagés. Saisissez un numéro pour placer un distributeur.</p>
+      <div style="margin-bottom:8px;"><button type="button" class="gds-refresh-btn" data-act="reset" style="font-size:12px;">Réinitialiser</button></div>
+      <div id="sfLocalList"></div>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-act]");
+    if (e.target === ov) { sfCloseLocalSettings(); return; }
+    if (!b) return;
+    const act = b.dataset.act;
+    if (act === "close") { sfCloseLocalSettings(); return; }
+    if (act === "reset") { _sfLocalSave({ order: {}, hidden: {} }); _sfLocalAfter(); return; }
+    const row = b.closest(".sfd-row");
+    if (act === "eye" && row) {
+      const id = row.dataset.id, lp = _sfLocalPrefs();
+      const cur = _sfEffList().find(d => d.id === id);
+      lp.hidden[id] = !(cur && cur.hidden);
+      _sfLocalSave(lp); _sfLocalAfter();
+    }
+  });
+  ov.addEventListener("change", (e) => {
+    const num = e.target.closest('input[data-act="num"]');
+    const row = e.target.closest(".sfd-row");
+    if (!num || !row) return;
+    const ids = _sfEffList().map(d => d.id);
+    const id = row.dataset.id, pos = parseInt(num.value, 10);
+    if (!ids.includes(id) || !Number.isFinite(pos)) { _sfLocalRender(); return; }
+    const rest = ids.filter(x => x !== id);
+    rest.splice(Math.max(1, Math.min(ids.length, pos)) - 1, 0, id);
+    const lp = _sfLocalPrefs();
+    rest.forEach((x, i) => { lp.order[x] = i + 1; });      // numérotation locale complète
+    _sfLocalSave(lp); _sfLocalAfter();
+  });
+  ov.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.matches('input[data-act="num"]')) e.target.blur();
+    if (e.key === "Escape") { e.stopPropagation(); sfCloseLocalSettings(); }
+  });
+  return ov;
+}
+function _sfLocalRender() {
+  const box = document.getElementById("sfLocalList");
+  if (!box) return;
+  const list = _sfEffList();
+  if (!list.length) { box.innerHTML = `<div class="sfd-empty">Aucun distributeur.</div>`; return; }
+  box.innerHTML = list.map((d, i) => `
+    <div class="sfd-row${d.hidden ? " sfd-row--hidden" : ""}" data-id="${escHtml(d.id)}">
+      <input class="sfd-num" data-act="num" type="number" inputmode="numeric" min="1" max="${list.length}" value="${i + 1}" title="Position" aria-label="Position"/>
+      <span class="sfd-nom sfd-nom--ro" title="${escHtml(d.nom)}">${escHtml(d.nom)}</span>
+      <button type="button" class="sfd-ib" data-act="eye" title="${d.hidden ? "Afficher" : "Masquer"}" aria-label="${d.hidden ? "Afficher" : "Masquer"}">${_sfdIc(d.hidden ? "eyeoff" : "eye", 16)}</button>
+    </div>`).join("");
+}
+function _sfLocalAfter() {
+  _sfLocalRender();
+  if (_sfTabVisible()) sfRenderFromCache();
+}
+window.sfOpenLocalSettings = function sfOpenLocalSettings() {
+  const ov = _sfEnsureLocalModal();
+  _sfLocalRender();
+  if (typeof _openSettingsModal === "function") _openSettingsModal("modalSfLocal"); else ov.classList.add("open");
+  ov.querySelector(".smodal-box").focus({ preventScroll: true });
+};
+window.sfCloseLocalSettings = function sfCloseLocalSettings() {
+  const ov = document.getElementById("modalSfLocal");
+  if (!ov) return;
+  if (typeof _closeSettingsModal === "function") _closeSettingsModal("modalSfLocal"); else ov.classList.remove("open");
+};
+
+// ── Ajout manuel / import Excel / effacement ─────────────────
+window.sfAddDistributeurRow = function sfAddDistributeurRow() {
+  const f = document.getElementById("sfAddForm");
+  if (!f) return;
+  f.style.display = "flex";
+  const n = document.getElementById("sfAddNom");
+  if (n) { n.value = ""; n.focus(); }
+  const i = document.getElementById("sfAddId");
+  if (i) i.value = "";
+};
+window.sfCancelAddDist = function sfCancelAddDist() {
+  const f = document.getElementById("sfAddForm");
+  if (f) f.style.display = "none";
+};
+window.sfConfirmAddDist = async function sfConfirmAddDist() {
+  const nom = (document.getElementById("sfAddNom")?.value || "").trim();
+  const id  = String(document.getElementById("sfAddId")?.value || "").trim();
+  if (!nom || !id) { _sfStatus("Renseignez le NOM et l'ID."); return; }
+  if (!_sfIdOk(id)) { _sfStatus("ID invalide (caractères interdits : . $ # [ ] /, ne doit pas commencer par _)."); return; }
+  const st = _sfD2State();
+  if (st.map[id]) { _sfStatus(`L'ID ${id} existe déjà (${st.map[id].nom}).`); return; }
+  const last = Object.keys(st.map).reduce((m, k) => Math.max(m, st.map[k].ordre), 0);
+  await _sfD2Commit({ [id]: { nom, ordre: last + 1, hidden: false, src: "manual" } });
+  sfCancelAddDist();
+  _sfStatus(`Ajouté : ${nom}`);
+  _sfAfterChange();
+};
 
 window.sfImportDistributeurs = function sfImportDistributeurs(input) {
   const file = input.files[0];
@@ -1817,7 +2331,7 @@ window.sfImportDistributeurs = function sfImportDistributeurs(input) {
   statusEl.textContent = "Lecture en cours…";
 
   const reader = new FileReader();
-  reader.onload = function(e) {
+  reader.onload = async function(e) {
     try {
       const wb   = XLSX.read(e.target.result, { type: "array" });
       const ws   = wb.Sheets[wb.SheetNames[0]];
@@ -1830,366 +2344,570 @@ window.sfImportDistributeurs = function sfImportDistributeurs(input) {
         }))
         .filter(r => r.nom && r.id);
 
-      if (!imported.length) { statusEl.textContent = "❌ Aucune ligne valide (vérifiez les colonnes NOM et ID)."; return; }
+      if (!imported.length) { uiStatus(statusEl, "err", "Aucune ligne valide (vérifiez les colonnes NOM et ID)."); return; }
 
-      // دمج مع القائمة الموجودة (تجنب التكرار)
-      const existing = sfGetDistributeurs();
-      const merged = [...existing];
+      // ajout des nouveaux seulement (src="manual"), à la suite de l'ordre existant
+      const st = _sfD2State();
+      let last = Object.keys(st.map).reduce((m, k) => Math.max(m, st.map[k].ordre), 0);
+      const patch = {}; let skipped = 0;
       imported.forEach(imp => {
-        if (!merged.find(e => e.id === imp.id)) merged.push(imp);
+        if (!_sfIdOk(imp.id)) { skipped++; return; }
+        if (st.map[imp.id] || patch[imp.id]) return;
+        patch[imp.id] = { nom: imp.nom, ordre: ++last, hidden: false, src: "manual" };
       });
-
-      sfSaveDistributeurs(merged);
-      statusEl.textContent = `✓ ${imported.length} importé(s) — total: ${merged.length}`;
-      sfRenderDistributeursList(merged);
+      await _sfD2Commit(patch);
+      const total = Object.keys(_sfD2State().map).length;
+      uiStatus(statusEl, "ok", `${imported.length} importé(s) — total: ${total}` + (skipped ? ` — ${skipped} ID invalide(s) ignoré(s)` : ""));
+      _sfAfterChange();
     } catch(err) {
-      statusEl.textContent = "❌ Erreur: " + err.message;
+      uiStatus(statusEl, "err", "Erreur: " + err.message);
     }
   };
   reader.readAsArrayBuffer(file);
   input.value = "";
-}
-
-window.sfAddDistributeurRow = function sfAddDistributeurRow() {
-  const list = sfGetDistributeurs();
-  list.push({ nom: "", id: "" });
-  sfSaveDistributeurs(list);
-  sfRenderDistributeursList(list);
-  // focus sur le dernier input NOM
-  setTimeout(() => {
-    const inputs = document.querySelectorAll(".sf-row-nom");
-    inputs[inputs.length - 1]?.focus();
-  }, 50);
-}
-
-window.sfDeleteDistributeur = function sfDeleteDistributeur(idx) {
-  const list = sfGetDistributeurs();
-  list.splice(idx, 1);
-  sfSaveDistributeurs(list);
-  sfRenderDistributeursList(list);
-}
-
-window.sfUpdateDistributeur = function sfUpdateDistributeur(idx, field, value) {
-  const list = sfGetDistributeurs();
-  if (!list[idx]) return;
-  list[idx][field] = value.trim();
-  sfSaveDistributeurs(list);
-}
-
-window.sfRenderDistributeursList = function sfRenderDistributeursList(list) {
-  const container = document.getElementById("sfDistributeursList");
-  if (!container) return;
-  if (!list.length) {
-    container.innerHTML = `<div style="font-size:11px;color:var(--text3);padding:8px 0;">Aucun distributeur.</div>`;
-    return;
-  }
-  container.innerHTML = `
-    <table style="width:100%;border-collapse:collapse;font-size:11px;">
-      <thead><tr style="background:var(--bg3);">
-        <th style="padding:5px 8px;text-align:left;color:var(--text2);">NOM</th>
-        <th style="padding:5px 8px;text-align:left;color:var(--text2);">ID</th>
-        <th style="padding:5px 8px;width:28px;"></th>
-      </tr></thead>
-      <tbody>
-        ${list.map((r, i) => `
-        <tr style="background:${i%2===0?"var(--bg1)":"var(--bg2)"};">
-          <td style="padding:3px 6px;">
-            <input class="sf-row-nom" value="${r.nom.replace(/"/g,'&quot;')}"
-              onchange="sfUpdateDistributeur(${i},'nom',this.value)"
-              style="width:100%;background:transparent;border:none;border-bottom:1px solid var(--border);color:var(--text1);font-size:11px;padding:2px 2px;outline:none;"/>
-          </td>
-          <td style="padding:3px 6px;">
-            <input value="${r.id.replace(/"/g,'&quot;')}"
-              onchange="sfUpdateDistributeur(${i},'id',this.value)"
-              style="width:100%;background:transparent;border:none;border-bottom:1px solid var(--border);color:var(--text2);font-size:11px;padding:2px 2px;outline:none;"/>
-          </td>
-          <td style="padding:3px 4px;text-align:center;">
-            <button onclick="sfDeleteDistributeur(${i})"
-              style="background:none;border:none;cursor:pointer;color:#f87171;font-size:13px;line-height:1;padding:0;">✕</button>
-          </td>
-        </tr>`).join("")}
-      </tbody>
-    </table>`;
-}
-
-// ── Stock Final — toggle distributor panel ────────────────────
-window.sfToggleDist = function(id) {
-  const body  = document.getElementById(id);
-  const arrow = document.getElementById("arrow_" + id);
-  if (!body) return;
-  const isOpen = body.style.display === "block";
-  body.style.display  = isOpen ? "none" : "block";
-  if (arrow) arrow.style.transform = isOpen ? "" : "rotate(90deg)";
 };
 
-window.sfRefreshDist = async function(distId, distNom, distSafeId) {
-  const body = document.getElementById(distSafeId);
-  if (!body) return;
-  body.style.display = "block";
-  const arrow = document.getElementById("arrow_" + distSafeId);
-  if (arrow) arrow.style.transform = "rotate(90deg)";
-  body.innerHTML = `<div style="color:var(--text3);font-size:11px;padding:6px;">Chargement…</div>`;
+window.sfClearDistributeurs = async function sfClearDistributeurs() {
+  const ok = typeof appConfirm === "function"
+    ? await appConfirm("Effacer tous les distributeurs de cet entrepôt ? (partagé avec tous les utilisateurs)", { danger: true, okText: "Effacer" })
+    : true;
+  if (!ok) return;
+  const st = _sfD2State();
+  const patch = { "_meta/migrated": true };       // évite de recopier l'ancienne liste après l'effacement
+  Object.keys(st.map).forEach(id => { patch[id] = null; });
+  await _sfD2Commit(patch);
+  _sfStatus("Liste effacée.");
+  _sfAfterChange();
+};
 
-  const baseUrl = ODOO_BASE;
-  const targetDate = window._sfSelectedDate || new Date().toISOString().slice(0, 10);
+window.sfSyncFromOdoo = async function sfSyncFromOdoo() {
+  const btn = document.getElementById("sfSyncBtn");
+  if (btn) btn.disabled = true;
+  _sfStatus("Synchronisation avec Odoo…");
   try {
-    const plannings = await _rpc_call(baseUrl, {
-      model: "planning.planning", method: "search_read",
-      args: [[["user_id.id", "=", parseInt(distId)], ["date_start", "=", targetDate]]],
-      kwargs: { fields: ["id", "name", "date_start"] },
-    });
-    if (!plannings?.length) { body.innerHTML = `<div style="padding:6px;font-size:11px;color:var(--text3);">Aucune tournée trouvée.</div>`; return; }
+    const r = await _sfSync(_sfWh());
+    if (r.status === "blocked") _sfStatus("Liaison entrepôt / tournées non définie : synchronisation Odoo désactivée.");
+    else if (r.status === "error") _sfStatus(r.msg, "err");
+    else _sfStatus(`Synchronisé — ${r.added} ajouté(s), ${r.renamed} renommé(s) (${r.total} trouvé(s) dans Odoo).`, "ok");
+    _sfAfterChange();
+  } finally { if (btn) btn.disabled = false; }
+};
 
-    let bodyHtml = "";
-    for (const round of plannings) {
-      const lines = await _rpc_fetchStockFinal(baseUrl, round.id);
-      if (!lines.length) {
-        bodyHtml += `<div style="margin-bottom:10px;">
-          <div style="margin-bottom:4px;color:var(--text2);font-size:10px;font-weight:600;">🔄 Tournée: ${round.name || round.id}</div>
-          <div style="color:var(--text3);font-size:11px;">Stock final vide.</div>
-        </div>`;
-        continue;
-      }
-      let tableHtml = `
-        <div style="margin-bottom:10px;">
-          <div style="margin-bottom:4px;color:var(--text2);font-size:10px;font-weight:600;">🔄 Tournée: ${round.name || round.id}</div>
-          <table style="width:100%;border-collapse:collapse;font-size:11px;">
-            <thead><tr style="background:var(--bg3);">
-              <th style="padding:4px 6px;text-align:left;color:var(--text2);">Article</th>
-              <th style="padding:4px 6px;text-align:center;color:var(--text2);">CDN</th>
-              <th style="padding:4px 6px;text-align:center;color:var(--text2);">Qté</th>
-            </tr></thead><tbody>`;
-      lines.forEach((l, i) => {
-        const cdn = l._cdn_override !== undefined && l._cdn_override !== null
-          ? l._cdn_override
-          : (l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "—");
-        tableHtml += `<tr style="background:${i%2===0?"var(--bg1)":"var(--bg2)"};">
-          <td style="padding:3px 6px;color:var(--text1);">${l.name}</td>
-          <td style="padding:3px 6px;text-align:center;color:var(--text2);">${cdn}</td>
-          <td style="padding:3px 6px;text-align:center;font-weight:600;color:var(--text1);">${l.qty}</td>
-        </tr>`;
-      });
-      const roundLabel = `${distNom} - ${round.name || round.id}`;
-      tableHtml += `</tbody></table>
-        <div style="display:flex;gap:6px;margin-top:6px;">
-          <button onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})' style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;background:#22c55e;color:#fff;border:none;border-radius:6px;cursor:pointer;">EXPORT</button>
-          <button onclick='exportStockFinalPdf("${roundLabel}", ${JSON.stringify(lines)})' style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;background:#ef4444;color:#fff;border:none;border-radius:6px;cursor:pointer;">EXPORT</button>
-        </div>
-      </div>`;
-      bodyHtml += tableHtml;
+// ── Stock Final — UI (cartes + modale) ────────────────────────
+// Interface seulement. Données: cache JSON structuré par (date, distributeur) sous la clé "sf2_<date>_<id>".
+// Aucun appel réseau au changement de date / à l'ouverture de l'onglet: seulement Actualiser (tout) ou ↻ (une carte).
+const SF_CACHE_PREFIX  = "sf2_";
+const SF_LAST_DATE_KEY = "sf_cache_last_date";
+
+const _sfSvg = (inner, size = 14) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" class="sf-ic">${inner}</svg>`;
+const _SF_P = {
+  refresh:  '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.34"/>',
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  print:    '<polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>',
+  search:   '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+  close:    '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+  user:     '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  layers:   '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+  alert:    '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
+  box:      '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>',
+  clock:    '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  dash:     '<line x1="5" y1="12" x2="19" y2="12"/>',
+  gear:     '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'
+};
+const _SF_IC = {};
+Object.keys(_SF_P).forEach(k => { _SF_IC[k] = _sfSvg(_SF_P[k]); });
+
+// ── État en mémoire ──────────────────────────────────────────
+const _sfRt  = new Map();   // "<date>|<id>" -> { status:"loading"|"error", msg }
+const _sfMem = new Map();   // repli si localStorage est plein
+let _sfDistMap = new Map(); // id -> distributeur
+let _sfEls     = new Map(); // id -> élément carte
+let _sfFilterQ = "";
+let _sfHasData = false;     // au moins une carte non vide pour la date affichée
+let _sfAllToken = 0, _sfAllDate = null;
+let _sfModalCtx = null, _sfModalRet = null;
+let _sfLblTimer = null, _sfLblLast = 0;
+
+const _sfToday  = () => new Date().toISOString().slice(0, 10);
+const _sfCurDate = () => window._sfSelectedDate || _sfToday();
+const _sfNormTxt = (s) => String(s == null ? "" : s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+// ── Cache structuré ──────────────────────────────────────────
+const _sfKey = (date, id) => `${SF_CACHE_PREFIX}${date}_${id}`;
+function _sfCacheGet(date, id) {
+  const k = _sfKey(date, id);
+  if (_sfMem.has(k)) return _sfMem.get(k);
+  try {
+    const raw = localStorage.getItem(k);
+    if (!raw) return null;
+    const rec = JSON.parse(raw);
+    return (rec && rec.v === 1 && Array.isArray(rec.rounds)) ? rec : null;
+  } catch (_) { return null; }
+}
+function _sfCacheSet(date, id, rec) {
+  const k = _sfKey(date, id);
+  try { localStorage.setItem(k, JSON.stringify(rec)); _sfMem.delete(k); }
+  catch (_) { _sfMem.set(k, rec); }
+}
+function _sfCacheClearDate(date) {
+  const pre = `${SF_CACHE_PREFIX}${date}_`;
+  try {
+    const del = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(pre)) del.push(k);
     }
-    body.innerHTML = bodyHtml;
-    body.style.padding = "8px";
-  } catch(err) {
-    body.innerHTML = `<span style="color:#f87171;">Erreur: ${err.message}</span>`;
-  }
-};
-
-// ── Stock Final — جلب الليفرورين من Odoo تلقائياً ────────────
-async function _sfFetchLivreurs() {
-  try {
-    const since = new Date();
-    since.setMonth(since.getMonth() - 3);
-    const sinceStr = since.toISOString().slice(0, 10);
-
-    const r = await fetch("/api/web/dataset/call_kw", {
-      method: "POST", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jsonrpc:"2.0", method:"call", id:0, params:{
-        model: "planning.planning", method: "search_read",
-        args: [[["date_start", ">=", sinceStr], ["user_id.name", "ilike", "LIVREUR"]]],
-        kwargs: { fields: ["user_id"], limit: 2000 }
-      }})
-    });
-    const result = (await r.json())?.result || [];
-
-    // تجميع فريد بـ user_id
-    const seen = {};
-    result.forEach(p => {
-      if (p.user_id) seen[p.user_id[0]] = p.user_id[1];
-    });
-
-    return Object.entries(seen).map(([id, nom]) => ({
-      id: parseInt(id),
-      nom: _cleanPartnerName(nom)
-    })).sort((a, b) => a.nom.localeCompare(b.nom, "fr", { sensitivity: "base" }));
-  } catch(e) {
-    console.warn("_sfFetchLivreurs failed:", e);
-    return [];
-  }
+    del.forEach(k => localStorage.removeItem(k));
+  } catch (_) {}
+  [..._sfMem.keys()].forEach(k => { if (k.startsWith(pre)) _sfMem.delete(k); });
 }
 
-// ── Stock Final — render tab ──────────────────────────────────
-// الدالة الموحدة: تتحقق من cache أولاً، وتجلب من الشبكة إذا لم يوجد
-window.sfRenderFromCache = async function sfRenderFromCache() {
+// ── Valeurs affichées / résumé ───────────────────────────────
+// Même valeur CDN que le tableau de la modale (y compris _cdn_override).
+function _sfLineCdn(l) {
+  if (l._cdn_override !== undefined && l._cdn_override !== null) return l._cdn_override;
+  return l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "—";
+}
+function _sfPkgKind(name) {
+  const n = _sfNormTxt(name);
+  const f = n.indexOf("fardeau"), c = n.indexOf("carton");
+  if (f < 0 && c < 0) return "autre";
+  if (c < 0) return "fardeau";
+  if (f < 0) return "carton";
+  return f < c ? "fardeau" : "carton";
+}
+const _sfFmtN = (n) => String(+n.toFixed(2));
+function _sfSummary(rec) {
+  const t = { fardeau: 0, carton: 0, autre: 0 };
+  rec.rounds.forEach(r => (r.lines || []).forEach(l => {
+    const v = _sfLineCdn(l);
+    if (v === "—" || v === "") return;
+    const n = Number(v);
+    if (!isFinite(n)) return;
+    t[_sfPkgKind(l.packaging_name)] += n;
+  }));
+  return { fardeau: _sfFmtN(t.fardeau), carton: _sfFmtN(t.carton), autre: _sfFmtN(t.autre), autreN: t.autre, rounds: rec.rounds.length };
+}
+function _sfFmtTs(ts) {
+  if (!ts) return "";
+  const d  = new Date(ts);
+  const hm = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString()
+    ? hm
+    : d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }) + " " + hm;
+}
+
+// ── Récupération Odoo (mêmes appels qu'avant) ────────────────
+async function _sfFetchDist(baseUrl, dist, date) {
+  const plannings = await _rpc_call(baseUrl, {
+    model: "planning.planning", method: "search_read",
+    args: [[["user_id.id", "=", parseInt(dist.id)], ["date_start", "=", date]]],
+    kwargs: { fields: ["id", "name", "date_start"] },
+  });
+  const rec = { v: 1, ts: Date.now(), status: plannings?.length ? "ok" : "none", rounds: [] };
+  for (const round of (plannings || [])) {
+    const lines = await _rpc_fetchStockFinal(baseUrl, round.id);
+    const roundDate = (round.date_start || date).slice(0, 10).split("-").reverse().join("/");
+    rec.rounds.push({
+      id: round.id,
+      name: String(round.name || round.id),
+      label: `${dist.nom} - ${round.name || round.id} - ${roundDate}`,
+      lines: lines || [],
+    });
+  }
+  return rec;
+}
+async function _sfLoadDist(dist, date, baseUrl) {
+  const key = `${date}|${dist.id}`;
+  _sfRt.set(key, { status: "loading" });
+  _sfPaintCard(dist.id, date);
+  try {
+    const rec = await _sfFetchDist(baseUrl, dist, date);
+    _sfCacheSet(date, dist.id, rec);
+    _sfRt.delete(key);
+    try { localStorage.setItem(SF_LAST_DATE_KEY, date); } catch (_) {}
+  } catch (err) {
+    _sfRt.set(key, { status: "error", msg: err?.message || String(err) });
+  }
+  if (date === _sfCurDate()) _sfHasData = true;
+  _sfPaintCard(dist.id, date);
+  _sfRefreshModalIf(dist.id, date);
+}
+
+// ── Cartes ───────────────────────────────────────────────────
+function _sfCardState(date, id) {
+  const rt = _sfRt.get(`${date}|${id}`);
+  if (rt) return { kind: rt.status, msg: rt.msg };
+  const rec = _sfCacheGet(date, id);
+  if (!rec) return { kind: "idle" };
+  return rec.rounds.length ? { kind: "ok", rec } : { kind: "none", rec };
+}
+function _sfCardHtml(dist, date, st) {
+  st = st || _sfCardState(date, dist.id);
+  const nom = escHtml(dist.nom == null ? "" : dist.nom);
+  let body = "";
+  if (st.kind === "ok") {
+    const s = _sfSummary(st.rec);
+    const z = (v) => (parseFloat(v) === 0 ? " sf-chip--z" : "");
+    body = `<div class="sf-chips">
+        <span class="sf-chip sf-chip--f${z(s.fardeau)}"><b>${s.fardeau}</b><span class="sf-chip-l">Fardeau</span></span>
+        <span class="sf-chip sf-chip--c${z(s.carton)}"><b>${s.carton}</b><span class="sf-chip-l">Carton</span></span>
+        ${s.autreN > 0 ? `<span class="sf-chip sf-chip--o"><b>${s.autre}</b><span class="sf-chip-l">Autre</span></span>` : ""}
+      </div>
+      <div class="sf-card-f">
+        <span class="sf-meta">${_SF_IC.layers}<span>${s.rounds} tournée${s.rounds > 1 ? "s" : ""}</span></span>
+        <span class="sf-meta sf-meta--ts" title="Dernier chargement">${_SF_IC.clock}<span>${escHtml(_sfFmtTs(st.rec.ts))}</span></span>
+      </div>`;
+  } else if (st.kind === "loading") {
+    body = `<div class="sf-sk" style="width:62%"></div><div class="sf-sk" style="width:88%"></div>`;
+  } else if (st.kind === "error") {
+    body = `<div class="sf-err">${_SF_IC.alert}<span class="sf-err-t" title="${escHtml(st.msg || "")}">Erreur de chargement</span>
+      <button type="button" class="sf-retry" data-sf="card-refresh" title="Réessayer" aria-label="Réessayer">${_SF_IC.refresh}<span>Réessayer</span></button></div>`;
+  } else if (st.kind === "none") {
+    body = `<div class="sf-mid">Aucune tournée</div>`;
+  } else {
+    body = `<div class="sf-mid">Non chargé</div>`;
+  }
+  const loading = st.kind === "loading";
+  const clickable = st.kind === "ok";
+  return `<div class="sf-card sf-card--${st.kind}" data-id="${escHtml(dist.id)}" data-search="${escHtml(_sfNormTxt(dist.nom))}"${clickable ? ' role="button" tabindex="0"' : ""}${loading ? ' aria-busy="true"' : ""}>
+    <div class="sf-card-h">
+      <span class="sf-card-ic">${_SF_IC.user}</span>
+      <span class="sf-card-t"><span class="sf-card-n" title="${nom}">${nom}</span></span>
+      <button type="button" class="sf-rf${loading ? " is-spin" : ""}" data-sf="card-refresh" title="Actualiser" aria-label="Actualiser ${nom}"${loading ? " disabled" : ""}>${_SF_IC.refresh}</button>
+    </div>
+    ${body ? `<div class="sf-card-b">${body}</div>` : ""}
+  </div>`;
+}
+function _sfPaintCard(id, date) {
+  if (_sfCurDate() !== date) return;
+  const sid = String(id);
+  const dist = _sfDistMap.get(sid), old = _sfEls.get(sid);
+  if (!dist || !old || !old.isConnected) return;
+  const t = document.createElement("template");
+  t.innerHTML = _sfCardHtml(dist, date).trim();
+  const n = t.content.firstElementChild;
+  old.replaceWith(n);
+  _sfEls.set(sid, n);
+  _sfMatchCard(n);
+  _sfUpdateNote();
+}
+
+// ── Recherche (masque/affiche, sans re-rendu) ────────────────
+function _sfMatchCard(n) {
+  const s = n.dataset.search || "";
+  const ok = !_sfFilterQ || _sfFilterQ.split(/\s+/).every(tok => s.includes(tok));
+  n.classList.toggle("sf-hide", !ok);
+  return ok;
+}
+function _sfApplyFilter() {
+  let shown = 0;
+  _sfEls.forEach(n => { if (_sfMatchCard(n)) shown++; });
+  const empty = document.getElementById("sfEmpty");
+  if (empty) empty.hidden = !(_sfFilterQ && _sfEls.size && !shown);
+}
+
+// ── Message d'aide / colonnes / barre ────────────────────────
+const _SF_HINT = `<span class="sf-note-ic">${_sfSvg(_SF_P.box, 22)}</span><span>Appuyez sur <b>Actualiser</b> pour charger le stock final.</span>`;
+function _sfUpdateNote() {
+  const note = document.getElementById("sfNote");
+  if (!note || note.dataset.warn) return;
+  const date = _sfCurDate();
+  let busy = false;
+  _sfRt.forEach((_, k) => { if (k.startsWith(date + "|")) busy = true; });
+  note.hidden = _sfHasData || busy;
+}
+function _sfSyncBar(date) {
+  const bar = document.getElementById("sfBar");
+  if (!bar) return;
+  const isToday = date >= _sfToday();
+  bar.querySelector(".sf-date-t").textContent = date;
+  bar.querySelector(".sf-date-lbl").classList.toggle("sf-date-lbl--today", isToday);
+  bar.querySelector(".sf-pill").classList.toggle("sf-pill--off", !isToday);
+  bar.querySelector('[data-sf="next"]').disabled = isToday;
+}
+function _sfShiftDate(days) {
+  window.AppDatePicker?.close?.();
+  window._sfSelectedDate = new Date(new Date(_sfCurDate()).getTime() + days * 86400000).toISOString().slice(0, 10);
+  sfRenderFromCache();
+}
+function _sfGoToday() {
+  clearTimeout(_sfLblTimer);
+  window.AppDatePicker?.close?.();
+  const t = _sfToday();
+  if (_sfCurDate() === t) { window._sfSelectedDate = t; return; }
+  window._sfSelectedDate = t;
+  sfRenderFromCache();
+}
+// Clic simple = ouvre le calendrier après un court délai ; double clic / double tap = aujourd'hui.
+function _sfDateClick(btn) {
+  const now = Date.now();
+  clearTimeout(_sfLblTimer);
+  if (now - _sfLblLast < 300) { _sfLblLast = 0; _sfGoToday(); return; }
+  _sfLblLast = now;
+  _sfLblTimer = setTimeout(() => { _sfLblLast = 0; _sfOpenDatePicker(btn); }, 300);
+}
+window._sfOpenDatePicker = function (anchor) {
+  const today = _sfToday();                      // même "aujourd'hui" que la flèche suivante (pas de jours futurs)
+  AppDatePicker.open(anchor, {
+    mode: "day", align: "center", value: _sfCurDate(), max: today,
+    onApply: (v) => { window._sfSelectedDate = v; sfRenderFromCache(); }
+  });
+};
+
+// ── Coque (barre unique + grille) ────────────────────────────
+function _sfEnsureShell(el) {
+  if (el.querySelector(":scope > .sf-root")) return;
+  _sfFilterQ = "";
+  el.innerHTML = `<div class="sf-root">
+    <div class="sf-bar" id="sfBar">
+      <div class="sf-search">
+        ${_SF_IC.search}
+        <input id="sfSearch" type="text" placeholder="Rechercher un distributeur" autocomplete="off" spellcheck="false" aria-label="Rechercher un distributeur"/>
+        <button type="button" class="sf-search-x" data-sf="clear" aria-label="Effacer la recherche" hidden>${_sfSvg(_SF_P.close, 12)}</button>
+      </div>
+      <div class="sf-date" data-perm="sf_date_bar">
+        <button type="button" class="sf-arrow" data-sf="prev" aria-label="Jour précédent">&#8249;</button>
+        <button type="button" class="sf-date-lbl" data-sf="date" title="Choisir une date (double clic : aujourd'hui)"><span class="sf-date-t"></span><span class="sf-pill sf-pill--off">Auj</span></button>
+        <button type="button" class="sf-arrow" data-sf="next" aria-label="Jour suivant">&#8250;</button>
+      </div>
+      <button type="button" class="sf-btn sf-btn--local" data-sf="local" title="Ordre et affichage (cet appareil uniquement)" aria-label="Paramètres locaux : ordre et affichage">${_SF_IC.gear}</button>
+      <button type="button" class="sf-btn sf-btn--primary" data-perm="sf_btn_refresh" data-sf="refresh" title="Actualiser" aria-label="Actualiser">${_SF_IC.refresh}<span class="sf-btn-t">Actualiser</span></button>
+      <button type="button" class="sf-btn sf-btn--xls" data-perm="sf_btn_export" data-sf="xlsx" title="Tout exporter — Excel" aria-label="Tout exporter en Excel">${_SF_IC.download}<span class="sf-btn-t">Excel</span></button>
+      <button type="button" class="sf-btn sf-btn--pdf" data-perm="sf_btn_export" data-sf="pdf" title="Tout exporter — PDF" aria-label="Tout exporter en PDF">${_SF_IC.print}<span class="sf-btn-t">PDF</span></button>
+    </div>
+    <div class="sf-note" id="sfNote" hidden></div>
+    <div class="sf-grid" id="sfResultsContainer"></div>
+    <div class="sf-empty" id="sfEmpty" hidden>Aucun distributeur ne correspond à la recherche.</div>
+  </div>`;
+
+  const bar = document.getElementById("sfBar");
+  const inp = document.getElementById("sfSearch");
+  const clr = bar.querySelector('[data-sf="clear"]');
+  const grid = document.getElementById("sfResultsContainer");
+
+  inp.addEventListener("input", () => {
+    _sfFilterQ = _sfNormTxt(inp.value).trim();
+    clr.hidden = !inp.value;
+    _sfApplyFilter();
+  });
+  inp.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && inp.value) { inp.value = ""; inp.dispatchEvent(new Event("input")); e.stopPropagation(); }
+  });
+  bar.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-sf]");
+    if (!b || !bar.contains(b) || b.disabled) return;
+    switch (b.dataset.sf) {
+      case "prev":    _sfShiftDate(-1); break;
+      case "next":    if (_sfCurDate() < _sfToday()) _sfShiftDate(1); break;
+      case "date":    _sfDateClick(b); break;
+      case "local":   sfOpenLocalSettings(); break;
+      case "refresh": renderGdsStockFinal(); break;
+      case "xlsx":    sfExportAll("xlsx"); break;
+      case "pdf":     sfExportAll("pdf"); break;
+      case "clear":   inp.value = ""; inp.dispatchEvent(new Event("input")); inp.focus(); break;
+    }
+  });
+  bar.addEventListener("dblclick", (e) => { if (e.target.closest('[data-sf="date"]')) _sfGoToday(); });
+
+  grid.addEventListener("click", (e) => {
+    const card = e.target.closest(".sf-card");
+    if (!card || !grid.contains(card)) return;
+    const act = e.target.closest('[data-sf="card-refresh"]');
+    if (act) {
+      e.stopPropagation();
+      const d = _sfDistMap.get(card.dataset.id);
+      if (d && !act.disabled) sfRefreshDist(d.id, d.nom);
+      return;
+    }
+    if (card.classList.contains("sf-card--ok")) sfOpenModal(card.dataset.id);
+  });
+  grid.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && e.target.classList?.contains("sf-card--ok")) {
+      e.preventDefault();
+      sfOpenModal(e.target.dataset.id);
+    }
+  });
+}
+
+// ── Rendu depuis le cache uniquement (aucun réseau) ──────────
+window.sfRenderFromCache = function sfRenderFromCache() {
   const el = document.getElementById("gdsStockFinalContent");
   if (!el) return;
+  _sfEnsureShell(el);
+  const date = _sfCurDate();
+  _sfSyncBar(date);
 
-  const today     = new Date().toISOString().slice(0, 10);
-  const savedDate = window._sfSelectedDate || today;
-  const isToday   = savedDate === today;
+  const grid = document.getElementById("sfResultsContainer");
+  const note = document.getElementById("sfNote");
+  const dists = sfGetDistributeurs();                // déjà trié (ordre puis nom), masqués exclus
+  _sfDistMap = new Map(dists.map(d => [String(d.id), d]));
+  _sfEls = new Map();
 
-  // ── رسم الهيكل دائماً (date bar + أزرار)
-  el.innerHTML = `
-    <div class="date-switcher-bar" data-perm="sf_date_bar" style="flex-shrink:0;">
-      <button class="ds-arrow" onclick="window._sfSelectedDate=new Date(new Date(window._sfSelectedDate||new Date().toISOString().slice(0,10)).getTime()-86400000).toISOString().slice(0,10); sfRenderFromCache();">&#8249;</button>
-      <div class="ds-label ${isToday ? 'ds-label--today' : ''}" style="position:relative;" onclick="document.getElementById('sfHiddenDate').showPicker()">
-        <span class="ds-date-text">${savedDate}</span>
-        ${isToday ? '<span class="ds-today-pill">Auj</span>' : ''}
-        <input type="date" id="sfHiddenDate" value="${savedDate}"
-          style="position:absolute;opacity:0;width:0;height:0;pointer-events:none;"
-          onchange="window._sfSelectedDate=this.value; sfRenderFromCache();" />
-      </div>
-      <button class="ds-arrow" ${isToday ? 'disabled' : ''} onclick="window._sfSelectedDate=new Date(new Date(window._sfSelectedDate||new Date().toISOString().slice(0,10)).getTime()+86400000).toISOString().slice(0,10); sfRenderFromCache();">&#8250;</button>
-    </div>
-    <div style="display:flex;gap:6px;padding:6px 10px;flex-shrink:0;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center;">
-      <button class="gds-refresh-btn" data-perm="sf_btn_refresh" onclick="renderGdsStockFinal()">↻ Actualiser</button>
-      <button class="gds-refresh-btn" data-perm="sf_btn_today" onclick="window._sfSelectedDate=new Date().toISOString().slice(0,10); sfRenderFromCache();">📅 Aujourd'hui</button>
-      <button class="gds-refresh-btn" data-perm="sf_btn_export" onclick="sfExportAll('xlsx')">⬇ Tout exporter Excel</button>
-      <button class="gds-refresh-btn" data-perm="sf_btn_export" style="background:var(--red);" onclick="sfExportAll('pdf')">🖨 Tout exporter PDF</button>
-    </div>
-    <div id="sfResultsContainer" style="padding:8px;display:grid;align-items:start;gap:10px;"></div>`;
+  _sfHasData = false;
+  grid.innerHTML = dists.map(d => {
+    const st = _sfCardState(date, d.id);
+    if (st.kind !== "idle") _sfHasData = true;
+    return _sfCardHtml(d, date, st);
+  }).join("");
+  [...grid.children].forEach(n => _sfEls.set(n.dataset.id, n));
 
-  let distributeurs = sfGetDistributeurs();
-  const container   = document.getElementById("sfResultsContainer");
-  if (!container) return;
-
-  // إذا القائمة فارغة → جلب تلقائي من Odoo
-  if (!distributeurs.length) {
-    container.innerHTML = `<div style="padding:20px;color:var(--text3);font-size:12px;text-align:center;">Chargement des livreurs…</div>`;
-    distributeurs = await _sfFetchLivreurs();
-    if (distributeurs.length) sfSaveDistributeurs(distributeurs);
-  }
-
-  // ترتيب أبجدي دائماً
-  distributeurs.sort((a, b) => a.nom.localeCompare(b.nom, "fr", { sensitivity: "base" }));
-
-  const sfMaxCols  = parseInt(localStorage.getItem("sf_columns_per_row") || "1");
-  const screenW    = window.innerWidth;
-  const actualCols = screenW < 480 ? 1 : screenW < 768 ? Math.min(sfMaxCols, 2) : sfMaxCols;
-  container.style.gridTemplateColumns = `repeat(${actualCols},1fr)`;
-
-  // ── تحقق من cache لكل موزع
-  const missing = []; // موزعين ليس لهم cache في هذا التاريخ
-  distributeurs.forEach(dist => {
-    const cached     = localStorage.getItem(`sf_cache_${savedDate}_${dist.id}`);
-    const distSafeId = "sf_dist_" + dist.id;
-    const section    = document.createElement("div");
-    section.style.cssText = "border:1px solid var(--border);border-radius:8px;overflow:hidden;";
-    section.innerHTML = `
-      <div style="padding:7px 12px;background:var(--bg2);font-size:12px;font-weight:600;color:var(--text1);display:flex;justify-content:space-between;align-items:center;cursor:pointer;"
-        onclick="sfToggleDist('${distSafeId}')">
-        <span>📦 ${dist.nom}</span>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <button class="gds-refresh-btn" style="font-size:10px;padding:2px 7px;" onclick="event.stopPropagation(); sfRefreshDist('${dist.id}','${dist.nom}','${distSafeId}')">↻</button>
-          <span id="arrow_${distSafeId}" style="font-size:11px;color:var(--text3);transition:transform 0.2s;">▶</span>
-        </div>
-      </div>
-      <div id="${distSafeId}" class="sf-dist-body" style="display:none;padding:8px;">
-        ${cached || '<span style="color:var(--text3);font-size:11px;">Chargement…</span>'}
-      </div>`;
-    container.appendChild(section);
-    if (!cached) missing.push(dist);
-  });
-
-  if (!distributeurs.length) {
-    container.innerHTML = `<div style="padding:20px;color:var(--text3);font-size:12px;text-align:center;">Appuyez sur <b>↻ Actualiser</b> pour charger le stock final.</div>`;
-    return;
-  }
-
-  // ── جلب من الشبكة فقط للموزعين الغائبين عن cache
-  if (missing.length) {
-    const baseUrl = ODOO_BASE;
-    if (!baseUrl) return;
-    for (const dist of missing) {
-      const distSafeId = "sf_dist_" + dist.id;
-      const body = document.getElementById(distSafeId);
-      try {
-        const plannings = await _rpc_call(baseUrl, {
-          model: "planning.planning", method: "search_read",
-          args: [[["user_id.id", "=", parseInt(dist.id)], ["date_start", "=", savedDate]]],
-          kwargs: { fields: ["id", "name", "date_start"] },
-        });
-        if (!plannings?.length) { if (body) body.textContent = "Aucune tournée trouvée."; continue; }
-
-        let allDistLines = [];
-        let bodyHtml = "";
-        for (const round of plannings) {
-          const lines = await _rpc_fetchStockFinal(baseUrl, round.id);
-          if (!lines.length) {
-            bodyHtml += `<div style="margin-bottom:10px;">
-              <div style="margin-bottom:4px;color:var(--text2);font-size:10px;font-weight:600;">🔄 Tournée: ${round.name || round.id}</div>
-              <div style="color:var(--text3);font-size:11px;">Stock final vide.</div>
-            </div>`;
-            continue;
-          }
-          let tableHtml = `
-            <div style="margin-bottom:10px;">
-              <div style="margin-bottom:4px;color:var(--text2);font-size:10px;font-weight:600;">🔄 Tournée: ${round.name || round.id}</div>
-              <table style="width:100%;border-collapse:collapse;font-size:11px;">
-                <thead><tr style="background:var(--bg3);">
-                  <th style="padding:4px 6px;text-align:left;color:var(--text2);">Article</th>
-                  <th style="padding:4px 6px;text-align:center;color:var(--text2);">CDN</th>
-                  <th style="padding:4px 6px;text-align:center;color:var(--text2);">Qté</th>
-                </tr></thead><tbody>`;
-          lines.forEach((l, i) => {
-            const cdn = l._cdn_override !== undefined && l._cdn_override !== null
-              ? l._cdn_override
-              : (l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "—");
-            tableHtml += `<tr style="background:${i%2===0?"var(--bg1)":"var(--bg2)"};">
-              <td style="padding:3px 6px;color:var(--text1);">${l.name}</td>
-              <td style="padding:3px 6px;text-align:center;color:var(--text2);">${cdn}</td>
-              <td style="padding:3px 6px;text-align:center;font-weight:600;color:var(--text1);">${l.qty}</td>
-            </tr>`;
-          });
-          const roundDate = (round.date_start || savedDate).slice(0, 10).split("-").reverse().join("/");
-          const roundLabel = `${dist.nom} - ${round.name || round.id} - ${roundDate}`;
-          tableHtml += `</tbody></table>
-            <div style="display:flex;gap:6px;margin-top:6px;">
-            
-            <button class="gds-refresh-btn" style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;background:var(--red);" onclick='exportStockFinalPdf("${roundLabel}", ${JSON.stringify(lines)})'>🖨 PDF</button>
-			<button class="gds-refresh-btn" style="flex:1;padding:10px;font-size:13px;font-weight:700;letter-spacing:1px;" onclick='exportStockFinalXlsx("${roundLabel}", ${JSON.stringify(lines)})'>📊 EXCEL</button>
-          </div>
-          </div>`;
-          bodyHtml += tableHtml;
-          lines.forEach(l => allDistLines.push({ ...l, _roundLabel: round.name || round.id }));
-        }
-        if (body) { body.innerHTML = bodyHtml; body.style.padding = "8px"; }
-        try { localStorage.setItem(`sf_cache_${savedDate}_${dist.id}`, bodyHtml); } catch(_) {}
-      } catch(err) {
-        if (body) body.innerHTML = `<span style="color:#f87171;">Erreur: ${err.message}</span>`;
-      }
-    }
-    try { localStorage.setItem("sf_cache_last_date", savedDate); } catch(_) {}
-  }
+  delete note.dataset.warn;
+  note.innerHTML = _SF_HINT;
+  note.hidden = _sfHasData;
+  _sfApplyFilter();
 };
 
-// ── Force refresh: يمسح cache اليوم الحالي ويعيد الجلب من الشبكة
+// ── Actualiser (tout): vide le cache de la date puis recharge ─
 window.renderGdsStockFinal = async function renderGdsStockFinal() {
   if (!isAdmin() && !_hasTabPerm("stockfinal")) return;
-  let distributeurs = sfGetDistributeurs();
-  if (!distributeurs.length) {
-    distributeurs = await _sfFetchLivreurs();
-    if (distributeurs.length) sfSaveDistributeurs(distributeurs);
-  }
+  const whId = _sfWh();
+  // 1) synchro des distributeurs de l'entrepôt (ajoute seulement les nouveaux), puis lecture cloud si pas déjà faite
+  const sync = await _sfSync(whId);
+  if (sync.status !== "ok") { try { await _sfD2Load(whId); } catch (e) { console.warn("SF dists2 load failed:", e); } }
+  if (sync.status === "error") _sfNotify("Synchro distributeurs : " + sync.msg, "error");
+  else if (sync.status === "ok" && sync.added) _sfNotify(`${sync.added} nouveau(x) distributeur(s) ajouté(s)`, "success");
+  if (_sfWh() !== whId) return;
+  // 2) distributeurs visibles, dans l'ordre choisi
+  const distributeurs = sfGetDistributeurs();
   if (!distributeurs.length) {
     const el = document.getElementById("gdsStockFinalContent");
-    if (el) el.innerHTML = `<div style="padding:20px;color:var(--text3);font-size:13px;text-align:center;">
-      ⚠ Aucun livreur trouvé dans Odoo.<br>
-      <span style="font-size:11px;">Vérifiez que les utilisateurs ont le workflow LIVREUR.</span>
-    </div>`;
+    if (el) {
+      _sfEnsureShell(el);
+      _sfSyncBar(_sfCurDate());
+      _sfDistMap = new Map(); _sfEls = new Map();
+      document.getElementById("sfResultsContainer").innerHTML = "";
+      const note = document.getElementById("sfNote");
+      note.dataset.warn = "1";
+      const allHidden = _sfD2List(null, true).length > 0;
+      const msg = allHidden
+        ? `Tous les distributeurs sont masqués.<br><small>Réaffichez-les dans Paramètres → Stock Final.</small>`
+        : sync.status === "blocked"
+          ? `Liaison entrepôt ↔ tournées non définie.<br><small>Ajoutez les distributeurs manuellement ou par Excel (Paramètres → Stock Final).</small>`
+          : `Aucun livreur trouvé dans Odoo.<br><small>Vérifiez que les utilisateurs ont le workflow LIVREUR.</small>`;
+      note.innerHTML = `<span class="sf-note-ic">${_sfSvg(_SF_P.alert, 22)}</span><span>${msg}</span>`;
+      note.hidden = false;
+    }
     return;
   }
   const baseUrl = ODOO_BASE;
   if (!baseUrl) return;
-  // مسح cache التاريخ الحالي لإجبار إعادة الجلب
-  const targetDate = window._sfSelectedDate || new Date().toISOString().slice(0, 10);
-  distributeurs.forEach(dist => {
-    try { localStorage.removeItem(`sf_cache_${targetDate}_${dist.id}`); } catch(_) {}
+
+  const date = _sfCurDate();
+  _sfCacheClearDate(date);
+  distributeurs.forEach(d => _sfRt.set(`${date}|${d.id}`, { status: "loading" }));
+  sfRenderFromCache();
+
+  const token = ++_sfAllToken;
+  _sfAllDate = date;
+  let i = 0;
+  for (; i < distributeurs.length; i++) {
+    if (token !== _sfAllToken) break;
+    await _sfLoadDist(distributeurs[i], date, baseUrl);
+  }
+  // Interrompu par une nouvelle actualisation d'une autre date: libérer les cartes restées en attente
+  if (token !== _sfAllToken && _sfAllDate !== date) {
+    for (let j = i; j < distributeurs.length; j++) {
+      const k = `${date}|${distributeurs[j].id}`;
+      if (_sfRt.get(k)?.status === "loading") _sfRt.delete(k);
+    }
+  }
+};
+
+// ── ↻ d'une carte ────────────────────────────────────────────
+window.sfRefreshDist = async function sfRefreshDist(distId, distNom, distSafeId) {
+  const date = _sfCurDate();
+  if (_sfRt.get(`${date}|${distId}`)?.status === "loading") return;
+  const dist = _sfDistMap.get(String(distId)) || { id: distId, nom: distNom };
+  const baseUrl = ODOO_BASE;
+  if (!baseUrl) {
+    _sfRt.set(`${date}|${distId}`, { status: "error", msg: "Odoo indisponible" });
+    _sfPaintCard(distId, date);
+    return;
+  }
+  await _sfLoadDist(dist, date, baseUrl);
+};
+
+// ── Modale (système smodal existant) ─────────────────────────
+function _sfEnsureModal() {
+  let ov = document.getElementById("modalSfDist");
+  if (ov) return ov;
+  ov = document.createElement("div");
+  ov.className = "smodal-overlay";
+  ov.id = "modalSfDist";
+  ov.innerHTML = `<div class="smodal-box" role="dialog" aria-modal="true" aria-labelledby="sfModalTitle" tabindex="-1">
+    <div class="smodal-header">
+      <div class="sf-mh"><span class="smodal-title" id="sfModalTitle"></span><span class="sf-mh-sub" id="sfModalSub"></span></div>
+      <button type="button" class="smodal-close" data-sf="close" aria-label="Fermer">${_sfSvg(_SF_P.close, 16)}</button>
+    </div>
+    <div class="smodal-body" id="sfModalBody"></div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-sf]");
+    if (!b) return;
+    if (b.dataset.sf === "close") { sfCloseModal(); return; }
+    if (b.dataset.sf === "exp" && _sfModalCtx) {
+      const rec = _sfCacheGet(_sfModalCtx.date, _sfModalCtx.id);
+      const r = rec?.rounds?.[parseInt(b.dataset.r)];
+      if (!r) return;
+      if (b.dataset.fmt === "pdf") exportStockFinalPdf(r.label, r.lines);
+      else exportStockFinalXlsx(r.label, r.lines);
+    }
   });
-  // تفويض لـ sfRenderFromCache التي ستجلب من الشبكة لأن الـ cache فارغ
-  await sfRenderFromCache();
+  return ov;
 }
+function _sfRenderModal() {
+  const ctx = _sfModalCtx;
+  if (!ctx) return;
+  const dist = _sfDistMap.get(ctx.id);
+  const rec  = _sfCacheGet(ctx.date, ctx.id);
+  document.getElementById("sfModalTitle").textContent = dist ? dist.nom : ctx.id;
+  document.getElementById("sfModalSub").textContent   = ctx.date.split("-").reverse().join("/");
+  const body = document.getElementById("sfModalBody");
+  if (!rec) { body.innerHTML = `<div class="sf-empty">Aucune donnée.</div>`; return; }
+  body.innerHTML = rec.rounds.map((r, i) => {
+    const lines = r.lines || [];
+    const head = `<div class="sf-round-h">${_SF_IC.layers}<span>Tournée: ${escHtml(r.name)}</span></div>`;
+    if (!lines.length) return `<section class="sf-round">${head}<div class="sf-round-empty">Stock final vide.</div></section>`;
+    const rows = lines.map(l => `<tr><td class="sf-td-a">${escHtml(_sfPn(l.name))}</td><td class="sf-td-n">${escHtml(_sfLineCdn(l))}</td><td class="sf-td-q">${escHtml(l.qty)}</td></tr>`).join("");
+    return `<section class="sf-round">${head}
+      <div class="sf-tw"><table class="sf-tbl"><thead><tr><th>Article</th><th>CDN</th><th>Qté</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="sf-xrow">
+        <button type="button" class="sf-x sf-x--pdf" data-sf="exp" data-fmt="pdf" data-r="${i}">${_SF_IC.print}<span>PDF</span></button>
+        <button type="button" class="sf-x sf-x--xls" data-sf="exp" data-fmt="xlsx" data-r="${i}">${_SF_IC.download}<span>EXCEL</span></button>
+      </div>
+    </section>`;
+  }).join("");
+}
+function _sfRefreshModalIf(id, date) {
+  const ov = document.getElementById("modalSfDist");
+  if (ov && ov.classList.contains("open") && _sfModalCtx && _sfModalCtx.id === String(id) && _sfModalCtx.date === date) _sfRenderModal();
+}
+window.sfOpenModal = function sfOpenModal(id) {
+  const date = _sfCurDate();
+  if (!_sfCacheGet(date, id)) return;
+  _sfModalCtx = { id: String(id), date };
+  _sfModalRet = document.activeElement;
+  const ov = _sfEnsureModal();
+  _sfRenderModal();
+  document.getElementById("sfModalBody").scrollTop = 0;
+  if (typeof _openSettingsModal === "function") _openSettingsModal("modalSfDist"); else ov.classList.add("open");
+  ov.querySelector(".smodal-box").focus({ preventScroll: true });
+};
+window.sfCloseModal = function sfCloseModal() {
+  const ov = document.getElementById("modalSfDist");
+  if (ov) { if (typeof _closeSettingsModal === "function") _closeSettingsModal("modalSfDist"); else ov.classList.remove("open"); }
+  _sfModalCtx = null;
+  if (_sfModalRet && _sfModalRet.isConnected) { try { _sfModalRet.focus({ preventScroll: true }); } catch (_) {} }
+  _sfModalRet = null;
+};
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const ov = document.getElementById("modalSfDist");
+  if (ov && ov.classList.contains("open")) { e.stopPropagation(); sfCloseModal(); }
+});
 
 
 window.sfExportAll = async function sfExportAll(format = 'xlsx') {
@@ -2235,7 +2953,7 @@ window.sfExportAll = async function sfExportAll(format = 'xlsx') {
           lines.forEach(l => {
             const cdn = l._cdn_override != null ? l._cdn_override
               : (l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "");
-            allRows.push([`  ${l.name}`, cdn, l.qty]);
+            allRows.push([`  ${_sfPn(l.name)}`, cdn, l.qty]);
           });
           allRows.push(["", "", ""]);
         }
@@ -2301,7 +3019,7 @@ window.sfExportAll = async function sfExportAll(format = 'xlsx') {
             body: filtered.map(l => {
               const cdn = l._cdn_override != null ? l._cdn_override
                 : (l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "");
-              return [l.name, cdn, l.qty];
+              return [_sfPn(l.name), cdn, l.qty];
             }),
             styles: { fontSize: 8, cellPadding: 2 },
             headStyles: { fillColor: [26, 107, 58] },
@@ -2368,7 +3086,7 @@ window.sfExportDistPdf = async function sfExportDistPdf(distId, distNom) {
           body: filtered.map(l => {
             const cdn = l._cdn_override != null ? l._cdn_override
               : (l.packaging_qty > 0 ? +(l.qty / l.packaging_qty).toFixed(2) : "");
-            return [l.name, cdn, l.qty];
+            return [_sfPn(l.name), cdn, l.qty];
           }),
           styles: { fontSize: 8, cellPadding: 2 },
           headStyles: { fillColor: [26, 107, 58] },
@@ -2423,7 +3141,7 @@ async function _rpc_fetchStockFinal(baseUrl, roundId) {
       // إذا لا يوجد units وفيه carton فقط → qty=0, cdn=carton
       // إذا لا يوجد carton وفيه units فقط → cdn=—, qty=units
       results.push({
-        name: nameRaw,
+        name: _sfPn(nameRaw),
         qty: units,
         packaging_qty: cdn > 0 ? 1 : 0,  // trick: نجعل cdn يظهر مباشرة
         packaging_name: cartonMatch?.[2] || "",

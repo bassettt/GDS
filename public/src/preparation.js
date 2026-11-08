@@ -56,7 +56,7 @@
   // Training : nœud Firebase séparé (wafa_gds_prep2_training_{wh}) pour ne pas polluer Officiel
 const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "training_" : "");
   const base  = () => `${_FB_DB_URL}/wafa_gds_prep2_${envPart()}${S.wh}`;
-  const userName = () => AppAuth.currentUser?.username || AppAuth.currentUser?.displayName || "inconnu";
+  const userName = () => AppAuth.currentUser?.displayName || AppAuth.currentUser?.username || "inconnu";
   const notify = (m, t) => { try { if (typeof addNotif === "function") addNotif(m, t); else console.warn(m); } catch (_) {} };
 
   // ── inline SVG icons (no emoji / text symbols in the UI) ───
@@ -317,6 +317,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
           <div class="gp2-bar-s">
             <input id="gp2Search" class="gp2-search" type="search" placeholder="Rechercher un produit…" value="${esc(S.search)}" autocomplete="off">
             <label class="gp2-chk gp2-tout" id="gp2ToutL" title="Inclure les produits masqués dans la recherche" hidden><input type="checkbox" data-act="searchall" ${S.searchAll ? "checked" : ""}> Tout</label>
+            <button type="button" class="gp2-btn gp2-barbtn" data-act="barmin" aria-label="Masquer / afficher la barre" aria-expanded="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg></button>
             <span id="gp2Conn" class="gp2-conn" title="Synchronisation"></span>
             <span id="gp2Status" class="gp2-status"></span>
           </div>
@@ -344,6 +345,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
           <div class="gp2-nmcol gp2-hn"><span>Produit</span><button type="button" class="gp2-hbtn" id="gp2ToggleAll" data-act="toggleall"></button></div>
           ${[["prep", "Préparation"], ["charge", "Chargement"], ["reste", "Reste"]].map(([k, t]) =>
             `<div class="gp2-g gp2-g-${k} gp2-hg"><div class="gp2-gt">${t}</div><div class="gp2-gs"><span>Colisage</span><span>Unités</span></div></div>`).join("")}
+          <div class="gp2-pnav" id="gp2PNav"><button type="button" class="gp2-pn-b" data-act="phprev" aria-label="Groupe précédent"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button><span class="gp2-pn-t" id="gp2PTitle">Préparation</span><button type="button" class="gp2-pn-b" data-act="phnext" aria-label="Groupe suivant"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg></button></div>
         </div>
         <div class="gp2-list">${list || `<div class="gp2-empty">Aucun produit.</div>`}</div>
       </div></div>
@@ -356,6 +358,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     S.built = true;
     refreshAll();
     applySearch(S.search);
+    phAccordionInit();
     S.root.scrollTop = scroll;
     { const sc = document.getElementById("gp2Scroll"); if (sc) { sc.scrollTop = scTop; sc.scrollLeft = scLeft; } }
     const fitBar = () => { const b = S.root.querySelector(".gp2-bar"), r = S.root.querySelector(".gp2-root"); if (b && r) r.style.setProperty("--gp2-bar-h", b.offsetHeight + "px"); fitScroll(); };
@@ -521,7 +524,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
   }
   function setAllCollapsed(v) {
     Object.keys(S.cats).forEach(cat => { S.collapsed[cat] = v; S.cats[cat].classList.toggle("collapsed", v); });
-    lsSet(`gp2_collapsed_${S.wh}`, S.collapsed);
+    if (!isNarrow()) lsSet(`gp2_collapsed_${S.wh}`, S.collapsed);   // phone accordion state is session-only
     paintToggleAll();
   }
   // header button: one icon that flips between "collapse all" (arrows closing in) and "expand all" (arrows moving apart)
@@ -533,6 +536,28 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     const b = document.getElementById("gp2ToggleAll"); if (!b) return;
     const col = allCollapsed(), t = col ? "Tout ouvrir" : "Tout fermer";
     b.innerHTML = ic(col ? "expand" : "collapse"); b.title = t; b.setAttribute("aria-label", t);
+  }
+
+  // ── Phone: accordion — only the first (visible) category is open by default; opening another closes the rest.
+  // Session-only (never written to localStorage), so desktop collapse state is untouched.
+  function phAccordionInit() {
+    if (!isNarrow()) return;
+    const cats = Object.keys(S.cats).filter(c => !S.cats[c].hidden);
+    if (!cats.length) return;
+    const open = (S.phOpen && cats.includes(S.phOpen)) ? S.phOpen : (S.phOpen === null && S.phKeepClosed ? null : cats[0]);
+    S.phOpen = open;
+    Object.keys(S.cats).forEach(c => { const col = c !== open; S.collapsed[c] = col; S.cats[c].classList.toggle("collapsed", col); });
+    paintToggleAll();
+  }
+  function phToggleCat(cat) {
+    const sec = S.cats[cat]; if (!sec) return;
+    const wasOpen = !S.collapsed[cat];
+    if (wasOpen) { S.collapsed[cat] = true; sec.classList.add("collapsed"); S.phOpen = null; S.phKeepClosed = true; paintToggleAll(); return; }
+    S.phKeepClosed = false; S.phOpen = cat;
+    Object.keys(S.cats).forEach(c => { const col = c !== cat; S.collapsed[c] = col; S.cats[c].classList.toggle("collapsed", col); });
+    paintToggleAll();
+    const sc = document.getElementById("gp2Scroll");
+    if (sc) sc.scrollTop = sec.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop;   // bring the opened category to the top
   }
 
   // ── product visibility: hide / show (shared per warehouse, Firebase meta/view) ──
@@ -851,10 +876,16 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     root.addEventListener("click", (e) => {
       const b = e.target.closest("[data-act]"); if (!b) return;
       const a = b.dataset.act;
-      if (a === "cat") { const sec = b.closest(".gp2-cat"), cat = sec.dataset.cat; S.collapsed[cat] = !S.collapsed[cat]; sec.classList.toggle("collapsed", S.collapsed[cat]); lsSet(`gp2_collapsed_${S.wh}`, S.collapsed); paintToggleAll(); }
+      if (a === "cat") {
+        const sec = b.closest(".gp2-cat"), cat = sec.dataset.cat;
+        if (isNarrow() && !S.root.querySelector(".gp2-root.gp2-searching")) { phToggleCat(cat); return; }   // phone: accordion (one open category), not persisted
+        S.collapsed[cat] = !S.collapsed[cat]; sec.classList.toggle("collapsed", S.collapsed[cat]); lsSet(`gp2_collapsed_${S.wh}`, S.collapsed); paintToggleAll();
+      }
       else if (a === "truck") { if (!b.disabled) showTruck(+b.dataset.pid); }
       else if (a === "hist") { if (!b.disabled) showHist(+b.dataset.pid); }
       else if (a === "toggleall") setAllCollapsed(!allCollapsed());
+      else if (a === "phprev" || a === "phnext") phStep(a === "phprev" ? -1 : 1);
+      else if (a === "barmin") phBarToggle();
       else if (a === "newprep") startSession();
       else if (a === "mode")  switchMode(b.dataset.m);
       else if (a === "refresh") reloadData();
@@ -1008,11 +1039,76 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
   // "Colonnes" menu (owned by preparation-charge.js) gets a third entry: Préparation
   const prepOn = () => lsGet(`gp2_cols_${S.wh}`, {}).prep !== false;
   function applyPrepCol(v) { const r = S.root && S.root.querySelector(".gp2-root"); if (r) r.classList.toggle("gp2-hide-prep", !(v === undefined ? prepOn() : v)); }
+  // ── Phone (≤719px): one group at a time (Préparation | Chargement | Reste). Display only: CSS class on the root, no re-render.
+  const PH_KEYS = ["prep", "charge", "reste"], PH_LBL = { prep: "Préparation", charge: "Chargement", reste: "Reste" }, PH_LS = "gp2_phone_group";
+  const phRoot = () => S.root && S.root.querySelector(".gp2-root");
+  const phVisible = (r) => PH_KEYS.filter(k => !r.classList.contains("gp2-hide-" + k));
+  function phCurrent(vis) {
+    let g = null; try { g = localStorage.getItem(PH_LS); } catch (_) {}
+    if (!PH_KEYS.includes(g)) g = "prep";
+    if (vis.length && !vis.includes(g)) g = vis.find(k => PH_KEYS.indexOf(k) > PH_KEYS.indexOf(g)) || vis[vis.length - 1];   // skip groups hidden by the Colonnes menu
+    return g;
+  }
+  function phApply() {
+    const r = phRoot(); if (!r) return;
+    const vis = phVisible(r), g = phCurrent(vis);
+    PH_KEYS.forEach(k => { const want = k === g; if (r.classList.contains("gp2-ph-" + k) !== want) r.classList.toggle("gp2-ph-" + k, want); });
+    const t = document.getElementById("gp2PTitle"); if (t && t.textContent !== PH_LBL[g]) t.textContent = PH_LBL[g];
+    const i = vis.indexOf(g), pv = r.querySelector('[data-act="phprev"]'), nx = r.querySelector('[data-act="phnext"]');
+    if (pv) pv.disabled = i <= 0;
+    if (nx) nx.disabled = i < 0 || i >= vis.length - 1;
+  }
+  function phStep(d) {
+    const r = phRoot(); if (!r) return;
+    const vis = phVisible(r), i = vis.indexOf(phCurrent(vis)) + d;
+    if (i < 0 || i >= vis.length) return;                  // no wrap-around
+    try { localStorage.setItem(PH_LS, vis[i]); } catch (_) {}
+    phApply();
+  }
+  let phMo = null;
+  function phInit() {
+    phApply();
+    if (phMo) { try { phMo.disconnect(); } catch (_) {} phMo = null; }
+    const r = phRoot();
+    if (r && typeof MutationObserver !== "undefined") { phMo = new MutationObserver(phApply); phMo.observe(r, { attributes: true, attributeFilter: ["class"] }); }   // Colonnes menu toggles gp2-hide-* → re-sync
+    phBarApply(); phBindSwipe();
+  }
+  const phIsPhone = () => !!(window.matchMedia && window.matchMedia("(max-width: 719px)").matches);
+
+  // Phone: a button in the search row collapses the toolbar to "search + refresh" and expands it again (state kept on this device only).
+  const PH_BAR_LS = "gp2_bar_min";
+  function phBarApply() {
+    const r = phRoot(); if (!r) return;
+    let m = false; try { m = localStorage.getItem(PH_BAR_LS) === "1"; } catch (_) {}
+    if (r.classList.contains("gp2-bar-min") !== m) r.classList.toggle("gp2-bar-min", m);
+    const bt = r.querySelector('[data-act="barmin"]');
+    if (bt) { bt.setAttribute("aria-expanded", m ? "false" : "true"); bt.title = m ? "Afficher la barre" : "Masquer la barre"; }
+  }
+  function phBarToggle() {
+    const r = phRoot(); if (!r) return;
+    try { localStorage.setItem(PH_BAR_LS, r.classList.contains("gp2-bar-min") ? "0" : "1"); } catch (_) {}
+    phBarApply(); fitScroll();
+  }
+
+  // Phone: swipe on the group bar (header) → previous / next group (Préparation ⇄ Chargement ⇄ Reste), skipping hidden groups
+  function phBindSwipe() {
+    const hd = S.root && S.root.querySelector(".gp2-head");
+    if (!hd) return;
+    let x0 = 0, y0 = 0, on = false;
+    hd.addEventListener("touchstart", (e) => { const t = e.touches[0]; if (!t || e.touches.length > 1) { on = false; return; } x0 = t.clientX; y0 = t.clientY; on = true; }, { passive: true });
+    hd.addEventListener("touchend", (e) => {
+      if (!on) return; on = false;
+      const t = e.changedTouches[0]; if (!t || !phIsPhone()) return;
+      const dx = t.clientX - x0, dy = t.clientY - y0;
+      if (Math.abs(dx) >= 36 && Math.abs(dx) > Math.abs(dy) * 1.5) phStep(dx < 0 ? 1 : -1);   // swipe left → next
+    }, { passive: true });
+  }
   on("built", () => {
     const p = document.getElementById("gcColsPanel");
     if (p && !p.querySelector('[data-col="prep"]'))
       p.insertAdjacentHTML("afterbegin", `<label class="gp2-chk"><input type="checkbox" data-gc="col" data-col="prep" ${prepOn() ? "checked" : ""}> Préparation</label>`);
     applyPrepCol();
+    phInit();
   });
 
   // rowExtras entries may also define update(pid, rowEl) — called after every refreshRow.
