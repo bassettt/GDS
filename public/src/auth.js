@@ -94,7 +94,7 @@ async function appLogin(username, password) {
   if (hash !== user.password) throw new Error("Identifiant ou mot de passe incorrect");
   if (user.disabled) throw new Error("Ce compte est désactivé. Contactez l'administrateur.");
 
-  AppAuth.currentUser = { username: user.username, displayName: user.displayName || user.username, role: user.role, passwordHash: hash, warehouses: user.warehouses || [] };
+  AppAuth.currentUser = { username: user.username, displayName: user.displayName || user.username, role: user.role, passwordHash: hash, sessionVersion: user.sessionVersion || 0, warehouses: user.warehouses || [] };
   localStorage.setItem("owlgds_app_user", JSON.stringify(AppAuth.currentUser));
   return AppAuth.currentUser;
 }
@@ -113,12 +113,12 @@ async function _restoreAppSession() {
       const parsed = JSON.parse(saved);
       // تحقق من الـ hash مقابل Firebase فقط للتأكد من أن الحساب لم يُحذف أو يُغيَّر أو يُعطَّل
       const fbUser = await _fbGet(`app_users/${parsed.username}`);
-      if (!fbUser || fbUser.disabled || fbUser.password !== parsed.passwordHash) {
+      if (!fbUser || fbUser.disabled || fbUser.password !== parsed.passwordHash || (fbUser.sessionVersion || 0) !== (parsed.sessionVersion || 0)) {
         // كلمة المرور تغيرت أو الحساب حُذف أو عُطِّل — تسجيل خروج
         localStorage.removeItem("owlgds_app_user");
         return false;
       }
-      AppAuth.currentUser = { username: parsed.username, displayName: fbUser.displayName || parsed.username, role: fbUser.role, passwordHash: parsed.passwordHash, warehouses: fbUser.warehouses || [] };
+      AppAuth.currentUser = { username: parsed.username, displayName: fbUser.displayName || parsed.username, role: fbUser.role, passwordHash: parsed.passwordHash, sessionVersion: parsed.sessionVersion || 0, warehouses: fbUser.warehouses || [] };
       return true;
     }
   } catch (_) {}
@@ -1047,6 +1047,47 @@ async function setAppUserDisabled(username, disabled) {
   if (!r.ok) throw new Error("Échec de l'enregistrement (HTTP " + r.status + ")");
 }
 
+// Déconnecter un compte de tous ses appareils : on change son « sessionVersion » dans Firebase ; toute session locale
+// qui porte l'ancienne valeur est refusée (au prochain démarrage, au retour sur l'onglet, ou au contrôle périodique).
+// Pour son propre compte, l'appareil actuel reste connecté (seuls les AUTRES appareils sont déconnectés).
+async function forceLogoutAppUser(username) {
+  if (!isAdmin()) throw new Error("Accès refusé");
+  username = username.toLowerCase();
+  const version = Date.now();
+  const r = await fetch(`${_FB_DB_URL}/app_users/${username}.json`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionVersion: version }),
+  });
+  if (!r.ok) throw new Error("Échec de l'enregistrement (HTTP " + r.status + ")");
+  if (username === AppAuth.currentUser.username) {
+    AppAuth.currentUser.sessionVersion = version;
+    try { localStorage.setItem("owlgds_app_user", JSON.stringify(AppAuth.currentUser)); } catch (_) {}
+  }
+}
+
+// Contrôle de la session en cours (appareil déjà ouvert) : si l'admin a déconnecté ce compte, on ferme la session.
+let _sessionWatchBusy = false;
+async function _checkSessionVersion() {
+  if (_sessionWatchBusy || !AppAuth.currentUser) return;
+  _sessionWatchBusy = true;
+  try {
+    const sv = await _fbGet(`app_users/${AppAuth.currentUser.username}/sessionVersion`);
+    if ((sv || 0) !== (AppAuth.currentUser.sessionVersion || 0)) {
+      appLogout();
+      try { await _odooDestroySession(); } catch (_) {}
+      location.reload();
+    }
+  } catch (_) {}   // réseau indisponible : on réessaiera plus tard
+  _sessionWatchBusy = false;
+}
+function _startSessionWatch() {
+  if (window._sessionWatchOn) return;
+  window._sessionWatchOn = true;
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) _checkSessionVersion(); });
+  setInterval(() => { if (!document.hidden) _checkSessionVersion(); }, 2 * 60 * 1000);
+}
+
 async function changeAppUserRole(username, newRole) {
   if (!isAdmin()) throw new Error("Accès refusé");
   await _fbPatch(`app_users/${username.toLowerCase()}`, { role: newRole });
@@ -1208,6 +1249,11 @@ async function renderUserManagementUI() {
           <span style="font-size:10px;color:${roleColors[u.role]};background:${roleColors[u.role]}22;padding:1px 6px;border-radius:4px;min-width:55px;text-align:center">
             ${roleLabels[u.role]}
           </span>
+          <button onclick="_forceLogoutUserUI('${u.username}')"
+            style="background:none;border:none;cursor:pointer;color:#60a5fa;padding:2px 4px;border-radius:4px"
+            title="Déconnecter de tous les appareils">
+            ${icon("logout", 14)}
+          </button>
           <button onclick="_showAdminEditModal('${u.username}', '${u.role}')"
             style="background:none;border:none;cursor:pointer;color:#33c393;padding:2px 4px;border-radius:4px"
             title="Modifier">
@@ -1272,6 +1318,20 @@ async function _addUserUI() {
   }
 }
 
+async function _forceLogoutUserUI(username) {
+  const own = username.toLowerCase() === AppAuth.currentUser.username;
+  const msg = own
+    ? `Déconnecter votre compte "${username}" de tous les autres appareils ? Cet appareil restera connecté.`
+    : `Déconnecter "${username}" de tous ses appareils ? Il devra se reconnecter.`;
+  if (!(await appConfirm(msg, { title: "Déconnexion des appareils", okText: "Déconnecter", danger: true }))) return;
+  try {
+    await forceLogoutAppUser(username);
+    await appAlert(own ? "Les autres appareils seront déconnectés." : `"${username}" sera déconnecté de tous ses appareils.`, { title: "Terminé" });
+  } catch (e) {
+    await appAlert(e.message, { title: "Erreur" });
+  }
+}
+
 async function _toggleUserDisabledUI(username, disable) {
   if (disable && !(await appConfirm(`Désactiver l'utilisateur "${username}" ? Il ne pourra plus se connecter tant que le compte n'est pas réactivé.`, { title: "Désactiver l'utilisateur", okText: "Désactiver", danger: true }))) return;
   try {
@@ -1309,6 +1369,7 @@ async function checkAndLoginTwoStep() {
 
   // Post-login setup
   _addUserBadge();
+  _startSessionWatch();
   _guardSettings();
   // Apply role-based permissions for all non-admin roles
   await applyRolePermissions();

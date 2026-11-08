@@ -219,11 +219,23 @@
   const ABORT = Symbol("abort");
   const isWindowAction = r => r && typeof r === "object" && r.type === "ir.actions.act_window" && r.res_model;
 
-  async function runWizard(pid, name, act) {
+  async function runWizard(pid, name, act, baseCtx) {
     const model = act.res_model;
-    const ctx = Object.assign({ active_model: "stock.picking", active_id: pid, active_ids: [pid] }, act.context || {});
+    // contexte original + contexte de l'action (le plus prioritaire) ; active_* en simple valeurs par défaut
+    const ctx = Object.assign({ active_model: "stock.picking", active_id: pid, active_ids: [pid] }, baseCtx || {}, act.context || {});
+    const WIZ_FIELDS = {
+      "stock.immediate.transfer":     ["pick_ids", "show_transfers", "immediate_transfer_line_ids"],
+      "stock.backorder.confirmation": ["pick_ids", "show_transfers", "backorder_confirmation_line_ids"],
+      "stock.overprocessed.transfer": ["picking_id", "overprocessed_product_name"],
+    };
+    // 1) res_id fourni par Odoo en priorité (ne jamais recréer l'assistant) ; 2) sinon default_get + create
     const make = async () => {
-      const r = await callKw(model, "create", [{}], { context: ctx });
+      const rid = Array.isArray(act.res_id) ? act.res_id[0] : act.res_id;
+      if (rid) return rid;
+      const vals = (await callKw(model, "default_get", [WIZ_FIELDS[model] || []], { context: ctx })) || {};
+      if (model === "stock.overprocessed.transfer") { if (!vals.picking_id) vals.picking_id = pid; }
+      else Object.assign(vals, { pick_ids: [[4, pid]] });
+      const r = await callKw(model, "create", [vals], { context: ctx });
       return Array.isArray(r) ? r[0] : r;
     };
 
@@ -256,6 +268,11 @@
       return callKw(model, "process", [[wid]], { context: ctx });
     }
 
+    if (model === "stock.overprocessed.transfer") {
+      const wid = await make();
+      return callKw(model, "action_confirm", [[wid]], { context: ctx });
+    }
+
     throw new Error("Assistant Odoo « " + model + " » non pris en charge ici — utilisez ↗ pour ouvrir dans Odoo");
   }
 
@@ -264,7 +281,8 @@
     let res = await callKw("stock.picking", method, [[pid]], { context: ctx });
     for (let i = 0; i < 4; i++) {
       if (!isWindowAction(res)) return { aborted: false };
-      const out = await runWizard(pid, name, res);
+      console.debug("[transfert] wizard", i + 1, res.res_model, res.res_id);
+      const out = await runWizard(pid, name, res, ctx);
       if (out === ABORT) return { aborted: true };
       res = out;
     }

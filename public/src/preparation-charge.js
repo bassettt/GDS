@@ -675,7 +675,7 @@
     h ^= pw.length; h ^= 0xCE4B;
     return (h & 0xffff).toString(16).toUpperCase();
   }
-  function xSheet(sh) {
+  function xSheet(sh, protect = true) {
     const rows = sh.rows.map((row, ri) => { const h = (sh.ht && sh.ht[ri]) || sh.rowH; return `<row r="${ri + 1}"${h ? ` ht="${h}" customHeight="1"` : ""}>${row.map((cell, ci) => xCell(ri, ci, cell)).join("")}</row>`; }).join("");
     const n = sh.freeze, last = sh.rows.length, nc = sh.widths.length, pr = sh.print, m = PAGE.marginIn;
     // print settings live in the sheet XML (element order matters): sheetPr/pageSetUpPr, …, printOptions, pageMargins, pageSetup.
@@ -684,7 +684,7 @@
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:${colL(nc - 1)}${last}"/>
 <sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ySplit="${n}" topLeftCell="A${n + 1}" activePane="bottomLeft" state="frozen"/><selection pane="bottomLeft" activeCell="A${n + 1}" sqref="A${n + 1}"/></sheetView></sheetViews>
 <sheetFormatPr defaultRowHeight="${sh.rowH || 15}"${sh.rowH ? ' customHeight="1"' : ""}/><cols>${sh.widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join("")}</cols>
-<sheetData>${rows}</sheetData><sheetProtection password="${xPwdHash(SHEET_PWD)}" sheet="1" objects="1" scenarios="1" autoFilter="0"/>${sh.filter ? `<autoFilter ref="${sh.filter}"/>` : ""}${sh.merges && sh.merges.length ? `<mergeCells count="${sh.merges.length}">${sh.merges.map(x => `<mergeCell ref="${x}"/>`).join("")}</mergeCells>` : ""}
+<sheetData>${rows}</sheetData>${protect ? `<sheetProtection password="${xPwdHash(SHEET_PWD)}" sheet="1" objects="1" scenarios="1" autoFilter="0"/>` : ""}${sh.filter ? `<autoFilter ref="${sh.filter}"/>` : ""}${sh.merges && sh.merges.length ? `<mergeCells count="${sh.merges.length}">${sh.merges.map(x => `<mergeCell ref="${x}"/>`).join("")}</mergeCells>` : ""}
 <printOptions horizontalCentered="1"/><pageMargins left="${m}" right="${m}" top="${m}" bottom="${m}" header="${PAGE.headIn}" footer="${PAGE.headIn}"/><pageSetup paperSize="${PAGE.paperSize}" orientation="${pr.orient}" fitToWidth="${pr.fitW}" fitToHeight="${pr.fitH}"/></worksheet>`;
   }
   const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
@@ -709,7 +709,7 @@
     [...parts, ...central, new Uint8Array(end.buffer)].forEach(a => { out.set(a, p); p += a.length; });
     return out;
   }
-  function xWorkbook(sheets) {
+  function xWorkbook(sheets, protect = true) {
     const NS = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"', R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships", H = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
     const dn = sheets.map((s, i) => s.print && s.print.titleRows ? `<definedName name="_xlnm.Print_Titles" localSheetId="${i}">'${xEsc(s.name)}'!$${s.print.titleRows[0]}:$${s.print.titleRows[1]}</definedName>` : "").join("");
     const titles = dn ? `<definedNames>${dn}</definedNames>` : "";
@@ -720,7 +720,7 @@
       { name: "xl/_rels/workbook.xml.rels", text: H + `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((s, i) => `<Relationship Id="rId${i + 1}" Type="${R}/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="${R}/styles" Target="styles.xml"/></Relationships>` },
       { name: "xl/styles.xml", text: X_STYLES },
     ];
-    sheets.forEach((s, i) => files.push({ name: `xl/worksheets/sheet${i + 1}.xml`, text: xSheet(s) }));
+    sheets.forEach((s, i) => files.push({ name: `xl/worksheets/sheet${i + 1}.xml`, text: xSheet(s, protect) }));
     return zipStore(files);
   }
 
@@ -763,11 +763,16 @@
       from: ch.from ? dfull(ch.from) : "", to: ch.to ? dfull(ch.to) : "", bons };
   }
   const rangeTxt = (i) => i.from ? `${i.from} → ${i.to || "maintenant"}` : "—";
-  function reportFile(i, draft) {
+  function fileParts(i) {                                         // warehouse slug + dd-mm-yyyy_HHMM stamp, shared by every exported file name
     const clean = String(i.wh).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "wh";
     const d = i.d, stamp = `${p2(d.getDate())}-${p2(d.getMonth() + 1)}-${d.getFullYear()}_${p2(d.getHours())}${p2(d.getMinutes())}`;
+    return { clean, stamp };
+  }
+  function reportFile(i, draft) {
+    const { clean, stamp } = fileParts(i);
     return `${i.training ? "training_" : ""}preparation_${clean}_${stamp}${draft ? "_brouillon" : ""}.xlsx`;
   }
+  function blankSheetFile(i) { const { clean, stamp } = fileParts(i); return `${i.training ? "training_" : ""}fiche_preparation_${clean}_${stamp}.xlsx`; }
   // mov = the product has a movement: zero is written as a real number 0; without movement a zero stays an empty cell.
   const numC = (v, st, mov) => (mov ? { v: Number(v) || 0, s: st || ST.num } : (v ? { v, s: st || ST.num } : { s: ST.num }));
   function tableRows(data) {                                         // sheet 1: category title row + product rows (all products)
@@ -799,6 +804,22 @@
     const R = Math.max(left.length, right.length), scale = Math.min(1, M_AVAIL_H / (M_TITLE_H + M_HEAD_H + R * M_ROW_H));
     return { left, right, R, scale, pt: Math.round(100 * scale) / 10 };     // pt = effective font size once printed on ONE page (base 10pt)
   }
+  // « Mouvement » layout as ONE sheet: title (2 lines) + header + two row-balanced blocks, A4 portrait on ONE page.
+  // data = { ready, cats: [{ cat, items: [{ name, rc, ru, mov }] }] } ; shared by the report (sheet « Reste ») and the initial-stock export.
+  function mouvementSheet(data, name, tl1, tl2) {
+    const L = mouvementLayout(data), merges2 = ["A1:G1"], hd = M_HDR.map(h => ({ v: h, s: ST.head })), tlen = Math.max(tl1.length, tl2.length);
+    const tst = tlen <= 82 ? ST.title : tlen <= 98 ? ST.title2 : ST.title3;      // long texts: smaller font, never cut
+    const rows2 = [[{ v: tl1 + "\n" + tl2, s: tst }], [...hd, undefined, ...hd]];
+    const cellsOf = (e, off, r1) => {
+      if (!e) return [undefined, undefined, undefined];
+      if (e.t === "cat") { merges2.push(`${colL(off)}${r1}:${colL(off + 2)}${r1}`); return [{ v: e.name, s: ST.cat }, { s: ST.cat }, { s: ST.cat }]; }
+      const x = e.i, rs = (v) => (data.ready ? numC(v, v < 0 ? ST.neg : ST.num, true) : { s: ST.num });      // every product here has a movement: explicit 0 for Reste, empty when the load is unknown
+      return [{ v: x.name, s: ST.txt }, rs(x.rc), rs(x.ru)];
+    };
+    for (let k = 0; k < L.R; k++) { const r1 = rows2.length + 1; rows2.push([...cellsOf(L.left[k], 0, r1), undefined, ...cellsOf(L.right[k], 4, r1)]); }
+    return { name, rows: rows2, widths: M_W, freeze: 2, filter: null, merges: merges2, rowH: M_ROW_H, ht: { 0: M_TITLE_H, 1: M_HEAD_H },
+      print: { orient: "portrait", fitW: 1, fitH: 1 } };                                      // fitToPage: 1 wide × 1 tall; no autoFilter (two independent blocks)
+  }
   function buildSheets(data, i, draft) {          // draft = « Rapport » (brouillon): same sheets / columns / print setup, only the labels differ
     const head = X_HDR.map(h => ({ v: h, s: ST.head })), lab = (v) => ({ v, s: ST.lab }), val = (v) => ({ v, s: ST.val });
     // ── sheet 1 « Tout »
@@ -816,32 +837,20 @@
     const rows1 = [...info1, head, ...b.map(r => r.cells)];
     const s1 = { name: "Mouvement", rows: rows1, widths: X_W, freeze: hr + 1, filter: `A${hr + 1}:${colL(nc - 1)}${rows1.length}`, merges: merges1, ht: bonsLong ? { 3: Math.ceil(bonsTxt.length / 100) * 13 + 2, [hr]: 26 } : { [hr]: 26 },
       print: { orient: "landscape", fitW: 1, fitH: 0, titleRows: [hr + 1, hr + 1] } };      // A4 landscape, 1 page wide, as many pages as needed, header row repeated
-    // ── sheet 2 « Mouvement »: Reste only, two blocks side by side, ONE A4 portrait page
-    const L = mouvementLayout(data), merges2 = ["A1:G1"], hd = M_HDR.map(h => ({ v: h, s: ST.head }));
-    const tl1 = `Mouvement${draft ? " (Brouillon)" : ""} — ${i.wh}`, tl2 = `${i.at} — ${i.mode} — ${rangeTxt(i)}`, tlen = Math.max(tl1.length, tl2.length);
-    const tst = tlen <= 82 ? ST.title : tlen <= 98 ? ST.title2 : ST.title3;      // long texts: smaller font, never cut
-    const rows2 = [[{ v: tl1 + "\n" + tl2, s: tst }], [...hd, undefined, ...hd]];
-    const cellsOf = (e, off, r1) => {
-      if (!e) return [undefined, undefined, undefined];
-      if (e.t === "cat") { merges2.push(`${colL(off)}${r1}:${colL(off + 2)}${r1}`); return [{ v: e.name, s: ST.cat }, { s: ST.cat }, { s: ST.cat }]; }
-      const x = e.i, rs = (v) => (data.ready ? numC(v, v < 0 ? ST.neg : ST.num, true) : { s: ST.num });      // every product here has a movement: explicit 0 for Reste, empty when the load is unknown
-      return [{ v: x.name, s: ST.txt }, rs(x.rc), rs(x.ru)];
-    };
-    for (let k = 0; k < L.R; k++) { const r1 = rows2.length + 1; rows2.push([...cellsOf(L.left[k], 0, r1), undefined, ...cellsOf(L.right[k], 4, r1)]); }
-    const s2 = { name: "Reste", rows: rows2, widths: M_W, freeze: 2, filter: null, merges: merges2, rowH: M_ROW_H, ht: { 0: M_TITLE_H, 1: M_HEAD_H },
-      print: { orient: "portrait", fitW: 1, fitH: 1 } };                                      // fitToPage: 1 wide × 1 tall; no autoFilter (two independent blocks)
+    // ── sheet 2: Reste only, two blocks side by side, ONE A4 portrait page (shared builder, see mouvementSheet)
+    const s2 = mouvementSheet(data, "Reste", `Mouvement${draft ? " (Brouillon)" : ""} — ${i.wh}`, `${i.at} — ${i.mode} — ${rangeTxt(i)}`);
     return [s1, s2];
   }
   // SheetJS (community 0.18.5) fallback — valid workbook, but print setup is only PARTIAL:
   //   supported : column widths, merges, autofilter (sheet 1), margins (!margins: 0.4 in), repeated header row (Print_Titles defined name)
   //   NOT supported (the community build cannot write them): paperSize A4, orientation, fitToPage / fitToWidth / fitToHeight,
   //   horizontal centering (printOptions), cell styles, frozen panes. Sheet 2 may then print on several pages / default paper.
-  function fallbackXlsx(sheets, file) {
+  function fallbackXlsx(sheets, file, protect = true) {
     const wb = XLSX.utils.book_new(), names = [];
     sheets.forEach((sh, idx) => {
       const ws = XLSX.utils.aoa_to_sheet(sh.rows.map(r => r.map(c => (c ? c.v : null))));
       ws["!cols"] = sh.widths.map(w => ({ wch: w }));
-      ws["!protect"] = { password: xPwdHash(SHEET_PWD), sheet: true, objects: true, scenarios: true, autoFilter: false };
+      if (protect) ws["!protect"] = { password: xPwdHash(SHEET_PWD), sheet: true, objects: true, scenarios: true, autoFilter: false };
       if (sh.filter) ws["!autofilter"] = { ref: sh.filter };
       if (sh.merges && sh.merges.length) ws["!merges"] = sh.merges.map(m => XLSX.utils.decode_range(m));
       ws["!margins"] = { left: PAGE.marginIn, right: PAGE.marginIn, top: PAGE.marginIn, bottom: PAGE.marginIn, header: PAGE.headIn, footer: PAGE.headIn };
@@ -856,6 +865,23 @@
     const a = document.createElement("a"); a.href = url; a.download = file; a.style.display = "none";
     document.body.appendChild(a); a.click();
     setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 5000);
+  }
+
+  function writeWorkbook(sheets, file, protect = true) {          // custom OOXML writer, SheetJS fallback; protect:false = no sheet protection (fiche de préparation only)
+    try { downloadBytes(xWorkbook(sheets, protect), file); }
+    catch (e) { console.error("[Prep2] xlsx writer, fallback:", e); fallbackXlsx(sheets, file, protect); }
+  }
+
+  // ── Fiche de préparation vierge (called by preparation.js after « Nouvelle préparation ») ──
+  // cats = [{ cat, items: [{ name, qty }] }] already filtered (qty > 0) and ordered (categories, then products) by preparation.js.
+  // Same « Mouvement » layout as the report, but Reste Colis / Reste U are left completely empty (quantities only select the products). No sheet protection. Never touches Firebase / the session.
+  function exportBlankSheet(cats) {
+    const out = (cats || []).map(c => ({ cat: c.cat, items: c.items.filter(x => x.qty > 0).map(x => ({ name: x.name, rc: 0, ru: 0, mov: true })) })).filter(c => c.items.length);
+    const n = out.reduce((a, c) => a + c.items.length, 0);
+    if (!n) return null;                                           // nothing in stock: no empty file
+    const i = reportInfo(), file = blankSheetFile(i);
+    writeWorkbook([mouvementSheet({ ready: false, cats: out }, "Fiche de préparation", `Fiche de préparation — ${i.wh}`, `${i.at} — ${i.mode} — ${i.user}`)], file, false);
+    return { file, products: n };
   }
 
   // ── Terminer: confirmation + download ───────────────────────
@@ -893,8 +919,7 @@
   function exportReport(draft) {
     const data = reportData(); if (!data.nMov) { A.notify("Aucun mouvement : rien à exporter", "warning"); return null; }
     const i = reportInfo(), file = reportFile(i, draft), sheets = buildSheets(data, i, draft);
-    try { downloadBytes(xWorkbook(sheets), file); }
-    catch (e) { console.error("[Prep2] xlsx writer, fallback:", e); fallbackXlsx(sheets, file); }
+    writeWorkbook(sheets, file);
     return { file, at: i.d, user: i.user, wh: i.wh, mode: i.mode, from: charge().from || null, to: charge().to || null,
              products: data.nPrep, loaded: data.nLoad, bons: i.bons.total, bonsIncluded: i.bons.list.length };
   }
@@ -1017,5 +1042,5 @@
     if (active) fetchCharge({ auto: true });
   });
 
-  window.GdsPrep2Charge = { state: C, fetch: fetchCharge, recompute, labels, tag: tagHtml };
+  window.GdsPrep2Charge = { state: C, fetch: fetchCharge, recompute, labels, tag: tagHtml, exportBlankSheet };
 })();

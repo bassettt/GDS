@@ -335,6 +335,16 @@
 .gp2-idle-s { font-size:13px; color:var(--text3); max-width:320px; }
 .gp2-idle-btn { height:48px; min-width:min(260px,100%); padding:0 22px; margin-top:8px; font-size:15px; border-radius:var(--r); }
 .gp2-idle-btn .gp2-ic { width:18px; height:18px; }
+.gp2-idle-act { display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:12px 16px; margin-top:8px; }
+.gp2-idle-act .gp2-idle-btn { margin-top:0; }
+.gp2-sw { display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--text2); cursor:pointer; user-select:none; }
+.gp2-sw input { -webkit-appearance:none; appearance:none; position:relative; flex:none; width:36px; height:20px; margin:0; border-radius:10px; background:var(--border); cursor:pointer; transition:background .15s; }
+.gp2-sw input::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,.3); transition:transform .15s; }
+.gp2-sw input:checked { background:var(--gds-color); }
+.gp2-sw input:checked::after { transform:translateX(16px); }
+.gp2-sw input:focus-visible { outline:2px solid var(--gds-color); outline-offset:2px; }
+.gp2-sw input:disabled { opacity:.5; cursor:default; }
+.gp2-sw .gp2-ic { width:16px; height:16px; }
 /* no session: only the connection dot and the Odoo / Libre switch stay in the toolbar; the table is replaced by the empty state */
 .gp2-idle .gp2-scroll { display:none; }
 .gp2-idle .gp2-bar-r > *:not(.gp2-bar-s):not(.gp2-seg) { display:none !important; }

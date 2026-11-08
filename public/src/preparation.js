@@ -244,7 +244,8 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
   const stockActive = () => mode() === "odoo" && S.stockLoaded;   // validation applies
   const overStock = (pid, total) => stockActive() && total > stockOf(pid) + 1e-6;
 
-  function buildModel() {
+  // catalogue grouped by category: UI category order (_sortCats) then product order — shared with the initial-stock export
+  function catalogModel() {
     const byCat = {};
     S.raw.forEach(p => {
       const cat = p.categ_id ? p.categ_id[1] : "Autre";
@@ -256,7 +257,10 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
       });
     });
     Object.values(byCat).forEach(a => a.sort((x, y) => x.order - y.order || x.name.localeCompare(y.name)));
-    const model = _sortCats(Object.keys(byCat)).map(cat => ({ cat, list: byCat[cat] }));
+    return _sortCats(Object.keys(byCat)).map(cat => ({ cat, list: byCat[cat] }));
+  }
+  function buildModel() {
+    const model = catalogModel();
     ext.model.forEach(fn => { try { fn(model); } catch (e) { console.error(e); } });   // phase 2: extra categories (Chargé sans préparation)
     return model;
   }
@@ -467,7 +471,8 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
     box.innerHTML = `${ic("clipboard", "gp2-idle-ic")}
       <div class="gp2-idle-t">Aucune préparation en cours</div>
       ${who ? `<div class="gp2-idle-s">${who}</div>` : ""}
-      ${can ? `<button type="button" class="gp2-btn gp2-vsave gp2-idle-btn" data-act="newprep" ${S.starting ? "disabled" : ""}>${ic("plus")} Nouvelle préparation</button>`
+      ${can ? `<div class="gp2-idle-act"><button type="button" class="gp2-btn gp2-vsave gp2-idle-btn" data-act="newprep" ${S.starting ? "disabled" : ""}>${ic("plus")} Nouvelle préparation</button>
+              <label class="gp2-sw" title="Télécharger une fiche vierge au démarrage"><input type="checkbox" data-act="blanksheet" ${blankSheetOn() ? "checked" : ""} ${S.starting ? "disabled" : ""}>${ic("filedown")}<span>Télécharger une fiche vierge au démarrage</span></label></div>`
             : `<div class="gp2-idle-s">En attente du démarrage d'une nouvelle préparation par un utilisateur autorisé.</div>`}`;
   }
 
@@ -501,8 +506,40 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
       await fbPatch("", { "items": null, "hist": null, "meta/charge": { from, to, by, ts: { ".sv": "timestamp" } }, "meta/session": { active: true, by, ts: { ".sv": "timestamp" } } });
       const now = Date.now();
       S.items = {}; S.meta.charge = { from, to, by, ts: now }; S.meta.session = { active: true, by, ts: now };
+      return true;                                      // started by this call (used by newPrep)
     } catch (e) { console.error("[Prep2] new session:", e); notify("Échec du démarrage de la préparation", "error"); }
     finally { S.starting = false; syncSession(); }
+  }
+
+  // ── Fiche de préparation vierge (optional, per user + per browser; never blocks the start of a session) ──
+  const blankSheetKey = () => `gp2_blanksheet_${AppAuth.currentUser?.username || "anon"}`;
+  // Default ON: only an explicit saved false turns it off (unset ≠ false). Legacy key gp2_stockinit_{user} === false is still honoured.
+  const blankSheetOn = () => {
+    const v = lsGet(blankSheetKey(), undefined);
+    if (typeof v === "boolean") return v;
+    return lsGet(`gp2_stockinit_${AppAuth.currentUser?.username || "anon"}`, undefined) !== false;
+  };
+  // Source: same as the screen — S.stock (stock.quant at _getStockLocationId(), quantity > 0, summed per product) + catalogue S.raw / S.size.
+  // Reused when already loaded (both modes load it); fetched only when missing. The file itself is written by preparation-charge.js (quantities only select the products; they are not written).
+  async function downloadBlankSheet() {
+    try {
+      if (!S.raw.length) await loadCatalog();
+      if (!S.stockLoaded) await loadStock();
+      if (!S.stockLoaded) throw new Error(S.stockErr || "stock indisponible");
+      const isNC = (c) => String(c).split("/").pop().replace(/[.\s]/g, "").toUpperCase() === "NC";     // catégorie « N.C » exclue de la fiche
+      const cats = catalogModel().filter(({ cat }) => !isNC(cat)).map(({ cat, list }) => ({ cat, items: list.filter(m => stockOf(m.pid) > 0).map(m => ({ name: m.name, qty: stockOf(m.pid), sz: sizeOf(m.pid) })) })).filter(c => c.items.length);
+      const W = window.GdsPrep2Charge;
+      if (!W || typeof W.exportBlankSheet !== "function") throw new Error("module d'export indisponible");
+      const r = W.exportBlankSheet(cats);
+      if (!r) { notify("Fiche de préparation : aucun produit en stock", "warning"); return; }
+      notify("Fiche de préparation téléchargée : " + r.file, "success");
+    } catch (e) { console.error("[Prep2] fiche de préparation:", e); notify("Échec du téléchargement de la fiche : " + (e && e.message || e), "error"); }
+  }
+  // « Nouvelle préparation »: the session starts first (startSession, untouched), the file comes after and can only fail on its own.
+  async function newPrep() {
+    const want = blankSheetOn();
+    const started = await startSession();
+    if (started && want) await downloadBlankSheet();
   }
 
   // ── search / categories ────────────────────────────────────
@@ -859,6 +896,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
       if (e.target.classList?.contains("gp2-in")) onCommit(e.target);
       else if (e.target.dataset?.col === "prep") applyPrepCol(e.target.checked);
       else if (e.target.dataset?.act === "searchall") { S.searchAll = e.target.checked; applySearch(S.search); }
+      else if (e.target.dataset?.act === "blanksheet") lsSet(blankSheetKey(), !!e.target.checked);
       else if (e.target.dataset?.act === "vis") {
         S.hiddenCats[e.target.dataset.cat] = !e.target.checked;
         lsSet(`gp2_hidden_${S.wh}`, S.hiddenCats); applySearch(S.search); paintToggleAll();
@@ -886,7 +924,7 @@ const envPart = () => (typeof App !== "undefined" && App.env === "training" ? "t
       else if (a === "toggleall") setAllCollapsed(!allCollapsed());
       else if (a === "phprev" || a === "phnext") phStep(a === "phprev" ? -1 : 1);
       else if (a === "barmin") phBarToggle();
-      else if (a === "newprep") startSession();
+      else if (a === "newprep") newPrep();
       else if (a === "mode")  switchMode(b.dataset.m);
       else if (a === "refresh") reloadData();
       else if (a === "catmenu") { const p = document.getElementById("gp2CatPanel"); p.hidden = !p.hidden; }
